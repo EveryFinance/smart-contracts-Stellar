@@ -22,6 +22,7 @@ An on-chain, non-custodial asset management protocol built on **Stellar Soroban*
 12. [Adding a New Protocol](#12-adding-a-new-protocol)
 13. [Building & Testing](#13-building--testing)
 14. [Testnet Deployment](#14-testnet-deployment)
+15. [CI/CD Pipeline](#15-cicd-pipeline)
 
 ---
 
@@ -779,6 +780,20 @@ cargo test -p vault test_tvl_guard_trips_when_loss_exceeds_tolerance
 | `share_token` | 34 | SEP-41: mint, burn, transfer, approve, transfer_from, burn_from |
 | `blend` | 24 | Supply/withdraw, position tracking, sync_position, pause |
 | `oracle` | 19 | Set/get price, batch get, admin management |
+
+---
+
+## 15. CI/CD Pipeline
+
+This repository uses GitHub Actions workflows under `.github/workflows`:
+
+- `ci.yml`
+  - Triggers: pull requests and pushes to `main`
+  - Runs: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo test --workspace`
+- `cd.yml`
+  - Triggers: pushes to `main`, version tags matching `v*`, and manual `workflow_dispatch`
+  - Packages and uploads a source bundle artifact
+  - On version tags, publishes a GitHub Release with the source tarball attached
 
 ---
 
