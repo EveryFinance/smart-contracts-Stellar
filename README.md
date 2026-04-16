@@ -23,6 +23,7 @@ An on-chain, non-custodial asset management protocol built on **Stellar Soroban*
 13. [Building & Testing](#13-building--testing)
 14. [Testnet Deployment](#14-testnet-deployment)
 15. [CI/CD Pipeline](#15-cicd-pipeline)
+16. [Reviewer Quickstart](#16-reviewer-quickstart)
 
 ---
 
@@ -789,11 +790,33 @@ This repository uses GitHub Actions workflows under `.github/workflows`:
 
 - `ci.yml`
   - Triggers: pull requests and pushes to `main`
-  - Runs: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo test --workspace`
+  - Runs: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-features -- -D warnings`, and `cargo test --workspace`
 - `cd.yml`
   - Triggers: pushes to `main`, version tags matching `v*`, and manual `workflow_dispatch`
   - Packages and uploads a source bundle artifact
   - On version tags, publishes a GitHub Release with the source tarball attached
+
+---
+
+## 16. Reviewer Quickstart
+
+For external reviewers, use:
+
+- `docs/reviewer_quickstart.md`
+
+Core validation commands:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-features -- -D warnings
+cargo test --workspace
+```
+
+Demo command:
+
+```bash
+./scripts/run_showcase_demo.sh reuse-latest
+```
 
 ---
 

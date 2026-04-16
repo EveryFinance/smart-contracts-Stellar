@@ -13,7 +13,8 @@ Dapp: https://www.elyx.finance/
 5. [Backend Integration Quickstart (JS/TS)](./quickstart_backend_integration.md)
 6. [Vaults Alpha Beta Gamma](./vaults_alpha_beta_gamma.md)
 7. [Demo Runbook](./demo_runbook.md)
-8. Contract Docs
+8. [Reviewer Quickstart](./reviewer_quickstart.md)
+9. Contract Docs
    - [Vault](./contracts/vault.md)
    - [Share Token (SEP-41)](./contracts/share_token.md)
    - [Oracle](./contracts/oracle.md)
