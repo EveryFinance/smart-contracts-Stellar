@@ -1764,11 +1764,7 @@ impl Vault {
         };
         let now = env.ledger().timestamp();
         let unlock = last_deposit.saturating_add(cooldown);
-        if now >= unlock {
-            0
-        } else {
-            unlock - now
-        }
+        unlock.saturating_sub(now)
     }
 
     pub fn get_announced_fees(env: Env) -> AnnouncedFees {

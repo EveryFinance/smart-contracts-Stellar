@@ -27,8 +27,8 @@ pub fn transfer_event(env: &Env, from: Address, to: Address, amount: i128) {
 /// * `spender`           – The address being approved to spend.
 /// * `amount`            – The new allowance amount (0 revokes).
 /// * `expiration_ledger` – The ledger at which the allowance expires.
-///                         Stored for informational purposes only; enforcement
-///                         is the caller's responsibility in this implementation.
+///   Stored for informational purposes only; enforcement is the caller's
+///   responsibility in this implementation.
 pub fn approve_event(
     env: &Env,
     from: Address,

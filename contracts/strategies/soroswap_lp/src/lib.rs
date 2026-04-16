@@ -30,6 +30,7 @@
 //!    tokens arrive directly at user.
 
 #![no_std]
+#![allow(clippy::too_many_arguments)]
 
 mod error;
 mod interfaces;
@@ -58,6 +59,7 @@ use storage::{
 #[contract]
 pub struct SoroswapLpStrategy;
 
+#[allow(clippy::too_many_arguments)]
 #[contractimpl]
 impl SoroswapLpStrategy {
     // -----------------------------------------------------------------------
@@ -77,6 +79,7 @@ impl SoroswapLpStrategy {
     ///
     /// # Errors
     /// * [`SoroswapLpError::AlreadyInitialized`]
+    #[allow(clippy::too_many_arguments)]
     pub fn initialize(
         env: Env,
         vault: Address,
