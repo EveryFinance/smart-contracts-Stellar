@@ -1,0 +1,24 @@
+[package]
+name = "integration-tests"
+version = "0.1.0"
+edition = "2021"
+
+# This crate contains no production code — it only exists to run
+# cross-contract integration tests using the Soroban test environment.
+[lib]
+crate-type = ["rlib"]
+
+[dev-dependencies]
+soroban-sdk  = { version = "22.0.1", features = ["testutils"] }
+
+# Import every contract crate with its testutils feature so that
+# `env.register(ContractStruct, ())` works in tests.
+vault                = { path = "../vault",                    features = ["testutils"] }
+share-token          = { path = "../share_token",              features = ["testutils"] }
+oracle               = { path = "../oracle",                   features = ["testutils"] }
+blend-strategy       = { path = "../strategies/blend",         features = ["testutils"] }
+soroswap-lp-strategy = { path = "../strategies/soroswap_lp",  features = ["testutils"] }
+phoenix-lp-strategy  = { path = "../strategies/phoenix_lp",   features = ["testutils"] }
+soroswap-trade-guard = { path = "../trade_guards/soroswap",   features = ["testutils"] }
+phoenix-trade-guard  = { path = "../trade_guards/phoenix",    features = ["testutils"] }
+factory              = { path = "../factory",                  features = ["testutils"] }

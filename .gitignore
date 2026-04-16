@@ -1,0 +1,27 @@
+# Build artifacts
+target/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.env
+!scripts/deploy.env.example
+!deployments/*.example.env
+
+# Local deployment outputs
+deployments/*.env
+
+# AI/tooling traces
+.codex
+.codex/
+.claude/
+.claude.json
+chat_exports/
+
+# Reports and local artifacts not for public repo
+docs/reports/
+AUDIT_REPORT_POST_REMEDIATION_2026-04-16.md
+
+# OS/editor
+.DS_Store
