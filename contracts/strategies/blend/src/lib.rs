@@ -190,7 +190,12 @@ impl BlendStrategy {
 
         // Pull tokens from vault into this strategy contract via allowance.
         // The vault approves `strategy_addr` in `vault.invest` before calling this.
-        token::Client::new(&env, &asset).transfer_from(&strategy_addr, &from, &strategy_addr, &amount);
+        token::Client::new(&env, &asset).transfer_from(
+            &strategy_addr,
+            &from,
+            &strategy_addr,
+            &amount,
+        );
 
         // Let the lending protocol pull supplied funds from this strategy.
         let expiry = env.ledger().sequence() + 100;

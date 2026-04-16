@@ -1,8 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, token, Address, Env,
-    Vec,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, token, Address, Env, Vec,
 };
 
 const REQUEST_SUPPLY: u32 = 2;
@@ -68,7 +67,12 @@ impl MockBlendPool {
                 panic_with_error!(&env, PoolError::InvalidAmount);
             }
             if req.request_type == REQUEST_SUPPLY {
-                token::Client::new(&env, &token_addr).transfer_from(&pool, &from, &pool, &req.amount);
+                token::Client::new(&env, &token_addr).transfer_from(
+                    &pool,
+                    &from,
+                    &pool,
+                    &req.amount,
+                );
                 let bal: i128 = env
                     .storage()
                     .persistent()
