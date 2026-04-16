@@ -1,0 +1,16 @@
+# Solo-maintainer setup.
+# These ownership hints are non-blocking unless you enable
+# "Require review from Code Owners" in branch protection.
+
+* @EveryFinance
+
+# High-risk protocol surfaces
+/contracts/vault/ @EveryFinance
+/contracts/share_token/ @EveryFinance
+/contracts/oracle/ @EveryFinance
+/contracts/strategies/ @EveryFinance
+/contracts/trade_guards/ @EveryFinance
+
+# CI/CD and operational policy
+/.github/workflows/ @EveryFinance
+/docs/ @EveryFinance

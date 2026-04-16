@@ -1,0 +1,17 @@
+name: Security report
+description: Private security issues should be reported via SECURITY.md
+title: "[Security] "
+labels: [security]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not disclose exploitable details publicly.
+        Follow the process in SECURITY.md for responsible disclosure.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: High-level summary of the issue
+    validations:
+      required: true
