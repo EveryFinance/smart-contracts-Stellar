@@ -18,7 +18,7 @@ stellar keys generate deployer --network testnet --fund --overwrite
 Use your latest deployment file:
 
 ```bash
-cd /home/mohamed/stellar-asset-management
+cd smart-contracts-Stellar
 set -a
 source deployments/testnet-20260416-150521.env
 set +a

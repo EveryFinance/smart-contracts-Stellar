@@ -2,7 +2,7 @@
 
 Dapp: https://www.elyx.finance/
 
-An on-chain, non-custodial asset management protocol built on **Stellar Soroban**, inspired by the dHEDGE V2 architecture. A professional fund manager accepts deposits in a single base asset (e.g. USDC), issues pro-rata **share tokens** to depositors, and deploys capital across multiple DeFi protocols — all governed by transparent, immutable on-chain rules with no privileged backdoors.
+An on-chain, non-custodial asset management protocol built on **Stellar Soroban**. A professional fund manager accepts deposits in a configurable vault base asset, issues pro-rata **share tokens** to depositors, and deploys capital across multiple DeFi protocols — all governed by transparent, immutable on-chain rules with no privileged backdoors.
 
 ---
 
@@ -309,7 +309,7 @@ Where `strategy_contribution(S)` is:
 | Yes | No | `S.get_value(vault)` (assumed already base-denominated) |
 | Yes | Yes | `S.get_value(vault) × oracle.get_price(price_token) / PRICE_PRECISION` |
 
-For **Soroswap LP** positions with an oracle set, `get_value()` uses **reserve decomposition** (dHedge V2 §3):
+For **Soroswap LP** positions with an oracle set, `get_value()` uses **reserve decomposition**:
 
 ```
 lp_share     = lp_balance / pair.total_supply()
@@ -362,14 +362,14 @@ All fees are expressed in **basis points** (`1 bps = 0.01%`). Hard caps are enfo
 
 ### Entry fee — shares, not base asset
 
-The entry fee uses the dHedge V2 §1 model: the manager receives newly minted share tokens, not a transfer of the deposited base asset. This has two consequences:
+The entry fee model mints share tokens to the manager instead of transferring deposited base assets out of the vault. This has two consequences:
 
 1. The **full deposit amount enters the vault** and is immediately deployed for all shareholders — no "fee leakage" reduces the vault's investable capital.
 2. The manager's fee shares are subject to the **same NAV risk** as every other shareholder. If the fund loses value, so does the manager's fee position.
 
 ### Exit fee — stays in vault
 
-The exit fee uses the dHedge V2 §2 model: the fee fraction remains in the vault rather than being transferred to the manager. This increases the NAV per share for remaining depositors and creates a **natural incentive for long-term holding** — early exitors effectively donate a small NAV fraction to continuing shareholders.
+The exit fee model keeps the fee fraction in the vault rather than transferring it to the manager. This increases the NAV per share for remaining depositors and creates a **natural incentive for long-term holding** — early exitors effectively donate a small NAV fraction to continuing shareholders.
 
 ### High-water mark (performance fee)
 
@@ -447,7 +447,7 @@ The whitelist is maintained by the manager and cannot be changed mid-transaction
 The manager can set a maximum total NAV the vault will accept:
 
 ```
-vault.set_deposit_cap(manager, 1_000_000_0000000)  // 1M USDC cap
+vault.set_deposit_cap(manager, 1_000_000_0000000)  // example deposit cap
 ```
 
 Deposits that would push NAV above the cap revert with `DepositCapExceeded (#15)`. Set to `0` to disable.
@@ -571,7 +571,7 @@ The Oracle contract exposes a simple `get_price(asset) → i128` interface, wher
 ```
 price = 10_000_000  →  1 unit of asset = 1.0 base currency
 price = 5_000_000   →  1 unit = 0.5 base currency
-price = 650_000_000_000  →  1 unit = 65 000 base currency (e.g. BTC in USDC)
+price = 650_000_000_000  →  1 unit = 65 000 base currency (example)
 ```
 
 ### Wiring oracle pricing to a strategy
@@ -741,7 +741,7 @@ cargo install --locked soroban-cli
 ### Build
 
 ```bash
-cd stellar-asset-management
+cd smart-contracts-Stellar
 
 # Build all contracts as WASM
 cargo build --workspace --target wasm32-unknown-unknown --release
