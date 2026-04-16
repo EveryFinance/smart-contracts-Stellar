@@ -11,6 +11,7 @@ target/
 
 # Local deployment outputs
 deployments/*.env
+!deployments/vault_alpha_beta_gamma.latest.env
 
 # AI/tooling traces
 .codex

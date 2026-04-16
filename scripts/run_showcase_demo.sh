@@ -14,7 +14,16 @@ mkdir -p "$REPORT_DIR"
 log() { printf "[%s] %s\n" "$(date +%H:%M:%S)" "$*" >&2; }
 
 latest_showcase_env() {
-  ls -1t deployments/showcase-three-vaults-*.env 2>/dev/null | head -n1
+  local latest
+  latest="$(ls -1t deployments/showcase-three-vaults-*.env 2>/dev/null | head -n1 || true)"
+  if [[ -n "${latest:-}" ]]; then
+    echo "$latest"
+    return 0
+  fi
+  if [[ -f deployments/vault_alpha_beta_gamma.latest.env ]]; then
+    echo "deployments/vault_alpha_beta_gamma.latest.env"
+    return 0
+  fi
 }
 
 build_report() {

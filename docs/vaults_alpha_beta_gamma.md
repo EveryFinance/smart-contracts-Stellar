@@ -7,7 +7,7 @@ Dapp: https://www.elyx.finance/
 This document records a complete on-chain showcase deployment on **Stellar testnet**.
 
 - Deployment timestamp: `2026-04-16 19:20:20`
-- Deployment env file: `deployments/showcase-three-vaults-20260416-192020.env`
+- Deployment env file: `deployments/vault_alpha_beta_gamma.latest.env`
 - Manager: `GB2HC2NLXR7LHKXGS2IZL4F5LZVQVKRBKCWONQQW4WIYUXDILHORWQPZ`
 - Demo user: `GCZZW2O23FN6IULHJF7R3JLZVQ2MCG2TYSQFYPG7WQGWUZFTT7X75RTI`
 
