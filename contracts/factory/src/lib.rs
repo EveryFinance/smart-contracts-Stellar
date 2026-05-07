@@ -32,7 +32,10 @@ pub use error::FactoryError;
 use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, IntoVal, Symbol, Vec};
 
 use storage::{
-    get_admin, get_vaults, set_admin, set_vaults, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
+    get_admin, get_is_registered, get_vault_by_index, get_vault_count, get_vault_position,
+    remove_registered, remove_vault_by_index, remove_vault_position, set_admin, set_registered,
+    set_vault_by_index, set_vault_count, set_vault_position, INSTANCE_BUMP_AMOUNT,
+    INSTANCE_LIFETIME_THRESHOLD,
 };
 
 use events::{admin_changed_event, vault_registered_event, vault_removed_event};
@@ -47,7 +50,7 @@ pub struct Factory;
 #[contractimpl]
 impl Factory {
     fn assert_not_registered(env: &Env, vault: &Address) {
-        if Self::is_registered(env.clone(), vault.clone()) {
+        if get_is_registered(env, vault) {
             panic_with_error!(env, FactoryError::VaultAlreadyRegistered);
         }
     }
@@ -64,7 +67,7 @@ impl Factory {
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         set_admin(&env, &admin);
-        set_vaults(&env, &Vec::new(&env));
+        set_vault_count(&env, 0);
     }
 
     // -----------------------------------------------------------------------
@@ -104,9 +107,11 @@ impl Factory {
             panic_with_error!(&env, FactoryError::ManagerMismatch);
         }
 
-        let mut vaults = get_vaults(&env);
-        vaults.push_back(vault.clone());
-        set_vaults(&env, &vaults);
+        let idx = get_vault_count(&env);
+        set_vault_by_index(&env, idx, &vault);
+        set_vault_position(&env, &vault, idx);
+        set_registered(&env, &vault);
+        set_vault_count(&env, idx + 1);
         vault_registered_event(&env, &vault, &onchain_manager);
     }
 
@@ -139,9 +144,11 @@ impl Factory {
         let manager: Address =
             env.invoke_contract(&vault, &Symbol::new(&env, "get_manager"), ().into_val(&env));
 
-        let mut vaults = get_vaults(&env);
-        vaults.push_back(vault.clone());
-        set_vaults(&env, &vaults);
+        let idx = get_vault_count(&env);
+        set_vault_by_index(&env, idx, &vault);
+        set_vault_position(&env, &vault, idx);
+        set_registered(&env, &vault);
+        set_vault_count(&env, idx + 1);
         vault_registered_event(&env, &vault, &manager);
     }
 
@@ -162,21 +169,24 @@ impl Factory {
             panic_with_error!(&env, FactoryError::NotAdmin);
         }
 
-        let vaults = get_vaults(&env);
-        let mut found = false;
-        let mut new_vaults: Vec<Address> = Vec::new(&env);
-        for v in vaults.iter() {
-            if v == vault && !found {
-                // Remove only the first occurrence.
-                found = true;
-            } else {
-                new_vaults.push_back(v);
-            }
-        }
-        if !found {
+        if !get_is_registered(&env, &vault) {
             panic_with_error!(&env, FactoryError::VaultNotFound);
         }
-        set_vaults(&env, &new_vaults);
+
+        let count = get_vault_count(&env);
+        let last_idx = count - 1;
+        let remove_idx = get_vault_position(&env, &vault);
+
+        // Swap-and-pop: fill the gap with the last entry (O(1) writes).
+        if remove_idx != last_idx {
+            let last_vault = get_vault_by_index(&env, last_idx);
+            set_vault_by_index(&env, remove_idx, &last_vault);
+            set_vault_position(&env, &last_vault, remove_idx);
+        }
+        remove_vault_by_index(&env, last_idx);
+        remove_vault_position(&env, &vault);
+        remove_registered(&env, &vault);
+        set_vault_count(&env, last_idx);
         vault_removed_event(&env, &vault);
     }
 
@@ -216,14 +226,13 @@ impl Factory {
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
-        let all = get_vaults(&env);
-        let total = all.len();
+        let total = get_vault_count(&env);
         let cap = limit.min(50);
         let mut result: Vec<Address> = Vec::new(&env);
 
         let mut i = offset;
         while i < total && i < offset + cap {
-            result.push_back(all.get(i).unwrap());
+            result.push_back(get_vault_by_index(&env, i));
             i += 1;
         }
         result
@@ -234,7 +243,7 @@ impl Factory {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-        get_vaults(&env).len()
+        get_vault_count(&env)
     }
 
     /// Return the admin address.
@@ -250,13 +259,7 @@ impl Factory {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-        let vaults = get_vaults(&env);
-        for v in vaults.iter() {
-            if v == vault {
-                return true;
-            }
-        }
-        false
+        get_is_registered(&env, &vault)
     }
 }
 
