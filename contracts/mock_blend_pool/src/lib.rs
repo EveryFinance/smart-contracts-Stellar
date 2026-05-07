@@ -55,6 +55,14 @@ impl MockBlendPool {
         to: Address,
         requests: Vec<BlendRequest>,
     ) {
+        // The account whose positions are being operated on must authorise the
+        // call.  In the strategy's cross-contract call chain `from` is always
+        // the strategy contract itself (the direct invoker), so Soroban
+        // satisfies this automatically.  This mirrors the real Blend pool's
+        // auth model and prevents any third party from draining positions or
+        // triggering supplies on behalf of an arbitrary `from`.
+        from.require_auth();
+
         let token_addr: Address = env
             .storage()
             .instance()

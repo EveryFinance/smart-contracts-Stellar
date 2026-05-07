@@ -142,6 +142,8 @@ impl MockBlendPool {
         to: Address,
         requests: Vec<BlendRequest>,
     ) {
+        // Mirror the real Blend pool: the position owner must authorise.
+        from.require_auth();
         for req in requests.iter() {
             if req.request_type == 2 {
                 // Supply — record position for `from`.
