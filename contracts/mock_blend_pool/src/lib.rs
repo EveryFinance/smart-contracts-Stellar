@@ -112,12 +112,18 @@ impl MockBlendPool {
                     .persistent()
                     .get(&DataKey::TotalSupply)
                     .unwrap_or(0);
-                env.storage()
-                    .persistent()
-                    .set(&DataKey::Supply(from.clone()), &(bal - req.amount));
-                env.storage()
-                    .persistent()
-                    .set(&DataKey::TotalSupply, &(total - req.amount));
+                let new_bal = bal - req.amount;
+                if new_bal == 0 {
+                    env.storage().persistent().remove(&DataKey::Supply(from.clone()));
+                } else {
+                    env.storage().persistent().set(&DataKey::Supply(from.clone()), &new_bal);
+                }
+                let new_total = total - req.amount;
+                if new_total == 0 {
+                    env.storage().persistent().remove(&DataKey::TotalSupply);
+                } else {
+                    env.storage().persistent().set(&DataKey::TotalSupply, &new_total);
+                }
                 token::Client::new(&env, &token_addr).transfer(&pool, &to, &req.amount);
             }
         }
