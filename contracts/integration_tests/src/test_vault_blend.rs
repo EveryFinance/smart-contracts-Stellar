@@ -58,8 +58,7 @@ fn setup() -> World {
 
     // Blend pool mock.
     let blend_pool = env.register(MockBlendPool, ());
-    MockBlendPoolClient::new(&env, &blend_pool).blend_init();
-    MockBlendPoolClient::new(&env, &blend_pool).set_token(&base);
+    MockBlendPoolClient::new(&env, &blend_pool).blend_init(&base);
 
     // Real BlendStrategy.
     let strat_id = env.register(BlendStrategy, ());

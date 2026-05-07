@@ -174,7 +174,15 @@ pub struct MockBlendPool;
 /// Withdraw (request_type 3): debits position and mints tokens to `to`.
 #[contractimpl]
 impl MockBlendPool {
-    pub fn blend_init(_env: Env) {}
+    /// One-time initialization — stores the underlying token address.
+    /// Panics if already initialized so the token cannot be swapped after setup.
+    pub fn blend_init(env: Env, token: Address) {
+        assert!(
+            !env.storage().instance().has(&BlendPoolKey::Token),
+            "blend_init: already initialized"
+        );
+        env.storage().instance().set(&BlendPoolKey::Token, &token);
+    }
 
     pub fn submit(
         env: Env,
@@ -183,6 +191,7 @@ impl MockBlendPool {
         to: Address,
         requests: Vec<blend_strategy::BlendRequest>,
     ) {
+        from.require_auth();
         for req in requests.iter() {
             if req.request_type == 2 {
                 // Supply — record position for `from`.
@@ -210,10 +219,6 @@ impl MockBlendPool {
                 MockTokenClient::new(&env, &token).mint(&to, &req.amount);
             }
         }
-    }
-
-    pub fn set_token(env: Env, token: Address) {
-        env.storage().instance().set(&BlendPoolKey::Token, &token);
     }
 
     /// Return the supply position for `account` (mirrors the real Blend pool interface).
