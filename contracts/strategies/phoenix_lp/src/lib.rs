@@ -177,6 +177,13 @@ impl PhoenixLpStrategy {
             Some(deadline),
         );
 
+        // Revoke any unspent allowance so a later pool compromise cannot
+        // drain tokens that the pool did not consume on this call.
+        let zero = 0i128;
+        let now = env.ledger().sequence();
+        token::Client::new(&env, &asset_a).approve(&strategy, &pool, &zero, &now);
+        token::Client::new(&env, &asset_b).approve(&strategy, &pool, &zero, &now);
+
         let shares_after = token::Client::new(&env, &share_token).balance(&strategy);
         let shares_minted = shares_after - shares_before;
 
@@ -240,6 +247,11 @@ impl PhoenixLpStrategy {
             min_b,
             Some(deadline),
         );
+
+        // Revoke any residual share-token allowance after the pool call.
+        let zero = 0i128;
+        let now = env.ledger().sequence();
+        token::Client::new(&env, &share_token).approve(&strategy, &pool, &zero, &now);
 
         set_total_shares(&env, total - share_amount);
 

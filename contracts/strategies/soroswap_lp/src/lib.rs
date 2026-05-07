@@ -191,8 +191,8 @@ impl SoroswapLpStrategy {
 
         // Call Soroswap router.
         let (_a_used, _b_used, _lp_minted) = RouterAdapter::new(&env, &router).add_liquidity(
-            asset_a,
-            asset_b,
+            asset_a.clone(),
+            asset_b.clone(),
             amount_a,
             amount_b,
             min_a,
@@ -200,6 +200,13 @@ impl SoroswapLpStrategy {
             strategy.clone(),
             deadline,
         );
+
+        // Revoke any unspent allowance so a later router compromise cannot
+        // drain tokens that were not consumed on this call.
+        let zero = 0i128;
+        let now = env.ledger().sequence();
+        token::Client::new(&env, &asset_a).approve(&strategy, &router, &zero, &now);
+        token::Client::new(&env, &asset_b).approve(&strategy, &router, &zero, &now);
 
         // Compute LP received.
         let lp_after = token::Client::new(&env, &lp_token).balance(&strategy);
@@ -274,6 +281,11 @@ impl SoroswapLpStrategy {
         // Remove liquidity; router sends token_a + token_b directly to `to`.
         let (amount_a, amount_b) = RouterAdapter::new(&env, &router)
             .remove_liquidity(asset_a, asset_b, lp_amount, min_a, min_b, to, deadline);
+
+        // Revoke any residual LP-token allowance after the router call.
+        let zero = 0i128;
+        let now = env.ledger().sequence();
+        token::Client::new(&env, &lp_token).approve(&strategy, &router, &zero, &now);
 
         set_lp_balance(&env, tracked - lp_amount);
 
