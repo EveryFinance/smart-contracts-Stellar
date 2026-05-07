@@ -103,8 +103,8 @@ impl MockBlendPool {
                     .persistent()
                     .get(&DataKey::Supply(from.clone()))
                     .unwrap_or(0);
-                let pool_bal = token::Client::new(&env, &token_addr).balance(&pool);
-                if pool_bal < req.amount {
+                // Enforce strict invariant: cannot withdraw more than deposited principal.
+                if req.amount > bal {
                     panic_with_error!(&env, PoolError::InsufficientSupply);
                 }
                 let total: i128 = env
@@ -112,20 +112,12 @@ impl MockBlendPool {
                     .persistent()
                     .get(&DataKey::TotalSupply)
                     .unwrap_or(0);
-                // Allow withdrawing accrued yield when pool balance exceeds tracked principal.
-                // Principal accounting for this depositor is floored at zero.
-                let principal_reduction = if req.amount > bal { bal } else { req.amount };
                 env.storage()
                     .persistent()
-                    .set(&DataKey::Supply(from.clone()), &(bal - principal_reduction));
-                let new_total = if total >= principal_reduction {
-                    total - principal_reduction
-                } else {
-                    0
-                };
+                    .set(&DataKey::Supply(from.clone()), &(bal - req.amount));
                 env.storage()
                     .persistent()
-                    .set(&DataKey::TotalSupply, &new_total);
+                    .set(&DataKey::TotalSupply, &(total - req.amount));
                 token::Client::new(&env, &token_addr).transfer(&pool, &to, &req.amount);
             }
         }
