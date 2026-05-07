@@ -311,7 +311,16 @@ impl PhoenixTradeGuard {
             panic_with_error!(env, PhoenixGuardError::SlippageTooHigh);
         }
         let diff = quoted_out - min_out;
-        if diff.saturating_mul(10_000) > quoted_out.saturating_mul(MAX_SLIPPAGE_BPS as i128) {
+        // Use checked_mul and fail closed on overflow: saturating_mul could make
+        // both sides equal i128::MAX, causing the strict > comparison to return
+        // false and silently bypass the slippage limit.
+        let lhs = diff
+            .checked_mul(10_000)
+            .unwrap_or_else(|| panic_with_error!(env, PhoenixGuardError::SlippageTooHigh));
+        let rhs = quoted_out
+            .checked_mul(MAX_SLIPPAGE_BPS as i128)
+            .unwrap_or_else(|| panic_with_error!(env, PhoenixGuardError::SlippageTooHigh));
+        if lhs > rhs {
             panic_with_error!(env, PhoenixGuardError::SlippageTooHigh);
         }
     }

@@ -313,8 +313,16 @@ impl SoroswapTradeGuard {
             panic_with_error!(env, SoroswapGuardError::SlippageTooHigh);
         }
         let diff = quoted_out - min_out;
-        // diff * 10_000 > quoted_out * MAX_SLIPPAGE_BPS  →  reject
-        if diff.saturating_mul(10_000) > quoted_out.saturating_mul(MAX_SLIPPAGE_BPS as i128) {
+        // Reject if (quoted_out - min_out) * 10_000 > quoted_out * MAX_SLIPPAGE_BPS.
+        // Use checked_mul and fail closed on overflow: an overflowing product means
+        // the values are pathologically large; treat that as a policy violation.
+        let lhs = diff
+            .checked_mul(10_000)
+            .unwrap_or_else(|| panic_with_error!(env, SoroswapGuardError::SlippageTooHigh));
+        let rhs = quoted_out
+            .checked_mul(MAX_SLIPPAGE_BPS as i128)
+            .unwrap_or_else(|| panic_with_error!(env, SoroswapGuardError::SlippageTooHigh));
+        if lhs > rhs {
             panic_with_error!(env, SoroswapGuardError::SlippageTooHigh);
         }
     }
