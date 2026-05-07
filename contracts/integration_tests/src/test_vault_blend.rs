@@ -45,8 +45,16 @@ fn setup() -> World {
     let base = env.register(MockToken, ());
     MockTokenClient::new(&env, &base).initialize(&manager);
 
-    // Share token (vault will be admin after vault.initialize).
-    let share_id = env.register(ShareTokenContract, ());
+    // Share token: deployed atomically with manager as admin; vault constructor will take admin.
+    let share_id = env.register(
+        ShareTokenContract,
+        (
+            manager.clone(),
+            String::from_str(&env, "VS"),
+            String::from_str(&env, "VS"),
+            7u32,
+        ),
+    );
 
     // Blend pool mock.
     let blend_pool = env.register(MockBlendPool, ());
@@ -56,14 +64,6 @@ fn setup() -> World {
     // Real BlendStrategy.
     let strat_id = env.register(BlendStrategy, ());
     let strategy = BlendStrategyClient::new(&env, &strat_id);
-
-    // Initialize share token with manager as admin; vault constructor will take admin.
-    ShareTokenContractClient::new(&env, &share_id).initialize(
-        &manager,
-        &String::from_str(&env, "VS"),
-        &String::from_str(&env, "VS"),
-        &7u32,
-    );
 
     // Deploy vault with constructor (atomic, front-run-proof).
     let vault_id = env.register(

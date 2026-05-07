@@ -54,16 +54,17 @@ fn setup() -> World {
     let router_id = env.register(MockSoroswapRouter, ());
     MockSoroswapRouterClient::new(&env, &router_id).router_init(&lp_token);
 
-    let share_id = env.register(ShareTokenContract, ());
-    let strat_id = env.register(SoroswapLpStrategy, ());
-
-    // Share token: manager as admin; vault constructor will take admin.
-    ShareTokenContractClient::new(&env, &share_id).initialize(
-        &manager,
-        &String::from_str(&env, "VS"),
-        &String::from_str(&env, "VS"),
-        &7u32,
+    // Share token: deployed atomically with manager as admin; vault constructor will take admin.
+    let share_id = env.register(
+        ShareTokenContract,
+        (
+            manager.clone(),
+            String::from_str(&env, "VS"),
+            String::from_str(&env, "VS"),
+            7u32,
+        ),
     );
+    let strat_id = env.register(SoroswapLpStrategy, ());
 
     // Deploy vault with constructor (atomic, front-run-proof).
     let vault_id = env.register(

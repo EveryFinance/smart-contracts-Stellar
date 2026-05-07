@@ -82,13 +82,15 @@ fn base_world() -> World {
     let base = env.register(MockToken, ());
     MockTokenClient::new(&env, &base).initialize(&manager);
 
-    let share_id = env.register(ShareTokenContract, ());
-
-    ShareTokenContractClient::new(&env, &share_id).initialize(
-        &manager,
-        &String::from_str(&env, "VS"),
-        &String::from_str(&env, "VS"),
-        &7u32,
+    // Share token: deployed atomically with manager as admin; vault constructor will take admin.
+    let share_id = env.register(
+        ShareTokenContract,
+        (
+            manager.clone(),
+            String::from_str(&env, "VS"),
+            String::from_str(&env, "VS"),
+            7u32,
+        ),
     );
 
     let vault_id = env.register(

@@ -24,15 +24,17 @@ use crate::ShareTokenContractClient;
 // ---------------------------------------------------------------------------
 
 fn setup(env: &Env) -> (ShareTokenContractClient<'_>, Address) {
-    let contract_id = env.register(ShareTokenContract, ());
-    let client = ShareTokenContractClient::new(env, &contract_id);
     let admin = Address::generate(env);
-    client.initialize(
-        &admin,
-        &String::from_str(env, "Vault Share Token"),
-        &String::from_str(env, "VST"),
-        &7u32,
+    let contract_id = env.register(
+        ShareTokenContract,
+        (
+            admin.clone(),
+            String::from_str(env, "Vault Share Token"),
+            String::from_str(env, "VST"),
+            7u32,
+        ),
     );
+    let client = ShareTokenContractClient::new(env, &contract_id);
     (client, admin)
 }
 
@@ -50,21 +52,6 @@ fn test_initialize() {
     assert_eq!(client.symbol(), String::from_str(&env, "VST"));
     assert_eq!(client.decimals(), 7u32);
     assert_eq!(client.total_supply(), 0i128);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #2)")]
-fn test_double_initialize_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, admin) = setup(&env);
-    // Second init must fail.
-    client.initialize(
-        &admin,
-        &String::from_str(&env, "Other"),
-        &String::from_str(&env, "OTH"),
-        &7u32,
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -355,62 +342,6 @@ fn test_allowance_unknown_pair_returns_zero() {
     let a = Address::generate(&env);
     let b = Address::generate(&env);
     assert_eq!(client.allowance(&a, &b), 0i128);
-}
-
-// ---------------------------------------------------------------------------
-// NotInitialized — calling any metadata function before initialize panics
-// ---------------------------------------------------------------------------
-
-#[test]
-#[should_panic]
-fn test_name_not_initialized_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(ShareTokenContract, ());
-    let client = ShareTokenContractClient::new(&env, &id);
-    client.name(); // no initialize() called
-}
-
-#[test]
-#[should_panic]
-fn test_symbol_not_initialized_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(ShareTokenContract, ());
-    let client = ShareTokenContractClient::new(&env, &id);
-    client.symbol();
-}
-
-#[test]
-#[should_panic]
-fn test_decimals_not_initialized_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(ShareTokenContract, ());
-    let client = ShareTokenContractClient::new(&env, &id);
-    client.decimals();
-}
-
-#[test]
-#[should_panic]
-fn test_mint_not_initialized_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(ShareTokenContract, ());
-    let client = ShareTokenContractClient::new(&env, &id);
-    let user = Address::generate(&env);
-    client.mint(&user, &100i128);
-}
-
-#[test]
-#[should_panic]
-fn test_set_admin_not_initialized_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(ShareTokenContract, ());
-    let client = ShareTokenContractClient::new(&env, &id);
-    let new_admin = Address::generate(&env);
-    client.set_admin(&new_admin);
 }
 
 // ---------------------------------------------------------------------------

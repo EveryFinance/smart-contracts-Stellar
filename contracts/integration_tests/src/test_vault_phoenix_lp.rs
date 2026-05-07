@@ -55,16 +55,17 @@ fn setup() -> World {
     let pool = env.register(MockPhoenixPool, ());
     MockPhoenixPoolClient::new(&env, &pool).phoenix_init(&share_token, &token_a, &token_b);
 
-    let vault_share_id = env.register(ShareTokenContract, ());
-    let strat_id = env.register(PhoenixLpStrategy, ());
-
-    // Share token: manager as admin; vault constructor will take admin.
-    ShareTokenContractClient::new(&env, &vault_share_id).initialize(
-        &manager,
-        &String::from_str(&env, "VS"),
-        &String::from_str(&env, "VS"),
-        &7u32,
+    // Share token: deployed atomically with manager as admin; vault constructor will take admin.
+    let vault_share_id = env.register(
+        ShareTokenContract,
+        (
+            manager.clone(),
+            String::from_str(&env, "VS"),
+            String::from_str(&env, "VS"),
+            7u32,
+        ),
     );
+    let strat_id = env.register(PhoenixLpStrategy, ());
 
     // Deploy vault with constructor (atomic, front-run-proof).
     let vault_id = env.register(

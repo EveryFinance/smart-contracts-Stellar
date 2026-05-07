@@ -47,17 +47,17 @@ fn setup_world_with_fees(entry: u32, exit: u32, mgmt: u32, perf: u32) -> World {
     let base = env.register(MockToken, ());
     MockTokenClient::new(&env, &base).initialize(&manager);
 
-    // Deploy real ShareToken.
-    let share_id = env.register(ShareTokenContract, ());
-
-    // Initialize ShareToken with manager as admin; vault constructor will take admin.
-    let share = ShareTokenContractClient::new(&env, &share_id);
-    share.initialize(
-        &manager,
-        &String::from_str(&env, "Vault Share"),
-        &String::from_str(&env, "VS"),
-        &7u32,
+    // Deploy real ShareToken atomically with manager as admin; vault constructor will take admin.
+    let share_id = env.register(
+        ShareTokenContract,
+        (
+            manager.clone(),
+            String::from_str(&env, "Vault Share"),
+            String::from_str(&env, "VS"),
+            7u32,
+        ),
     );
+    let share = ShareTokenContractClient::new(&env, &share_id);
 
     // Deploy Vault with constructor (atomic, front-run-proof).
     let vault_id = env.register(

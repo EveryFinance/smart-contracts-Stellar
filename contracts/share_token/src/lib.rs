@@ -25,7 +25,7 @@ use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, String
 
 use storage::{
     get_admin, get_allowance, get_allowance_value, get_balance, get_decimals, get_name, get_symbol,
-    get_total_supply, has_admin, set_admin, set_allowance, set_balance, set_decimals, set_name,
+    get_total_supply, set_admin, set_allowance, set_balance, set_decimals, set_name,
     set_symbol, set_total_supply, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
 };
 
@@ -68,23 +68,19 @@ impl ShareTokenContract {
 
     /// Initialize the ShareToken contract.
     ///
-    /// Must be called exactly once, typically by the deployer immediately after
-    /// deployment. Sets the vault address as admin and configures metadata.
+    /// Runs atomically at `CreateContract` time, preventing front-running
+    /// attacks where an attacker could otherwise call `initialize` first and
+    /// claim the admin role.
     ///
     /// # Arguments
     /// * `admin`    – The vault contract address that will be allowed to mint
-    ///               and burn tokens.
+    ///               and burn tokens (typically the deploying manager, later
+    ///               transferred to the vault via `set_admin`).
     /// * `name`     – Human-readable token name (e.g. `"Vault Share Token"`).
     /// * `symbol`   – Short ticker symbol (e.g. `"VST"`).
     /// * `decimals` – Number of decimal places (typically `7` to match Stellar
     ///               native asset precision).
-    ///
-    /// # Errors
-    /// * [`ShareTokenError::AlreadyInitialized`] if called more than once.
-    pub fn initialize(env: Env, admin: Address, name: String, symbol: String, decimals: u32) {
-        if has_admin(&env) {
-            panic_with_error!(&env, ShareTokenError::AlreadyInitialized);
-        }
+    pub fn __constructor(env: Env, admin: Address, name: String, symbol: String, decimals: u32) {
         admin.require_auth();
 
         set_admin(&env, &admin);
