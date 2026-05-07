@@ -333,15 +333,23 @@ impl MockPhoenixPool {
         env: Env,
         depositor: Address,
         desired_a: Option<i128>,
-        _min_a: Option<i128>,
+        min_a: Option<i128>,
         desired_b: Option<i128>,
-        _min_b: Option<i128>,
+        min_b: Option<i128>,
         _slippage_bps: Option<i64>,
         _deadline: Option<u64>,
         _auto_stake: bool,
     ) {
+        depositor.require_auth();
         let amount_a = desired_a.unwrap_or(0);
         let amount_b = desired_b.unwrap_or(0);
+        assert!(amount_a >= 0 && amount_b >= 0, "provide_liquidity: negative amount");
+        if let Some(min) = min_a {
+            assert!(amount_a >= min, "provide_liquidity: amount_a below min");
+        }
+        if let Some(min) = min_b {
+            assert!(amount_b >= min, "provide_liquidity: amount_b below min");
+        }
         let shares = amount_a.min(amount_b);
         let share_token: Address = env
             .storage()
@@ -371,10 +379,12 @@ impl MockPhoenixPool {
         env: Env,
         recipient: Address,
         share_amount: i128,
-        _min_a: i128,
-        _min_b: i128,
+        min_a: i128,
+        min_b: i128,
         _deadline: Option<u64>,
     ) -> (i128, i128) {
+        recipient.require_auth();
+        assert!(share_amount > 0, "withdraw_liquidity: zero share_amount");
         let reserve_a: i128 = env
             .storage()
             .instance()
@@ -402,6 +412,8 @@ impl MockPhoenixPool {
             let half = share_amount / 2;
             (half, half)
         };
+        assert!(amount_a >= min_a, "withdraw_liquidity: amount_a below min");
+        assert!(amount_b >= min_b, "withdraw_liquidity: amount_b below min");
         let token_a: Address = env
             .storage()
             .instance()
@@ -415,12 +427,18 @@ impl MockPhoenixPool {
         MockTokenClient::new(&env, &token_a).mint(&recipient, &amount_a);
         MockTokenClient::new(&env, &token_b).mint(&recipient, &amount_b);
 
+        let new_reserve_a = reserve_a
+            .checked_sub(amount_a)
+            .expect("withdraw_liquidity: reserve_a underflow");
+        let new_reserve_b = reserve_b
+            .checked_sub(amount_b)
+            .expect("withdraw_liquidity: reserve_b underflow");
         env.storage()
             .instance()
-            .set(&PhoenixKey::ReserveA, &(reserve_a - amount_a));
+            .set(&PhoenixKey::ReserveA, &new_reserve_a);
         env.storage()
             .instance()
-            .set(&PhoenixKey::ReserveB, &(reserve_b - amount_b));
+            .set(&PhoenixKey::ReserveB, &new_reserve_b);
         (amount_a, amount_b)
     }
 
