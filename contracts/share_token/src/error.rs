@@ -35,4 +35,9 @@ pub enum ShareTokenError {
 
     /// An arithmetic operation would overflow i128.
     Overflow = 8,
+
+    /// `approve` was called with a non-zero amount while a non-zero, non-expired
+    /// allowance already exists for that (owner, spender) pair.  Set the
+    /// allowance to 0 first, or use `increase_allowance`/`decrease_allowance`.
+    NonZeroAllowance = 9,
 }

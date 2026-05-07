@@ -543,3 +543,118 @@ fn test_burn_from_expired_allowance_panics() {
 
     client.burn_from(&spender, &owner, &1i128);
 }
+
+// ---------------------------------------------------------------------------
+// Allowance race-condition mitigations (efd80f99)
+// ---------------------------------------------------------------------------
+
+/// approve: setting a non-zero allowance on top of an existing non-zero one panics.
+#[test]
+#[should_panic]
+fn test_approve_nonzero_over_nonzero_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = setup(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint(&alice, &1_000i128);
+    client.approve(&alice, &bob, &500i128, &999u32);
+    client.approve(&alice, &bob, &200i128, &999u32); // must panic: nonzero → nonzero
+}
+
+/// approve: setting to zero from non-zero succeeds (revocation path).
+#[test]
+fn test_approve_zero_revoke_then_set_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = setup(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint(&alice, &1_000i128);
+    client.approve(&alice, &bob, &500i128, &999u32);
+    client.approve(&alice, &bob, &0i128, &999u32);    // revoke
+    client.approve(&alice, &bob, &200i128, &999u32);  // re-set after zero
+    assert_eq!(client.allowance(&alice, &bob), 200i128);
+}
+
+/// approve: setting non-zero when previous allowance is expired is allowed.
+#[test]
+fn test_approve_nonzero_after_expiration_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.sequence_number = 100);
+    let (client, _admin) = setup(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint(&alice, &1_000i128);
+    client.approve(&alice, &bob, &500i128, &101u32); // expires at 101
+    env.ledger().with_mut(|li| li.sequence_number = 102); // past expiry
+    client.approve(&alice, &bob, &300i128, &200u32); // ok — old allowance expired
+    assert_eq!(client.allowance(&alice, &bob), 300i128);
+}
+
+/// increase_allowance adds delta to existing allowance atomically.
+#[test]
+fn test_increase_allowance_adds_delta() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = setup(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint(&alice, &1_000i128);
+    client.approve(&alice, &bob, &300i128, &999u32);
+    client.increase_allowance(&alice, &bob, &200i128, &999u32);
+    assert_eq!(client.allowance(&alice, &bob), 500i128);
+}
+
+/// decrease_allowance subtracts delta from existing allowance.
+#[test]
+fn test_decrease_allowance_subtracts_delta() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = setup(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint(&alice, &1_000i128);
+    client.approve(&alice, &bob, &500i128, &999u32);
+    client.decrease_allowance(&alice, &bob, &200i128, &999u32);
+    assert_eq!(client.allowance(&alice, &bob), 300i128);
+}
+
+/// decrease_allowance floors at zero — does not underflow.
+#[test]
+fn test_decrease_allowance_floors_at_zero() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = setup(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint(&alice, &1_000i128);
+    client.approve(&alice, &bob, &100i128, &999u32);
+    client.decrease_allowance(&alice, &bob, &999i128, &999u32); // delta > current
+    assert_eq!(client.allowance(&alice, &bob), 0i128);
+}
+
+/// increase_allowance with zero delta panics.
+#[test]
+#[should_panic]
+fn test_increase_allowance_zero_delta_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = setup(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.increase_allowance(&alice, &bob, &0i128, &999u32);
+}
+
+/// decrease_allowance with zero delta panics.
+#[test]
+#[should_panic]
+fn test_decrease_allowance_zero_delta_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = setup(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.decrease_allowance(&alice, &bob, &0i128, &999u32);
+}

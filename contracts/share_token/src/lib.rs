@@ -25,8 +25,8 @@ use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, String
 
 use storage::{
     get_admin, get_allowance, get_allowance_value, get_balance, get_decimals, get_name, get_symbol,
-    get_total_supply, set_admin, set_allowance, set_balance, set_decimals, set_name,
-    set_symbol, set_total_supply, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
+    get_total_supply, set_admin, set_allowance, set_balance, set_decimals, set_name, set_symbol,
+    set_total_supply, AllowanceValue, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
 };
 
 // ---------------------------------------------------------------------------
@@ -193,6 +193,12 @@ impl ShareTokenContract {
     ///
     /// Setting `amount` to `0` effectively revokes the allowance.
     ///
+    /// **Zero-first rule:** To prevent the well-known allowance race condition,
+    /// changing a live non-zero allowance directly to another non-zero value is
+    /// rejected.  Callers must first set the allowance to `0`, then set the new
+    /// value — or use [`increase_allowance`] / [`decrease_allowance`] for atomic
+    /// adjustments.
+    ///
     /// # Arguments
     /// * `from`              – Token holder (must sign this transaction).
     /// * `spender`           – Address being authorized.
@@ -205,7 +211,9 @@ impl ShareTokenContract {
     /// `from` must authorize this call.
     ///
     /// # Errors
-    /// * [`ShareTokenError::NegativeAmount`] if `amount < 0`.
+    /// * [`ShareTokenError::NegativeAmount`]  if `amount < 0`.
+    /// * [`ShareTokenError::NonZeroAllowance`] if a live non-zero allowance
+    ///   already exists and `amount` is also non-zero.
     pub fn approve(
         env: Env,
         from: Address,
@@ -223,8 +231,90 @@ impl ShareTokenContract {
 
         from.require_auth();
 
+        // Reject non-zero → non-zero transitions to prevent the approval
+        // race condition: a spender cannot front-run a reduction and spend
+        // both the old and new allowance.
+        if amount > 0 {
+            let current = get_allowance(&env, &from, &spender);
+            if current > 0 {
+                panic_with_error!(&env, ShareTokenError::NonZeroAllowance);
+            }
+        }
+
         set_allowance(&env, &from, &spender, amount, expiration_ledger);
         events::approve_event(&env, from, spender, amount, expiration_ledger);
+    }
+
+    /// Atomically increase the allowance granted to `spender` by `delta`.
+    ///
+    /// Safe alternative to `approve` for raising an existing allowance without
+    /// the approval race condition.
+    ///
+    /// # Arguments
+    /// * `from`              – Token holder (must sign).
+    /// * `spender`           – Approved spender.
+    /// * `delta`             – Amount to add. Must be > 0.
+    /// * `expiration_ledger` – New expiry applied to the updated allowance.
+    ///
+    /// # Errors
+    /// * [`ShareTokenError::ZeroAmount`]  / [`ShareTokenError::NegativeAmount`]
+    /// * [`ShareTokenError::Overflow`] if the resulting allowance exceeds i128::MAX.
+    pub fn increase_allowance(
+        env: Env,
+        from: Address,
+        spender: Address,
+        delta: i128,
+        expiration_ledger: u32,
+    ) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        require_positive(&env, delta);
+        from.require_auth();
+
+        let current = get_allowance(&env, &from, &spender);
+        let new_amount = current
+            .checked_add(delta)
+            .unwrap_or_else(|| panic_with_error!(&env, ShareTokenError::Overflow));
+
+        set_allowance(&env, &from, &spender, new_amount, expiration_ledger);
+        events::approve_event(&env, from, spender, new_amount, expiration_ledger);
+    }
+
+    /// Atomically decrease the allowance granted to `spender` by `delta`.
+    ///
+    /// Safe alternative to `approve` for lowering an existing allowance without
+    /// the approval race condition.  If `delta` exceeds the current allowance
+    /// the allowance is set to `0` (floors, does not panic).
+    ///
+    /// # Arguments
+    /// * `from`              – Token holder (must sign).
+    /// * `spender`           – Approved spender.
+    /// * `delta`             – Amount to subtract. Must be > 0.
+    /// * `expiration_ledger` – New expiry applied to the updated allowance.
+    ///
+    /// # Errors
+    /// * [`ShareTokenError::ZeroAmount`] / [`ShareTokenError::NegativeAmount`]
+    pub fn decrease_allowance(
+        env: Env,
+        from: Address,
+        spender: Address,
+        delta: i128,
+        expiration_ledger: u32,
+    ) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        require_positive(&env, delta);
+        from.require_auth();
+
+        let current = get_allowance(&env, &from, &spender);
+        let new_amount = current.saturating_sub(delta).max(0);
+
+        set_allowance(&env, &from, &spender, new_amount, expiration_ledger);
+        events::approve_event(&env, from, spender, new_amount, expiration_ledger);
     }
 
     /// Transfer `amount` tokens from the caller to `to`.
