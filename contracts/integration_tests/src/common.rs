@@ -258,11 +258,14 @@ impl MockSoroswapRouter {
         _token_b: Address,
         amount_a: i128,
         amount_b: i128,
-        _min_a: i128,
-        _min_b: i128,
+        min_a: i128,
+        min_b: i128,
         to: Address,
         _deadline: u64,
     ) -> (i128, i128, i128) {
+        to.require_auth();
+        assert!(amount_a >= min_a, "add_liquidity: amount_a below min");
+        assert!(amount_b >= min_b, "add_liquidity: amount_b below min");
         let lp_minted = amount_a.min(amount_b);
         let lp: Address = env.storage().instance().get(&RouterKey::LpToken).unwrap();
         MockTokenClient::new(&env, &lp).mint(&to, &lp_minted);
@@ -273,12 +276,15 @@ impl MockSoroswapRouter {
         token_a: Address,
         token_b: Address,
         liquidity: i128,
-        _min_a: i128,
-        _min_b: i128,
+        min_a: i128,
+        min_b: i128,
         to: Address,
         _deadline: u64,
     ) -> (i128, i128) {
+        to.require_auth();
         let half = liquidity / 2;
+        assert!(half >= min_a, "remove_liquidity: amount_a below min");
+        assert!(half >= min_b, "remove_liquidity: amount_b below min");
         MockTokenClient::new(&env, &token_a).mint(&to, &half);
         MockTokenClient::new(&env, &token_b).mint(&to, &half);
         (half, half)

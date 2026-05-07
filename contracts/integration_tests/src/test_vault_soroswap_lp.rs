@@ -36,7 +36,7 @@ struct World {
 
 fn setup() -> World {
     let env = Env::default();
-    env.mock_all_auths();
+    env.mock_all_auths_allowing_non_root_auth();
 
     let manager = Address::generate(&env);
     let trader = Address::generate(&env);
