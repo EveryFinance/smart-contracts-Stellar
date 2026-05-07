@@ -213,6 +213,8 @@ fn strategy_quote_exact_in(
 
 /// Call a trade-guard's `validate_swap_exact_in` function.
 /// Returns without panic if validation passes; reverts otherwise.
+/// The guard fetches the on-chain quote from the strategy internally;
+/// the vault no longer forwards a caller-influenced quoted_out value.
 fn guard_validate(
     env: &Env,
     guard: &Address,
@@ -220,9 +222,8 @@ fn guard_validate(
     amount_in: i128,
     min_out: i128,
     path: &Vec<Address>,
-    quoted_out: i128,
 ) {
-    let args = (vault.clone(), amount_in, min_out, path.clone(), quoted_out).into_val(env);
+    let args = (vault.clone(), amount_in, min_out, path.clone()).into_val(env);
     env.invoke_contract::<()>(guard, &Symbol::new(env, "validate_swap_exact_in"), args);
 }
 
@@ -1104,7 +1105,9 @@ impl Vault {
         }
 
         // Guard validates policy (reverts on violation).
-        guard_validate(&env, &guard, &vault, amount_in, min_out, &path, quoted_out);
+        // quoted_out is NOT forwarded — the guard fetches the on-chain quote
+        // from the strategy internally to prevent caller-supplied quote spoofing.
+        guard_validate(&env, &guard, &vault, amount_in, min_out, &path);
 
         // Forward trade to strategy.
         let args = (amount_in, min_out, path, vault.clone()).into_val(&env);

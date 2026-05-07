@@ -54,6 +54,10 @@ pub enum DataKey {
     /// Ordered list of token addresses approved for trading.
     /// Every token in a swap path must appear in this list.
     Whitelist,
+
+    /// The Soroswap strategy contract address used to obtain on-chain quotes
+    /// for slippage validation instead of trusting caller-supplied values.
+    Strategy,
 }
 
 // ---------------------------------------------------------------------------
@@ -130,4 +134,22 @@ pub fn get_whitelist(env: &Env) -> Vec<Address> {
         .instance()
         .get(&DataKey::Whitelist)
         .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Persist the strategy address used for on-chain quote fetching.
+pub fn set_strategy(env: &Env, v: &Address) {
+    bump(env);
+    env.storage().instance().set(&DataKey::Strategy, v);
+}
+
+/// Read the strategy address.
+///
+/// # Panics
+/// Panics with [`SoroswapGuardError::NotInitialized`] if absent.
+pub fn get_strategy(env: &Env) -> Address {
+    bump(env);
+    env.storage()
+        .instance()
+        .get(&DataKey::Strategy)
+        .unwrap_or_else(|| panic_with_error!(env, SoroswapGuardError::NotInitialized))
 }

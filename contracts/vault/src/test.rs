@@ -670,7 +670,6 @@ mod mock_pass_guard_mod {
             _amount_in: i128,
             _min_out: i128,
             _path: Vec<Address>,
-            _quoted_out: i128,
         ) {
             // Always passes.
         }
@@ -694,7 +693,6 @@ mod mock_reject_guard_mod {
             _amount_in: i128,
             _min_out: i128,
             _path: Vec<Address>,
-            _quoted_out: i128,
         ) {
             panic!("guard rejected");
         }
@@ -1228,7 +1226,6 @@ mod mock_invest_pass_guard_mod {
             _amount_in: i128,
             _min_out: i128,
             _path: soroban_sdk::Vec<Address>,
-            _quoted_out: i128,
         ) {
         }
     }
@@ -1253,7 +1250,6 @@ mod mock_invest_reject_guard_mod {
             _amount_in: i128,
             _min_out: i128,
             _path: soroban_sdk::Vec<Address>,
-            _quoted_out: i128,
         ) {
         }
     }

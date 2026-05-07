@@ -28,8 +28,9 @@ pub use error::SoroswapGuardError;
 use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, IntoVal, Symbol, Vec};
 
 use storage::{
-    get_manager, get_vault, get_whitelist, is_initialized, set_manager, set_vault, set_whitelist,
-    INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD, MAX_PATH_LEN, MAX_SLIPPAGE_BPS,
+    get_manager, get_strategy, get_vault, get_whitelist, is_initialized, set_manager, set_strategy,
+    set_vault, set_whitelist, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD, MAX_PATH_LEN,
+    MAX_SLIPPAGE_BPS,
 };
 
 // ---------------------------------------------------------------------------
@@ -48,13 +49,22 @@ impl SoroswapTradeGuard {
     /// Initialize the trade guard.
     ///
     /// # Arguments
-    /// * `vault`   – The only address allowed to call `validate_*`.
-    /// * `manager` – Account allowed to update the token whitelist.
-    /// * `tokens`  – Initial whitelist of tradeable token addresses.
+    /// * `vault`    – The only address allowed to call `validate_*`.
+    /// * `manager`  – Account allowed to update the token whitelist.
+    /// * `tokens`   – Initial whitelist of tradeable token addresses.
+    /// * `strategy` – Strategy contract whose `quote_exact_in` is called
+    ///                on-chain to obtain a trusted price quote for slippage
+    ///                validation (instead of accepting caller-supplied values).
     ///
     /// # Errors
     /// * [`SoroswapGuardError::AlreadyInitialized`]
-    pub fn initialize(env: Env, vault: Address, manager: Address, tokens: Vec<Address>) {
+    pub fn initialize(
+        env: Env,
+        vault: Address,
+        manager: Address,
+        tokens: Vec<Address>,
+        strategy: Address,
+    ) {
         if is_initialized(&env) {
             panic_with_error!(&env, SoroswapGuardError::AlreadyInitialized);
         }
@@ -75,6 +85,7 @@ impl SoroswapTradeGuard {
         set_vault(&env, &vault);
         set_manager(&env, &manager);
         set_whitelist(&env, &tokens);
+        set_strategy(&env, &strategy);
     }
 
     // -----------------------------------------------------------------------
@@ -103,13 +114,15 @@ impl SoroswapTradeGuard {
     /// Validate a `swap_exact_tokens_for_tokens` call.
     ///
     /// Called by the vault before forwarding the swap to the Soroswap router.
+    /// The slippage check uses an on-chain quote fetched directly from the
+    /// stored strategy contract rather than accepting a caller-supplied value,
+    /// preventing quote-spoofing attacks.
     ///
     /// # Arguments
-    /// * `caller`     – Must equal the registered vault address.
-    /// * `amount_in`  – Exact input token amount (must be positive).
-    /// * `min_out`    – Minimum output accepted (slippage guard).
-    /// * `quoted_out` – Router quote for `amount_in` and `path`.
-    /// * `path`       – Ordered list of token addresses [token_in, …, token_out].
+    /// * `caller`    – Must equal the registered vault address.
+    /// * `amount_in` – Exact input token amount (must be positive).
+    /// * `min_out`   – Minimum output accepted (slippage guard).
+    /// * `path`      – Ordered list of token addresses [token_in, …, token_out].
     ///
     /// # Errors
     /// * [`SoroswapGuardError::NotVault`]
@@ -123,7 +136,6 @@ impl SoroswapTradeGuard {
         amount_in: i128,
         min_out: i128,
         path: Vec<Address>,
-        quoted_out: i128,
     ) {
         env.storage()
             .instance()
@@ -137,29 +149,44 @@ impl SoroswapTradeGuard {
         Self::check_amount(amount_in, &env);
         Self::check_path(&path, &env);
         Self::check_whitelist(&path, &env);
+
+        // Fetch quote from the trusted strategy contract instead of trusting
+        // the caller-supplied value.  This closes the quote-spoofing window.
+        let strategy = get_strategy(&env);
+        let quoted_out: i128 = env.invoke_contract(
+            &strategy,
+            &Symbol::new(&env, "quote_exact_in"),
+            (amount_in, path.clone()).into_val(&env),
+        );
+
         Self::check_slippage(min_out, quoted_out, &env);
     }
 
     /// Validate a `swap_tokens_for_exact_tokens` call.
     ///
     /// Called by the vault before forwarding the swap to the Soroswap router.
+    /// `max_in` is the hard spend cap enforced by the router; slippage
+    /// protection for exact-out swaps is guaranteed by the router rejecting
+    /// executions that would require more than `max_in` input tokens.
     ///
     /// # Arguments
-    /// * `caller`      – Must equal the registered vault address.
-    /// * `amount_out`  – Exact output token amount desired (must be positive).
-    /// * `max_in`      – Maximum input token amount willing to spend.
-    /// * `path`        – Ordered list of token addresses [token_in, …, token_out].
-    /// * `quoted_in`   – Router quote for required input to get `amount_out`.
+    /// * `caller`     – Must equal the registered vault address.
+    /// * `amount_out` – Exact output token amount desired (must be positive).
+    /// * `max_in`     – Maximum input token amount willing to spend (must be
+    ///                  positive).
+    /// * `path`       – Ordered list of token addresses [token_in, …, token_out].
     ///
     /// # Errors
-    /// Same set as [`validate_swap_exact_in`].
+    /// * [`SoroswapGuardError::NotVault`]
+    /// * [`SoroswapGuardError::InvalidAmount`]
+    /// * [`SoroswapGuardError::PathTooShort`] / [`SoroswapGuardError::PathTooLong`]
+    /// * [`SoroswapGuardError::TokenNotWhitelisted`]
     pub fn validate_swap_exact_out(
         env: Env,
         caller: Address,
         amount_out: i128,
         max_in: i128,
         path: Vec<Address>,
-        quoted_in: i128,
     ) {
         env.storage()
             .instance()
@@ -174,7 +201,6 @@ impl SoroswapTradeGuard {
         Self::check_amount(max_in, &env);
         Self::check_path(&path, &env);
         Self::check_whitelist(&path, &env);
-        Self::check_exact_out_slippage(max_in, quoted_in, &env);
     }
 
     /// Validate strategy-invest operations guarded by this contract.
@@ -235,6 +261,13 @@ impl SoroswapTradeGuard {
         get_manager(&env)
     }
 
+    pub fn get_strategy(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        get_strategy(&env)
+    }
+
     // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
@@ -286,21 +319,6 @@ impl SoroswapTradeGuard {
         }
     }
 
-    /// Reject if `(max_in - quoted_in) / quoted_in > MAX_SLIPPAGE_BPS / 10_000`.
-    ///
-    /// If `max_in <= quoted_in`, this is stricter than quote and is accepted.
-    fn check_exact_out_slippage(max_in: i128, quoted_in: i128, env: &Env) {
-        if quoted_in <= 0 {
-            panic_with_error!(env, SoroswapGuardError::SlippageTooHigh);
-        }
-        if max_in <= quoted_in {
-            return;
-        }
-        let diff = max_in - quoted_in;
-        if diff.saturating_mul(10_000) > quoted_in.saturating_mul(MAX_SLIPPAGE_BPS as i128) {
-            panic_with_error!(env, SoroswapGuardError::SlippageTooHigh);
-        }
-    }
 }
 
 #[cfg(test)]

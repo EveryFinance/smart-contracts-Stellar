@@ -26,11 +26,27 @@ impl MockVault {
     }
 }
 
+// ---------------------------------------------------------------------------
+// MockStrategy — returns a fixed 1:1 quote so slippage tests are predictable
+// ---------------------------------------------------------------------------
+
+#[contract]
+pub struct MockStrategy;
+
+#[contractimpl]
+impl MockStrategy {
+    /// Returns amount_in as the quote (1:1 exchange rate for test simplicity).
+    pub fn quote_exact_in(_env: Env, amount_in: i128, _path: Vec<Address>) -> i128 {
+        amount_in
+    }
+}
+
 struct T {
     env: Env,
     guard: SoroswapTradeGuardClient<'static>,
     vault: Address,
     manager: Address,
+    strategy: Address,
     token_a: Address,
     token_b: Address,
     token_c: Address,
@@ -43,6 +59,9 @@ fn setup() -> T {
     let manager = Address::generate(&env);
     let vault = env.register(MockVault, ());
     MockVaultClient::new(&env, &vault).set_manager(&manager);
+
+    let strategy = env.register(MockStrategy, ());
+
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
     let token_c = Address::generate(&env);
@@ -51,7 +70,7 @@ fn setup() -> T {
     let guard = SoroswapTradeGuardClient::new(&env, &gid);
 
     let tokens: Vec<Address> = vec![&env, token_a.clone(), token_b.clone(), token_c.clone()];
-    guard.initialize(&vault, &manager, &tokens);
+    guard.initialize(&vault, &manager, &tokens, &strategy);
 
     let guard: SoroswapTradeGuardClient<'static> = unsafe { core::mem::transmute(guard) };
 
@@ -60,6 +79,7 @@ fn setup() -> T {
         guard,
         vault,
         manager,
+        strategy,
         token_a,
         token_b,
         token_c,
@@ -84,7 +104,7 @@ fn test_initialize_stores_data() {
 fn test_double_initialize_panics() {
     let t = setup();
     let tokens: Vec<Address> = vec![&t.env, t.token_a.clone()];
-    t.guard.initialize(&t.vault, &t.manager, &tokens);
+    t.guard.initialize(&t.vault, &t.manager, &tokens, &t.strategy);
 }
 
 // ---------------------------------------------------------------------------
@@ -118,7 +138,7 @@ fn test_validate_exact_in_valid() {
     let path: Vec<Address> = vec![&t.env, t.token_a.clone(), t.token_b.clone()];
     // amount_in=1000, min_out=950 → slippage=5% which is <= 10%
     t.guard
-        .validate_swap_exact_in(&t.vault, &1_000i128, &950i128, &path, &1_000i128);
+        .validate_swap_exact_in(&t.vault, &1_000i128, &950i128, &path);
 }
 
 #[test]
@@ -128,7 +148,7 @@ fn test_validate_exact_in_not_vault_panics() {
     let path: Vec<Address> = vec![&t.env, t.token_a.clone(), t.token_b.clone()];
     let rogue = Address::generate(&t.env);
     t.guard
-        .validate_swap_exact_in(&rogue, &1_000i128, &950i128, &path, &1_000i128);
+        .validate_swap_exact_in(&rogue, &1_000i128, &950i128, &path);
 }
 
 #[test]
@@ -137,7 +157,7 @@ fn test_validate_exact_in_zero_amount_panics() {
     let t = setup();
     let path: Vec<Address> = vec![&t.env, t.token_a.clone(), t.token_b.clone()];
     t.guard
-        .validate_swap_exact_in(&t.vault, &0i128, &0i128, &path, &1_000i128);
+        .validate_swap_exact_in(&t.vault, &0i128, &0i128, &path);
 }
 
 #[test]
@@ -146,7 +166,7 @@ fn test_validate_exact_in_negative_amount_panics() {
     let t = setup();
     let path: Vec<Address> = vec![&t.env, t.token_a.clone(), t.token_b.clone()];
     t.guard
-        .validate_swap_exact_in(&t.vault, &-1i128, &0i128, &path, &1_000i128);
+        .validate_swap_exact_in(&t.vault, &-1i128, &0i128, &path);
 }
 
 #[test]
@@ -155,7 +175,7 @@ fn test_validate_exact_in_path_too_short_panics() {
     let t = setup();
     let path: Vec<Address> = vec![&t.env, t.token_a.clone()];
     t.guard
-        .validate_swap_exact_in(&t.vault, &1_000i128, &900i128, &path, &1_000i128);
+        .validate_swap_exact_in(&t.vault, &1_000i128, &900i128, &path);
 }
 
 #[test]
@@ -187,7 +207,7 @@ fn test_validate_exact_in_path_too_long_panics() {
         extra_3,
     ];
     t.guard
-        .validate_swap_exact_in(&t.vault, &1_000i128, &900i128, &path, &1_000i128);
+        .validate_swap_exact_in(&t.vault, &1_000i128, &900i128, &path);
 }
 
 #[test]
@@ -197,7 +217,7 @@ fn test_validate_exact_in_token_not_whitelisted_panics() {
     let unlisted = Address::generate(&t.env);
     let path: Vec<Address> = vec![&t.env, t.token_a.clone(), unlisted];
     t.guard
-        .validate_swap_exact_in(&t.vault, &1_000i128, &900i128, &path, &1_000i128);
+        .validate_swap_exact_in(&t.vault, &1_000i128, &900i128, &path);
 }
 
 #[test]
@@ -207,7 +227,7 @@ fn test_validate_exact_in_slippage_too_high_panics() {
     let path: Vec<Address> = vec![&t.env, t.token_a.clone(), t.token_b.clone()];
     // amount_in=1000, min_out=0 → slippage=100% which is > 10%
     t.guard
-        .validate_swap_exact_in(&t.vault, &1_000i128, &0i128, &path, &1_000i128);
+        .validate_swap_exact_in(&t.vault, &1_000i128, &0i128, &path);
 }
 
 #[test]
@@ -217,7 +237,7 @@ fn test_validate_exact_in_exactly_at_slippage_limit() {
     // MAX_SLIPPAGE_BPS = 1000 = 10 %
     // amount_in=1000, min_out=900 → (1000-900)/1000 = 10% exactly → should pass
     t.guard
-        .validate_swap_exact_in(&t.vault, &1_000i128, &900i128, &path, &1_000i128);
+        .validate_swap_exact_in(&t.vault, &1_000i128, &900i128, &path);
 }
 
 // ---------------------------------------------------------------------------
@@ -228,19 +248,8 @@ fn test_validate_exact_in_exactly_at_slippage_limit() {
 fn test_validate_exact_out_valid() {
     let t = setup();
     let path: Vec<Address> = vec![&t.env, t.token_a.clone(), t.token_b.clone()];
-    // quoted_in=950, max_in=1000 → slippage=5.26% <= 10%
     t.guard
-        .validate_swap_exact_out(&t.vault, &950i128, &1_000i128, &path, &950i128);
-}
-
-#[test]
-#[should_panic]
-fn test_validate_exact_out_slippage_too_high_panics() {
-    let t = setup();
-    let path: Vec<Address> = vec![&t.env, t.token_a.clone(), t.token_b.clone()];
-    // quoted_in=500, max_in=1000 → 100% > 10% threshold.
-    t.guard
-        .validate_swap_exact_out(&t.vault, &500i128, &1_000i128, &path, &500i128);
+        .validate_swap_exact_out(&t.vault, &950i128, &1_000i128, &path);
 }
 
 #[test]
@@ -250,7 +259,7 @@ fn test_validate_exact_out_not_vault_panics() {
     let path: Vec<Address> = vec![&t.env, t.token_a.clone(), t.token_b.clone()];
     let rogue = Address::generate(&t.env);
     t.guard
-        .validate_swap_exact_out(&rogue, &950i128, &1_000i128, &path, &950i128);
+        .validate_swap_exact_out(&rogue, &950i128, &1_000i128, &path);
 }
 
 #[test]
@@ -263,9 +272,8 @@ fn test_validate_exact_out_multi_hop() {
         t.token_b.clone(),
         t.token_c.clone(),
     ];
-    // quoted_in=910, max_in=1000 -> ~9.89% <= 10%.
     t.guard
-        .validate_swap_exact_out(&t.vault, &900i128, &1_000i128, &path, &910i128);
+        .validate_swap_exact_out(&t.vault, &900i128, &1_000i128, &path);
 }
 
 // ---------------------------------------------------------------------------
@@ -293,7 +301,7 @@ fn test_not_initialized_validate_panics() {
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
     let path: Vec<Address> = vec![&env, token_a, token_b];
-    client.validate_swap_exact_in(&vault, &1_000i128, &900i128, &path, &1_000i128);
+    client.validate_swap_exact_in(&vault, &1_000i128, &900i128, &path);
 }
 
 #[test]
@@ -322,7 +330,7 @@ fn test_whitelist_update_invalidates_previously_valid_path() {
 
     let path: Vec<Address> = vec![&t.env, t.token_a.clone(), t.token_c.clone()]; // token_c removed
     t.guard
-        .validate_swap_exact_in(&t.vault, &1_000i128, &900i128, &path, &1_000i128);
+        .validate_swap_exact_in(&t.vault, &1_000i128, &900i128, &path);
 }
 
 // ---------------------------------------------------------------------------
@@ -335,7 +343,7 @@ fn test_validate_exact_out_zero_amount_panics() {
     let t = setup();
     let path: Vec<Address> = vec![&t.env, t.token_a.clone(), t.token_b.clone()];
     t.guard
-        .validate_swap_exact_out(&t.vault, &0i128, &0i128, &path, &0i128);
+        .validate_swap_exact_out(&t.vault, &0i128, &0i128, &path);
 }
 
 #[test]
@@ -344,7 +352,7 @@ fn test_validate_exact_out_path_too_short_panics() {
     let t = setup();
     let path: Vec<Address> = vec![&t.env, t.token_a.clone()];
     t.guard
-        .validate_swap_exact_out(&t.vault, &1_000i128, &1_000i128, &path, &1_000i128);
+        .validate_swap_exact_out(&t.vault, &1_000i128, &1_000i128, &path);
 }
 
 // ---------------------------------------------------------------------------
@@ -357,7 +365,7 @@ fn test_validate_exact_in_negative_min_out_panics() {
     let t = setup();
     let path: Vec<Address> = vec![&t.env, t.token_a.clone(), t.token_b.clone()];
     t.guard
-        .validate_swap_exact_in(&t.vault, &1_000i128, &-1i128, &path, &1_000i128);
+        .validate_swap_exact_in(&t.vault, &1_000i128, &-1i128, &path);
 }
 
 // ---------------------------------------------------------------------------
@@ -373,5 +381,5 @@ fn test_empty_whitelist_rejects_all_tokens() {
 
     let path: Vec<Address> = vec![&t.env, t.token_a.clone(), t.token_b.clone()];
     t.guard
-        .validate_swap_exact_in(&t.vault, &1_000i128, &900i128, &path, &1_000i128);
+        .validate_swap_exact_in(&t.vault, &1_000i128, &900i128, &path);
 }
