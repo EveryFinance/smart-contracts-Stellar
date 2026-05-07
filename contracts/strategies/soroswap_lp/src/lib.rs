@@ -210,11 +210,22 @@ impl SoroswapLpStrategy {
 
         // Compute LP received.
         let lp_after = token::Client::new(&env, &lp_token).balance(&strategy);
-        let lp_received = lp_after - lp_before;
 
-        // Track locally.
+        // Guard against a misbehaving router that burns or redirects LP tokens.
+        if lp_after < lp_before {
+            panic_with_error!(&env, SoroswapLpError::Overflow);
+        }
+        let lp_received = lp_after - lp_before;
+        if lp_received <= 0 {
+            panic_with_error!(&env, SoroswapLpError::InvalidAmount);
+        }
+
+        // Track locally with checked arithmetic.
         let prev_lp = get_lp_balance(&env);
-        set_lp_balance(&env, prev_lp + lp_received);
+        let new_lp = prev_lp
+            .checked_add(lp_received)
+            .unwrap_or_else(|| panic_with_error!(&env, SoroswapLpError::Overflow));
+        set_lp_balance(&env, new_lp);
 
         lp_received
     }
@@ -287,7 +298,10 @@ impl SoroswapLpStrategy {
         let now = env.ledger().sequence();
         token::Client::new(&env, &lp_token).approve(&strategy, &router, &zero, &now);
 
-        set_lp_balance(&env, tracked - lp_amount);
+        let new_tracked = tracked
+            .checked_sub(lp_amount)
+            .unwrap_or_else(|| panic_with_error!(&env, SoroswapLpError::Overflow));
+        set_lp_balance(&env, new_tracked);
 
         (amount_a, amount_b)
     }

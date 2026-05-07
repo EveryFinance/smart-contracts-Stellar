@@ -185,9 +185,20 @@ impl PhoenixLpStrategy {
         token::Client::new(&env, &asset_b).approve(&strategy, &pool, &zero, &now);
 
         let shares_after = token::Client::new(&env, &share_token).balance(&strategy);
-        let shares_minted = shares_after - shares_before;
 
-        set_total_shares(&env, get_total_shares(&env) + shares_minted);
+        // Guard against a misbehaving pool that burns or redirects shares.
+        if shares_after < shares_before {
+            panic_with_error!(&env, PhoenixLpError::Overflow);
+        }
+        let shares_minted = shares_after - shares_before;
+        if shares_minted <= 0 {
+            panic_with_error!(&env, PhoenixLpError::InvalidAmount);
+        }
+
+        let new_total = get_total_shares(&env)
+            .checked_add(shares_minted)
+            .unwrap_or_else(|| panic_with_error!(&env, PhoenixLpError::Overflow));
+        set_total_shares(&env, new_total);
 
         shares_minted
     }
@@ -253,7 +264,10 @@ impl PhoenixLpStrategy {
         let now = env.ledger().sequence();
         token::Client::new(&env, &share_token).approve(&strategy, &pool, &zero, &now);
 
-        set_total_shares(&env, total - share_amount);
+        let new_total = total
+            .checked_sub(share_amount)
+            .unwrap_or_else(|| panic_with_error!(&env, PhoenixLpError::Overflow));
+        set_total_shares(&env, new_total);
 
         (amount_a, amount_b)
     }
