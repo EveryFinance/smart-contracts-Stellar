@@ -190,7 +190,7 @@ impl SoroswapLpStrategy {
         let lp_before = token::Client::new(&env, &lp_token).balance(&strategy);
 
         // Call Soroswap router.
-        let (_a_used, _b_used, _lp_minted) = RouterAdapter::new(&env, &router).add_liquidity(
+        let (a_used, b_used, _lp_minted) = RouterAdapter::new(&env, &router).add_liquidity(
             asset_a.clone(),
             asset_b.clone(),
             amount_a,
@@ -201,12 +201,25 @@ impl SoroswapLpStrategy {
             deadline,
         );
 
-        // Revoke any unspent allowance so a later router compromise cannot
-        // drain tokens that were not consumed on this call.
+        // Revoke any unspent allowance immediately — must happen before the
+        // return-dust transfers so the router cannot pull residual tokens via
+        // transfer_from during the allowance window.
         let zero = 0i128;
         let now = env.ledger().sequence();
         token::Client::new(&env, &asset_a).approve(&strategy, &router, &zero, &now);
         token::Client::new(&env, &asset_b).approve(&strategy, &router, &zero, &now);
+
+        // Return any unused tokens to the vault so no funds are stranded in
+        // the strategy (AMMs often consume less than the desired amounts due
+        // to pool-ratio constraints).
+        let dust_a = amount_a - a_used;
+        let dust_b = amount_b - b_used;
+        if dust_a > 0 {
+            token::Client::new(&env, &asset_a).transfer(&strategy, &from, &dust_a);
+        }
+        if dust_b > 0 {
+            token::Client::new(&env, &asset_b).transfer(&strategy, &from, &dust_b);
+        }
 
         // Compute LP received.
         let lp_after = token::Client::new(&env, &lp_token).balance(&strategy);
