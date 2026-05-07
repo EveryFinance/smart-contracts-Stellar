@@ -32,8 +32,7 @@ pub use error::FactoryError;
 use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, IntoVal, Symbol, Vec};
 
 use storage::{
-    get_admin, get_vaults, is_initialized, set_admin, set_vaults, INSTANCE_BUMP_AMOUNT,
-    INSTANCE_LIFETIME_THRESHOLD,
+    get_admin, get_vaults, set_admin, set_vaults, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
 };
 
 use events::{admin_changed_event, vault_registered_event, vault_removed_event};
@@ -57,14 +56,8 @@ impl Factory {
     // Lifecycle
     // -----------------------------------------------------------------------
 
-    /// Initialize the factory with an admin address.
-    ///
-    /// # Errors
-    /// * [`FactoryError::AlreadyInitialized`]
-    pub fn initialize(env: Env, admin: Address) {
-        if is_initialized(&env) {
-            panic_with_error!(&env, FactoryError::AlreadyInitialized);
-        }
+    /// Initialize the factory. Runs atomically at deployment via `CreateContract`.
+    pub fn __constructor(env: Env, admin: Address) {
         admin.require_auth();
         env.storage()
             .instance()

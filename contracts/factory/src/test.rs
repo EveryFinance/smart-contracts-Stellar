@@ -35,9 +35,8 @@ fn setup() -> T {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let fid = env.register(Factory, ());
+    let fid = env.register(Factory, (admin.clone(),));
     let factory = FactoryClient::new(&env, &fid);
-    factory.initialize(&admin);
 
     let factory: FactoryClient<'static> = unsafe { core::mem::transmute(factory) };
 
@@ -63,13 +62,6 @@ fn test_initialize_sets_admin() {
     let t = setup();
     assert_eq!(t.factory.get_admin(), t.admin);
     assert_eq!(t.factory.get_vault_count(), 0);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #1)")]
-fn test_double_initialize_panics() {
-    let t = setup();
-    t.factory.initialize(&t.admin);
 }
 
 // ---------------------------------------------------------------------------
@@ -255,57 +247,6 @@ fn test_is_registered_true_after_register() {
     let vault = deploy_mock_vault(&t.env, &manager);
     t.factory.register_vault(&t.admin, &vault, &manager);
     assert!(t.factory.is_registered(&vault));
-}
-
-// ---------------------------------------------------------------------------
-// NotInitialized — calling functions before initialize() panics
-// ---------------------------------------------------------------------------
-
-#[test]
-#[should_panic]
-fn test_not_initialized_get_admin_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(Factory, ());
-    let client = FactoryClient::new(&env, &id);
-    client.get_admin();
-}
-
-#[test]
-#[should_panic]
-fn test_not_initialized_register_vault_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(Factory, ());
-    let client = FactoryClient::new(&env, &id);
-    let caller = Address::generate(&env);
-    let vault = Address::generate(&env);
-    let manager = Address::generate(&env);
-    client.register_vault(&caller, &vault, &manager);
-}
-
-#[test]
-#[should_panic]
-fn test_not_initialized_remove_vault_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(Factory, ());
-    let client = FactoryClient::new(&env, &id);
-    let caller = Address::generate(&env);
-    let vault = Address::generate(&env);
-    client.remove_vault(&caller, &vault);
-}
-
-#[test]
-#[should_panic]
-fn test_not_initialized_set_admin_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(Factory, ());
-    let client = FactoryClient::new(&env, &id);
-    let caller = Address::generate(&env);
-    let new_admin = Address::generate(&env);
-    client.set_admin(&caller, &new_admin);
 }
 
 // ---------------------------------------------------------------------------

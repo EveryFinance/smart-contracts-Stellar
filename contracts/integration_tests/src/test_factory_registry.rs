@@ -64,9 +64,8 @@ fn setup() -> World {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let factory_id = env.register(Factory, ());
+    let factory_id = env.register(Factory, (admin.clone(),));
     let factory = FactoryClient::new(&env, &factory_id);
-    factory.initialize(&admin);
 
     let factory: FactoryClient<'static> = unsafe { core::mem::transmute(factory) };
     World {
@@ -88,15 +87,6 @@ fn test_factory_initializes_empty() {
     assert_eq!(w.factory.get_admin(), w.admin);
     let page = w.factory.get_vaults(&0, &10);
     assert_eq!(page.len(), 0);
-}
-
-/// Double-initialize panics with AlreadyInitialized.
-#[test]
-#[should_panic]
-fn test_factory_double_initialize_panics() {
-    let w = setup();
-    let other = Address::generate(&w.env);
-    w.factory.initialize(&other);
 }
 
 /// Registering one vault makes it findable via is_registered and get_vault_count.
