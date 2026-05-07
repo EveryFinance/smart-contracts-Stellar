@@ -153,35 +153,49 @@ pub fn get_total_supply(env: &Env) -> i128 {
 // ---------------------------------------------------------------------------
 
 /// Write an account balance to persistent storage and extend its TTL.
+/// When `balance` is zero the entry is removed so dead accounts do not
+/// accumulate indefinitely in persistent state.
 pub fn set_balance(env: &Env, addr: &Address, balance: i128) {
     let key = DataKey::Balance(addr.clone());
-    env.storage().persistent().set(&key, &balance);
-    env.storage().persistent().extend_ttl(
-        &key,
-        PERSISTENT_LIFETIME_THRESHOLD,
-        PERSISTENT_BUMP_AMOUNT,
-    );
-}
-
-/// Read an account balance from persistent storage.
-///
-/// If the key exists its TTL is extended before returning. If the key is
-/// absent, `0` is returned (uninitialized accounts have zero balance).
-pub fn get_balance(env: &Env, addr: &Address) -> i128 {
-    let key = DataKey::Balance(addr.clone());
-    if let Some(balance) = env.storage().persistent().get::<DataKey, i128>(&key) {
+    if balance == 0 {
+        env.storage().persistent().remove(&key);
+    } else {
+        env.storage().persistent().set(&key, &balance);
         env.storage().persistent().extend_ttl(
             &key,
             PERSISTENT_LIFETIME_THRESHOLD,
             PERSISTENT_BUMP_AMOUNT,
         );
-        balance
+    }
+}
+
+/// Read an account balance from persistent storage.
+///
+/// If the key exists and is non-zero its TTL is extended before returning.
+/// A stored zero (left over from before the remove-on-zero policy) is cleaned
+/// up eagerly. A missing key returns `0`.
+pub fn get_balance(env: &Env, addr: &Address) -> i128 {
+    let key = DataKey::Balance(addr.clone());
+    if let Some(balance) = env.storage().persistent().get::<DataKey, i128>(&key) {
+        if balance == 0 {
+            env.storage().persistent().remove(&key);
+            0_i128
+        } else {
+            env.storage().persistent().extend_ttl(
+                &key,
+                PERSISTENT_LIFETIME_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
+            );
+            balance
+        }
     } else {
         0_i128
     }
 }
 
 /// Write an allowance entry to persistent storage and extend its TTL.
+/// When `amount` is zero the entry is removed so revoked allowances do not
+/// accumulate indefinitely in persistent state.
 pub fn set_allowance(
     env: &Env,
     from: &Address,
@@ -193,22 +207,26 @@ pub fn set_allowance(
         from: from.clone(),
         spender: spender.clone(),
     });
-    let value = AllowanceValue {
-        amount,
-        expiration_ledger,
-    };
-    env.storage().persistent().set(&key, &value);
-    env.storage().persistent().extend_ttl(
-        &key,
-        PERSISTENT_LIFETIME_THRESHOLD,
-        PERSISTENT_BUMP_AMOUNT,
-    );
+    if amount == 0 {
+        env.storage().persistent().remove(&key);
+    } else {
+        let value = AllowanceValue {
+            amount,
+            expiration_ledger,
+        };
+        env.storage().persistent().set(&key, &value);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+    }
 }
 
 /// Read an allowance entry from persistent storage.
 ///
-/// If the key exists its TTL is extended before returning. If the key is
-/// absent, `0` is returned (no allowance granted).
+/// Expired entries are removed rather than TTL-bumped so they do not
+/// linger indefinitely. Returns `0` for absent or expired allowances.
 pub fn get_allowance(env: &Env, from: &Address, spender: &Address) -> i128 {
     let key = DataKey::Allowance(AllowanceKey {
         from: from.clone(),
@@ -219,14 +237,15 @@ pub fn get_allowance(env: &Env, from: &Address, spender: &Address) -> i128 {
         .persistent()
         .get::<DataKey, AllowanceValue>(&key)
     {
-        env.storage().persistent().extend_ttl(
-            &key,
-            PERSISTENT_LIFETIME_THRESHOLD,
-            PERSISTENT_BUMP_AMOUNT,
-        );
         if env.ledger().sequence() > value.expiration_ledger {
+            env.storage().persistent().remove(&key);
             0_i128
         } else {
+            env.storage().persistent().extend_ttl(
+                &key,
+                PERSISTENT_LIFETIME_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
+            );
             value.amount
         }
     } else {
@@ -236,22 +255,30 @@ pub fn get_allowance(env: &Env, from: &Address, spender: &Address) -> i128 {
 
 /// Read the raw allowance value, including expiry metadata.
 ///
-/// Returns `None` when no allowance has been set.
+/// Expired entries are removed and `None` is returned. Returns `None` when
+/// no allowance has been set.
 pub fn get_allowance_value(env: &Env, from: &Address, spender: &Address) -> Option<AllowanceValue> {
     let key = DataKey::Allowance(AllowanceKey {
         from: from.clone(),
         spender: spender.clone(),
     });
-    let value = env
+    if let Some(value) = env
         .storage()
         .persistent()
-        .get::<DataKey, AllowanceValue>(&key);
-    if value.is_some() {
-        env.storage().persistent().extend_ttl(
-            &key,
-            PERSISTENT_LIFETIME_THRESHOLD,
-            PERSISTENT_BUMP_AMOUNT,
-        );
+        .get::<DataKey, AllowanceValue>(&key)
+    {
+        if env.ledger().sequence() > value.expiration_ledger {
+            env.storage().persistent().remove(&key);
+            None
+        } else {
+            env.storage().persistent().extend_ttl(
+                &key,
+                PERSISTENT_LIFETIME_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
+            );
+            Some(value)
+        }
+    } else {
+        None
     }
-    value
 }
