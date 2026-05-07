@@ -32,6 +32,7 @@ impl MockToken {
         env.storage().instance().set(&TKey::Admin, &admin);
     }
     pub fn mint(env: Env, to: Address, amount: i128) {
+        assert!(amount >= 0, "mint: negative amount");
         let b: i128 = env
             .storage()
             .persistent()
@@ -102,6 +103,8 @@ impl MockToken {
             .set(&TKey::Balance(to), &(tb + amount));
     }
     pub fn approve(env: Env, from: Address, spender: Address, amount: i128, _expiry: u32) {
+        assert!(amount >= 0, "approve: negative amount");
+        from.require_auth();
         env.storage()
             .persistent()
             .set(&TKey::Allowance(from, spender), &amount);
@@ -112,7 +115,18 @@ impl MockToken {
             .get(&TKey::Allowance(from, spender))
             .unwrap_or(0)
     }
-    pub fn transfer_from(env: Env, _sp: Address, from: Address, to: Address, amount: i128) {
+    pub fn transfer_from(env: Env, sp: Address, from: Address, to: Address, amount: i128) {
+        assert!(amount >= 0, "transfer_from: negative amount");
+        sp.require_auth();
+        let allowance: i128 = env
+            .storage()
+            .persistent()
+            .get(&TKey::Allowance(from.clone(), sp.clone()))
+            .unwrap_or(0);
+        assert!(allowance >= amount, "transfer_from: insufficient allowance");
+        env.storage()
+            .persistent()
+            .set(&TKey::Allowance(from.clone(), sp), &(allowance - amount));
         let fb: i128 = env
             .storage()
             .persistent()
