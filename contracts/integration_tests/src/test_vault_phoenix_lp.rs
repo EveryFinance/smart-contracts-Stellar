@@ -268,6 +268,7 @@ fn test_vault_nav_with_phoenix_oracle_valuation() {
     let w = setup();
     let oracle = w.env.register(MockOracle, ());
     let oracle_client = MockOracleClient::new(&w.env, &oracle);
+    oracle_client.oracle_init(&w.manager);
 
     // Price both assets at 1.0 in PRICE_PRECISION units.
     oracle_client.set_price(&w.token_a, &10_000_000i128);

@@ -463,6 +463,7 @@ impl MockPhoenixPool {
 
 #[contracttype]
 pub enum OracleKey {
+    Admin,
     Price(Address),
 }
 
@@ -471,7 +472,20 @@ pub struct MockOracle;
 
 #[contractimpl]
 impl MockOracle {
+    /// One-time initialization — stores the admin address.
+    /// Panics if called more than once.
+    pub fn oracle_init(env: Env, admin: Address) {
+        assert!(
+            !env.storage().instance().has(&OracleKey::Admin),
+            "oracle_init: already initialized"
+        );
+        env.storage().instance().set(&OracleKey::Admin, &admin);
+    }
+
+    /// Update the price for `asset`. Admin only.
     pub fn set_price(env: Env, asset: Address, price: i128) {
+        let admin: Address = env.storage().instance().get(&OracleKey::Admin).unwrap();
+        admin.require_auth();
         env.storage()
             .instance()
             .set(&OracleKey::Price(asset), &price);
