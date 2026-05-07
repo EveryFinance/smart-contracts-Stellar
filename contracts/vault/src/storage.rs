@@ -544,6 +544,9 @@ pub fn is_member(env: &Env, member: &Address) -> bool {
 // Cooldown
 // ---------------------------------------------------------------------------
 
+/// Approximate seconds per ledger on Stellar mainnet (~6 s).
+const SECS_PER_LEDGER: u64 = 6;
+
 pub fn set_exit_cooldown_secs(env: &Env, v: u64) {
     bump(env);
     env.storage().instance().set(&DataKey::ExitCooldownSecs, &v);
@@ -557,17 +560,33 @@ pub fn get_exit_cooldown_secs(env: &Env) -> u64 {
         .unwrap_or(0)
 }
 
+/// Persist the per-user last-deposit timestamp in **temporary storage**.
+///
+/// Temporary storage keys auto-expire after the TTL so they cannot
+/// accumulate unbounded per-user entries inside the instance entry, which
+/// is size-capped and loaded on every invocation (DoS / bricking risk).
+///
+/// TTL = cooldown_window_in_ledgers + INSTANCE_LIFETIME_THRESHOLD (safety buffer).
 pub fn set_last_deposit_ts(env: &Env, user: &Address, ts: u64) {
-    bump(env);
-    env.storage()
-        .instance()
-        .set(&DataKey::LastDepositTs(user.clone()), &ts);
+    let key = DataKey::LastDepositTs(user.clone());
+    env.storage().temporary().set(&key, &ts);
+
+    let cooldown_secs = get_exit_cooldown_secs(env);
+    // ceil(cooldown_secs / SECS_PER_LEDGER) converted to u32
+    let cooldown_ledgers = cooldown_secs
+        .saturating_add(SECS_PER_LEDGER - 1)
+        .checked_div(SECS_PER_LEDGER)
+        .unwrap_or(0)
+        .min(u32::MAX as u64) as u32;
+    let ttl = cooldown_ledgers.saturating_add(INSTANCE_LIFETIME_THRESHOLD);
+    env.storage().temporary().extend_ttl(&key, 0, ttl);
 }
 
+/// Read the per-user last-deposit timestamp from temporary storage.
+/// Returns `None` when no deposit has been made or the key has expired.
 pub fn get_last_deposit_ts_opt(env: &Env, user: &Address) -> Option<u64> {
-    bump(env);
     env.storage()
-        .instance()
+        .temporary()
         .get(&DataKey::LastDepositTs(user.clone()))
 }
 
