@@ -299,3 +299,59 @@ fn test_sequential_deposit_withdraw_integrity() {
     // Vault may have dust due to integer division; NAV should be ~0.
     assert!(w.vault.get_nav() < 10); // allow rounding dust
 }
+
+// ---------------------------------------------------------------------------
+// Negative auth tests — verify privileged operations reject non-manager callers
+//
+// mock_all_auths() mocks the Soroban auth check (require_auth), but the vault
+// also enforces identity: `if caller != get_manager()`. These tests confirm
+// that identity gate fires even when the auth check is mocked, ensuring
+// access-control regressions are caught by the integration suite.
+// ---------------------------------------------------------------------------
+
+/// Non-manager cannot pause the vault.
+#[test]
+#[should_panic]
+fn test_pause_by_non_manager_panics() {
+    let w = setup_world();
+    let rogue = Address::generate(&w.env);
+    w.vault.pause(&rogue);
+}
+
+/// Non-manager cannot unpause the vault.
+#[test]
+#[should_panic]
+fn test_unpause_by_non_manager_panics() {
+    let w = setup_world();
+    w.vault.pause(&w.manager); // legitimate pause
+    let rogue = Address::generate(&w.env);
+    w.vault.unpause(&rogue);
+}
+
+/// Non-manager cannot set the deposit cap.
+#[test]
+#[should_panic]
+fn test_set_deposit_cap_by_non_manager_panics() {
+    let w = setup_world();
+    let rogue = Address::generate(&w.env);
+    w.vault.set_deposit_cap(&rogue, &500_000_0000000i128);
+}
+
+/// Non-manager cannot add or replace the strategy list.
+#[test]
+#[should_panic]
+fn test_set_strategies_by_non_manager_panics() {
+    let w = setup_world();
+    let rogue = Address::generate(&w.env);
+    let strategies = soroban_sdk::Vec::new(&w.env);
+    w.vault.set_strategies(&rogue, &strategies);
+}
+
+/// A user with zero shares cannot withdraw.
+#[test]
+#[should_panic]
+fn test_withdraw_with_zero_shares_panics() {
+    let w = setup_world();
+    // user2 never deposited — has no shares.
+    w.vault.withdraw(&1_000_0000000i128, &w.user2, &w.user2);
+}
