@@ -38,7 +38,7 @@ mod storage;
 
 pub use error::SoroswapLpError;
 
-use soroban_sdk::{contract, contractimpl, panic_with_error, token, Address, Env, String};
+use soroban_sdk::{contract, contractimpl, panic_with_error, token, Address, Env, IntoVal, String, Symbol};
 
 use interfaces::{OracleAdapter, PairAdapter, RouterAdapter};
 
@@ -77,6 +77,11 @@ impl SoroswapLpStrategy {
     /// * `manager`  – Address allowed to pause / unpause.
     /// * `name`     – Human-readable label.
     ///
+    /// # Auth
+    /// Both the vault's current on-chain manager and the designated strategy
+    /// `manager` must authorise this call (see Blend strategy doc for the
+    /// front-running rationale).
+    ///
     /// # Errors
     /// * [`SoroswapLpError::AlreadyInitialized`]
     #[allow(clippy::too_many_arguments)]
@@ -93,6 +98,15 @@ impl SoroswapLpStrategy {
         if is_initialized(&env) {
             panic_with_error!(&env, SoroswapLpError::AlreadyInitialized);
         }
+
+        // Derive the vault's manager from on-chain state and require their
+        // signature to prevent front-running initialization.
+        let vault_manager: Address = env.invoke_contract(
+            &vault,
+            &Symbol::new(&env, "get_manager"),
+            ().into_val(&env),
+        );
+        vault_manager.require_auth();
         manager.require_auth();
         env.storage()
             .instance()

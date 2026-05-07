@@ -185,6 +185,31 @@ impl MockBlendPool {
 }
 
 // ---------------------------------------------------------------------------
+// MockVault — minimal vault stub that satisfies vault.get_manager() calls
+// ---------------------------------------------------------------------------
+
+#[contracttype]
+enum VaultKey {
+    Manager,
+}
+
+#[contract]
+pub struct MockVault;
+
+#[contractimpl]
+impl MockVault {
+    pub fn set_manager(env: Env, manager: Address) {
+        env.storage().instance().set(&VaultKey::Manager, &manager);
+    }
+    pub fn get_manager(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&VaultKey::Manager)
+            .unwrap()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
 
@@ -212,8 +237,11 @@ fn setup() -> TestEnv {
     // blend_submit will be routed there.
     let blend_pool = env.register(MockBlendPool, ());
     MockBlendPoolClient::new(&env, &blend_pool).set_token(&token_id);
-    let vault = Address::generate(&env);
     let manager = Address::generate(&env);
+    // Register a mock vault so strategy.initialize() can cross-call
+    // vault.get_manager() to derive the authoritative initializer.
+    let vault = env.register(MockVault, ());
+    MockVaultClient::new(&env, &vault).set_manager(&manager);
     let user = Address::generate(&env);
 
     let strategy_id = env.register(BlendStrategy, ());

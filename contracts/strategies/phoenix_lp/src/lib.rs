@@ -23,7 +23,7 @@ mod storage;
 
 pub use error::PhoenixLpError;
 
-use soroban_sdk::{contract, contractimpl, panic_with_error, token, Address, Env, String};
+use soroban_sdk::{contract, contractimpl, panic_with_error, token, Address, Env, IntoVal, String, Symbol};
 
 use interfaces::{OracleAdapter, PhoenixPoolAdapter, Sep41TokenAdapter};
 
@@ -63,6 +63,11 @@ impl PhoenixLpStrategy {
     /// * `manager`      – Account allowed to pause / unpause.
     /// * `name`         – Human-readable strategy name.
     ///
+    /// # Auth
+    /// Both the vault's current on-chain manager and the designated strategy
+    /// `manager` must authorise this call (see Blend strategy doc for the
+    /// front-running rationale).
+    ///
     /// # Errors
     /// * [`PhoenixLpError::AlreadyInitialized`]
     pub fn initialize(
@@ -77,6 +82,15 @@ impl PhoenixLpStrategy {
         if is_initialized(&env) {
             panic_with_error!(&env, PhoenixLpError::AlreadyInitialized);
         }
+
+        // Derive the vault's manager from on-chain state and require their
+        // signature to prevent front-running initialization.
+        let vault_manager: Address = env.invoke_contract(
+            &vault,
+            &Symbol::new(&env, "get_manager"),
+            ().into_val(&env),
+        );
+        vault_manager.require_auth();
         manager.require_auth();
         env.storage()
             .instance()

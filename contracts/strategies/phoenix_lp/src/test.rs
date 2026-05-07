@@ -246,6 +246,28 @@ mod mock_oracle {
 }
 
 // ---------------------------------------------------------------------------
+// MockVault — satisfies vault.get_manager() cross-contract call in initialize
+// ---------------------------------------------------------------------------
+
+#[contracttype]
+enum VaultKey {
+    Manager,
+}
+
+#[contract]
+pub struct MockVault;
+
+#[contractimpl]
+impl MockVault {
+    pub fn set_manager(env: Env, manager: Address) {
+        env.storage().instance().set(&VaultKey::Manager, &manager);
+    }
+    pub fn get_manager(env: Env) -> Address {
+        env.storage().instance().get(&VaultKey::Manager).unwrap()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Test setup
 // ---------------------------------------------------------------------------
 
@@ -272,8 +294,11 @@ fn setup() -> T {
 
     MockPhoenixPoolClient::new(&env, &pool).init(&share_token, &token_a, &token_b);
 
-    let vault = Address::generate(&env);
     let manager = Address::generate(&env);
+    // Register a mock vault so strategy.initialize() can cross-call
+    // vault.get_manager() to derive the authoritative initializer.
+    let vault = env.register(MockVault, ());
+    MockVaultClient::new(&env, &vault).set_manager(&manager);
     let user = Address::generate(&env);
 
     // Fund vault with underlying tokens.

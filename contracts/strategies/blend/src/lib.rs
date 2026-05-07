@@ -114,6 +114,17 @@ impl BlendStrategy {
     /// * `manager`  – Address allowed to pause / unpause this strategy.
     /// * `name`     – Human-readable label (e.g. `"Blend USDC"`).
     ///
+    /// # Auth
+    /// Both the vault's current on-chain manager **and** the designated
+    /// strategy `manager` must authorise this call.
+    ///
+    /// The vault manager auth is derived by cross-calling `vault.get_manager()`
+    /// so it cannot be spoofed by a user-supplied argument.  This prevents an
+    /// attacker from front-running deployment: supplying the real vault address
+    /// requires forging the vault manager's signature, which is impossible;
+    /// supplying their own vault wires the strategy to it instead of the
+    /// victim's vault.
+    ///
     /// # Errors
     /// * [`BlendStrategyError::AlreadyInitialized`] if called more than once.
     pub fn initialize(
@@ -127,6 +138,20 @@ impl BlendStrategy {
         if is_initialized(&env) {
             panic_with_error!(&env, BlendStrategyError::AlreadyInitialized);
         }
+
+        // Fetch the vault's actual manager from on-chain state — this address
+        // cannot be manipulated by the caller — and require their signature.
+        // This binds initialization to the vault's trusted authority and
+        // closes the front-running window that `manager.require_auth()` alone
+        // leaves open (an attacker can always sign as their own manager).
+        let vault_manager: Address = env.invoke_contract(
+            &vault,
+            &Symbol::new(&env, "get_manager"),
+            ().into_val(&env),
+        );
+        vault_manager.require_auth();
+
+        // The designated strategy manager also consents to taking on the role.
         manager.require_auth();
         env.storage()
             .instance()
