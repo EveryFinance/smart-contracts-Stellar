@@ -38,9 +38,6 @@ pub enum DataKey {
     Name,
     /// Whether the strategy is currently paused.
     Paused,
-    /// Running total of tokens deposited minus tokens withdrawn (in asset
-    /// units).  Used as a fallback when Blend is not queryable in unit tests.
-    TotalDeposited,
 }
 
 // ---------------------------------------------------------------------------
@@ -166,21 +163,3 @@ pub fn get_paused(env: &Env) -> bool {
         .unwrap_or(false)
 }
 
-// ---- total deposited -------------------------------------------------------
-
-/// Persist the running net deposit amount.
-pub fn set_total_deposited(env: &Env, amount: i128) {
-    bump(env);
-    env.storage()
-        .instance()
-        .set(&DataKey::TotalDeposited, &amount);
-}
-
-/// Read the running net deposit amount (defaults to 0 before first deposit).
-pub fn get_total_deposited(env: &Env) -> i128 {
-    bump(env);
-    env.storage()
-        .instance()
-        .get(&DataKey::TotalDeposited)
-        .unwrap_or(0_i128)
-}

@@ -574,21 +574,6 @@
                         "key": {
                           "vec": [
                             {
-                              "symbol": "TotalDeposited"
-                            }
-                          ]
-                        },
-                        "val": {
-                          "i128": {
-                            "hi": 0,
-                            "lo": 10000000000
-                          }
-                        }
-                      },
-                      {
-                        "key": {
-                          "vec": [
-                            {
                               "symbol": "Vault"
                             }
                           ]

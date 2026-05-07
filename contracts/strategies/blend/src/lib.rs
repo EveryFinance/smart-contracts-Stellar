@@ -39,9 +39,9 @@ use soroban_sdk::{
 };
 
 use storage::{
-    get_asset, get_manager, get_name, get_paused, get_protocol, get_total_deposited, get_vault,
-    is_initialized, set_asset, set_manager, set_name, set_paused, set_protocol,
-    set_total_deposited, set_vault, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
+    get_asset, get_manager, get_name, get_paused, get_protocol, get_vault, is_initialized,
+    set_asset, set_manager, set_name, set_paused, set_protocol, set_vault,
+    INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
 };
 
 // ---------------------------------------------------------------------------
@@ -88,6 +88,15 @@ fn blend_submit(
 ) {
     let args = (from.clone(), spender.clone(), to.clone(), requests).into_val(env);
     env.invoke_contract::<()>(pool, &Symbol::new(env, "submit"), args);
+}
+
+/// Query the live on-chain supply position for `account` from the Blend pool.
+///
+/// Returns the actual token balance held in Blend, including accrued interest.
+/// This is the authoritative source for NAV and withdrawal limit checks.
+fn blend_get_supply(env: &Env, pool: &Address, account: &Address) -> i128 {
+    let args = (account.clone(),).into_val(env);
+    env.invoke_contract::<i128>(pool, &Symbol::new(env, "get_supply"), args)
 }
 
 // ---------------------------------------------------------------------------
@@ -163,7 +172,6 @@ impl BlendStrategy {
         set_manager(&env, &manager);
         set_name(&env, &name);
         set_paused(&env, false);
-        set_total_deposited(&env, 0);
     }
 
     // -----------------------------------------------------------------------
@@ -244,14 +252,7 @@ impl BlendStrategy {
             requests,
         );
 
-        // Track locally (used as fallback valuation in tests).
-        let deposited = get_total_deposited(&env);
-        let new_deposited = deposited
-            .checked_add(amount)
-            .unwrap_or_else(|| panic_with_error!(&env, BlendStrategyError::Overflow));
-        set_total_deposited(&env, new_deposited);
-
-        new_deposited
+        amount
     }
 
     /// Withdraw `amount` of the managed asset from Blend and send it directly
@@ -289,14 +290,17 @@ impl BlendStrategy {
             panic_with_error!(&env, BlendStrategyError::NotVault);
         }
 
-        let deposited = get_total_deposited(&env);
-        if amount > deposited {
-            panic_with_error!(&env, BlendStrategyError::InsufficientPosition);
-        }
-
         let asset = get_asset(&env);
         let protocol = get_protocol(&env);
         let strategy_addr = env.current_contract_address();
+
+        // Guard against over-withdrawal using the live on-chain position.
+        // This includes accrued interest so users can always withdraw their
+        // full earnings; the Blend pool enforces the same limit internally.
+        let position = blend_get_supply(&env, &protocol, &strategy_addr);
+        if amount > position {
+            panic_with_error!(&env, BlendStrategyError::InsufficientPosition);
+        }
 
         // Blend sends the asset directly to `to`.
         let requests: Vec<BlendRequest> = soroban_sdk::vec![
@@ -316,11 +320,6 @@ impl BlendStrategy {
             requests,
         );
 
-        let new_deposited = deposited
-            .checked_sub(amount)
-            .unwrap_or_else(|| panic_with_error!(&env, BlendStrategyError::Overflow));
-        set_total_deposited(&env, new_deposited);
-
         amount
     }
 
@@ -330,16 +329,9 @@ impl BlendStrategy {
 
     /// Return the strategy's current position value in asset units.
     ///
-    /// **Production note:** This returns the locally tracked `TotalDeposited`
-    /// value which equals net deposits minus net withdrawals recorded by this
-    /// contract.  It does **not** include accrued Blend interest — the actual
-    /// on-chain Blend position grows over time as borrowers pay interest.
-    ///
-    /// To include interest a production integration should call:
-    /// ```text
-    /// blend_pool.get_positions(strategy_address).supply[asset]
-    /// ```
-    /// and replace the `get_total_deposited` call below with that RPC.
+    /// Queries the live Blend pool position for this strategy contract so the
+    /// value includes accrued interest and cannot be manipulated by the manager.
+    /// The vault uses this value to compute NAV and share price.
     ///
     /// # Arguments
     /// * `_vault` – Reserved for future per-vault accounting; currently unused.
@@ -347,38 +339,9 @@ impl BlendStrategy {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-        // ⚠ Understates true value by the amount of accrued Blend interest.
-        // Replace with a blend_pool.get_positions() call for a production build.
-        get_total_deposited(&env)
-    }
-
-    /// Sync the locally tracked position to match the actual Blend position.
-    ///
-    /// This is a privileged maintenance operation that allows the manager to
-    /// correct accounting drift caused by:
-    /// * Accrued Blend interest (interest credits the position without calling
-    ///   `deposit`).
-    /// * Any rounding applied by Blend during withdrawal.
-    ///
-    /// In production this should call `blend_pool.get_positions(self)` and
-    /// write the real value; the `actual_position` argument here is a
-    /// placeholder until the Blend client is integrated.
-    ///
-    /// # Auth
-    /// Manager only.
-    pub fn sync_position(env: Env, caller: Address, actual_position: i128) {
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-        caller.require_auth();
-        let manager = get_manager(&env);
-        if caller != manager {
-            panic_with_error!(&env, BlendStrategyError::NotManager);
-        }
-        if actual_position < 0 {
-            panic_with_error!(&env, BlendStrategyError::InvalidAmount);
-        }
-        set_total_deposited(&env, actual_position);
+        let protocol = get_protocol(&env);
+        let strategy_addr = env.current_contract_address();
+        blend_get_supply(&env, &protocol, &strategy_addr)
     }
 
     // -----------------------------------------------------------------------

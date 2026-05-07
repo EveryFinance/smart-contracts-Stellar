@@ -201,6 +201,14 @@ impl MockBlendPool {
     pub fn set_token(env: Env, token: Address) {
         env.storage().instance().set(&BlendPoolKey::Token, &token);
     }
+
+    /// Return the supply position for `account` (mirrors the real Blend pool interface).
+    pub fn get_supply(env: Env, account: Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&BlendKey::Supply(account))
+            .unwrap_or(0)
+    }
 }
 
 #[contracttype]
