@@ -695,22 +695,25 @@ pub fn get_value_manipulation_guard_enabled(env: &Env) -> bool {
 }
 
 pub fn set_op_state(env: &Env, user: &Address, state: &OperationState) {
-    bump(env);
+    let key = DataKey::OpState(user.clone());
+    env.storage().temporary().set(&key, state);
+    // OpState only needs to survive within a single ledger. A small TTL
+    // prevents unbounded per-user entries from accumulating in instance storage
+    // (DoS via entry-size exhaustion). INSTANCE_LIFETIME_THRESHOLD is a
+    // conservative safety buffer beyond the ledger close.
     env.storage()
-        .instance()
-        .set(&DataKey::OpState(user.clone()), state);
+        .temporary()
+        .extend_ttl(&key, 0, INSTANCE_LIFETIME_THRESHOLD);
 }
 
 pub fn get_op_state(env: &Env, user: &Address) -> Option<OperationState> {
-    bump(env);
     env.storage()
-        .instance()
+        .temporary()
         .get(&DataKey::OpState(user.clone()))
 }
 
 pub fn clear_op_state(env: &Env, user: &Address) {
-    bump(env);
     env.storage()
-        .instance()
+        .temporary()
         .remove(&DataKey::OpState(user.clone()));
 }
