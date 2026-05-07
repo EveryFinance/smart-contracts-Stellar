@@ -53,14 +53,11 @@ fn setup() -> World {
     MockBlendPoolClient::new(&env, &blend_pool).blend_init();
     MockBlendPoolClient::new(&env, &blend_pool).set_token(&base);
 
-    // Real Vault.
-    let vault_id = env.register(Vault, ());
-
     // Real BlendStrategy.
     let strat_id = env.register(BlendStrategy, ());
     let strategy = BlendStrategyClient::new(&env, &strat_id);
 
-    // Initialize share token with manager as admin; vault init will take admin.
+    // Initialize share token with manager as admin; vault constructor will take admin.
     ShareTokenContractClient::new(&env, &share_id).initialize(
         &manager,
         &String::from_str(&env, "VS"),
@@ -68,19 +65,22 @@ fn setup() -> World {
         &7u32,
     );
 
-    // Initialize vault.
+    // Deploy vault with constructor (atomic, front-run-proof).
+    let vault_id = env.register(
+        Vault,
+        (VaultParams {
+            manager: manager.clone(),
+            trader: trader.clone(),
+            base_asset: base.clone(),
+            share_token: share_id.clone(),
+            share_token_admin: manager.clone(),
+            entry_fee_bps: 0,
+            exit_fee_bps: 0,
+            mgmt_fee_bps: 0,
+            perf_fee_bps: 0,
+        },),
+    );
     let vault = VaultClient::new(&env, &vault_id);
-    vault.initialize(&VaultParams {
-        manager: manager.clone(),
-        trader: trader.clone(),
-        base_asset: base.clone(),
-        share_token: share_id.clone(),
-        share_token_admin: manager.clone(),
-        entry_fee_bps: 0,
-        exit_fee_bps: 0,
-        mgmt_fee_bps: 0,
-        perf_fee_bps: 0,
-    });
 
     // Initialize Blend strategy.
     strategy.initialize(

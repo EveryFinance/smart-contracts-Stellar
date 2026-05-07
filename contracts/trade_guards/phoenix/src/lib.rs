@@ -24,7 +24,7 @@ mod storage;
 
 pub use error::PhoenixGuardError;
 
-use soroban_sdk::{contract, contractimpl, contracttype, panic_with_error, Address, Env, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, panic_with_error, Address, Env, IntoVal, Symbol, Vec};
 
 use storage::{
     get_manager, get_vault, get_whitelist, is_initialized, set_manager, set_vault, set_whitelist,
@@ -73,6 +73,15 @@ impl PhoenixTradeGuard {
         if is_initialized(&env) {
             panic_with_error!(&env, PhoenixGuardError::AlreadyInitialized);
         }
+
+        // Derive the vault's authoritative manager from on-chain state so an
+        // attacker cannot front-run initialization by supplying their own vault.
+        let vault_manager: Address = env.invoke_contract(
+            &vault,
+            &Symbol::new(&env, "get_manager"),
+            ().into_val(&env),
+        );
+        vault_manager.require_auth();
         manager.require_auth();
         env.storage()
             .instance()

@@ -55,10 +55,9 @@ fn setup() -> World {
     MockSoroswapRouterClient::new(&env, &router_id).router_init(&lp_token);
 
     let share_id = env.register(ShareTokenContract, ());
-    let vault_id = env.register(Vault, ());
     let strat_id = env.register(SoroswapLpStrategy, ());
 
-    // Share token: manager as admin; vault init will take admin.
+    // Share token: manager as admin; vault constructor will take admin.
     ShareTokenContractClient::new(&env, &share_id).initialize(
         &manager,
         &String::from_str(&env, "VS"),
@@ -66,19 +65,22 @@ fn setup() -> World {
         &7u32,
     );
 
-    // Vault init.
+    // Deploy vault with constructor (atomic, front-run-proof).
+    let vault_id = env.register(
+        Vault,
+        (VaultParams {
+            manager: manager.clone(),
+            trader: trader.clone(),
+            base_asset: token_a.clone(),
+            share_token: share_id.clone(),
+            share_token_admin: manager.clone(),
+            entry_fee_bps: 0,
+            exit_fee_bps: 0,
+            mgmt_fee_bps: 0,
+            perf_fee_bps: 0,
+        },),
+    );
     let vault = VaultClient::new(&env, &vault_id);
-    vault.initialize(&VaultParams {
-        manager: manager.clone(),
-        trader: trader.clone(),
-        base_asset: token_a.clone(),
-        share_token: share_id.clone(),
-        share_token_admin: manager.clone(),
-        entry_fee_bps: 0,
-        exit_fee_bps: 0,
-        mgmt_fee_bps: 0,
-        perf_fee_bps: 0,
-    });
 
     // Soroswap LP strategy.
     let strategy = SoroswapLpStrategyClient::new(&env, &strat_id);

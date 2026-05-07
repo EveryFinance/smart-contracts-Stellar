@@ -233,22 +233,22 @@ fn setup_with_fees(entry: u32, exit: u32, mgmt: u32, perf: u32) -> T {
     MockTokenClient::new(&env, &base).mint(&user, &1_000_000_0000000i128);
     MockTokenClient::new(&env, &base).mint(&user2, &1_000_000_0000000i128);
 
-    let vid = env.register(Vault, ());
+    let vid = env.register(
+        Vault,
+        (VaultParams {
+            manager: manager.clone(),
+            trader: trader.clone(),
+            base_asset: base.clone(),
+            share_token: share.clone(),
+            share_token_admin: manager.clone(),
+            entry_fee_bps: entry,
+            exit_fee_bps: exit,
+            mgmt_fee_bps: mgmt,
+            perf_fee_bps: perf,
+        },),
+    );
     let vault = VaultClient::new(&env, &vid);
-    vault.initialize(&VaultParams {
-        manager: manager.clone(),
-        trader: trader.clone(),
-        base_asset: base.clone(),
-        share_token: share.clone(),
-        share_token_admin: manager.clone(),
-        entry_fee_bps: entry,
-        exit_fee_bps: exit,
-        mgmt_fee_bps: mgmt,
-        perf_fee_bps: perf,
-    });
 
-    // Grant vault permission to mint/burn share tokens.
-    // (In production the share token's admin = vault; here mock accepts any caller.)
     let vault: VaultClient<'static> = unsafe { core::mem::transmute(vault) };
     let vault_addr = vid;
 
@@ -302,23 +302,6 @@ fn test_initialize_stores_params() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #1)")]
-fn test_double_initialize_panics() {
-    let t = setup();
-    t.vault.initialize(&VaultParams {
-        manager: t.manager.clone(),
-        trader: t.trader.clone(),
-        base_asset: t.base.clone(),
-        share_token: t.share.clone(),
-        share_token_admin: t.manager.clone(),
-        entry_fee_bps: 0,
-        exit_fee_bps: 0,
-        mgmt_fee_bps: 0,
-        perf_fee_bps: 0,
-    });
-}
-
-#[test]
 #[should_panic]
 fn test_initialize_entry_fee_too_high_panics() {
     let env = Env::default();
@@ -329,19 +312,20 @@ fn test_initialize_entry_fee_too_high_panics() {
     let share = env.register(MockToken, ());
     MockTokenClient::new(&env, &base).initialize(&manager);
     MockTokenClient::new(&env, &share).initialize(&manager);
-    let vid = env.register(Vault, ());
-    let vault = VaultClient::new(&env, &vid);
-    vault.initialize(&VaultParams {
-        manager: manager.clone(),
-        trader: trader.clone(),
-        base_asset: base,
-        share_token: share,
-        share_token_admin: manager.clone(),
-        entry_fee_bps: 501, // > MAX
-        exit_fee_bps: 0,
-        mgmt_fee_bps: 0,
-        perf_fee_bps: 0,
-    });
+    env.register(
+        Vault,
+        (VaultParams {
+            manager: manager.clone(),
+            trader: trader.clone(),
+            base_asset: base,
+            share_token: share,
+            share_token_admin: manager.clone(),
+            entry_fee_bps: 501, // > MAX
+            exit_fee_bps: 0,
+            mgmt_fee_bps: 0,
+            perf_fee_bps: 0,
+        },),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -905,41 +889,6 @@ fn test_unwind_zero_amount_panics() {
 }
 
 // ---------------------------------------------------------------------------
-// NotInitialized — calling vault functions before initialize() panics
-// ---------------------------------------------------------------------------
-
-#[test]
-#[should_panic]
-fn test_not_initialized_deposit_panics() {
-    let env = Env::default();
-    env.mock_all_auths_allowing_non_root_auth();
-    let vid = env.register(Vault, ());
-    let client = VaultClient::new(&env, &vid);
-    let user = Address::generate(&env);
-    client.deposit(&100i128, &user);
-}
-
-#[test]
-#[should_panic]
-fn test_not_initialized_get_nav_panics() {
-    let env = Env::default();
-    env.mock_all_auths_allowing_non_root_auth();
-    let vid = env.register(Vault, ());
-    let client = VaultClient::new(&env, &vid);
-    client.get_nav();
-}
-
-#[test]
-#[should_panic]
-fn test_not_initialized_get_manager_panics() {
-    let env = Env::default();
-    env.mock_all_auths_allowing_non_root_auth();
-    let vid = env.register(Vault, ());
-    let client = VaultClient::new(&env, &vid);
-    client.get_manager();
-}
-
-// ---------------------------------------------------------------------------
 // Fee validation at initialization
 // ---------------------------------------------------------------------------
 
@@ -954,19 +903,20 @@ fn test_initialize_exit_fee_too_high_panics() {
     let share = env.register(MockToken, ());
     MockTokenClient::new(&env, &base).initialize(&manager);
     MockTokenClient::new(&env, &share).initialize(&manager);
-    let vid = env.register(Vault, ());
-    let vault = VaultClient::new(&env, &vid);
-    vault.initialize(&VaultParams {
-        manager: manager.clone(),
-        trader: trader.clone(),
-        base_asset: base,
-        share_token: share,
-        share_token_admin: manager.clone(),
-        entry_fee_bps: 0,
-        exit_fee_bps: 501, // > MAX_ENTRY_EXIT_FEE_BPS
-        mgmt_fee_bps: 0,
-        perf_fee_bps: 0,
-    });
+    env.register(
+        Vault,
+        (VaultParams {
+            manager: manager.clone(),
+            trader: trader.clone(),
+            base_asset: base,
+            share_token: share,
+            share_token_admin: manager.clone(),
+            entry_fee_bps: 0,
+            exit_fee_bps: 501, // > MAX_ENTRY_EXIT_FEE_BPS
+            mgmt_fee_bps: 0,
+            perf_fee_bps: 0,
+        },),
+    );
 }
 
 #[test]
@@ -980,19 +930,20 @@ fn test_initialize_mgmt_fee_too_high_panics() {
     let share = env.register(MockToken, ());
     MockTokenClient::new(&env, &base).initialize(&manager);
     MockTokenClient::new(&env, &share).initialize(&manager);
-    let vid = env.register(Vault, ());
-    let vault = VaultClient::new(&env, &vid);
-    vault.initialize(&VaultParams {
-        manager: manager.clone(),
-        trader: trader.clone(),
-        base_asset: base,
-        share_token: share,
-        share_token_admin: manager.clone(),
-        entry_fee_bps: 0,
-        exit_fee_bps: 0,
-        mgmt_fee_bps: 301, // > MAX_MGMT_FEE_BPS
-        perf_fee_bps: 0,
-    });
+    env.register(
+        Vault,
+        (VaultParams {
+            manager: manager.clone(),
+            trader: trader.clone(),
+            base_asset: base,
+            share_token: share,
+            share_token_admin: manager.clone(),
+            entry_fee_bps: 0,
+            exit_fee_bps: 0,
+            mgmt_fee_bps: 301, // > MAX_MGMT_FEE_BPS
+            perf_fee_bps: 0,
+        },),
+    );
 }
 
 #[test]
@@ -1006,19 +957,20 @@ fn test_initialize_perf_fee_too_high_panics() {
     let share = env.register(MockToken, ());
     MockTokenClient::new(&env, &base).initialize(&manager);
     MockTokenClient::new(&env, &share).initialize(&manager);
-    let vid = env.register(Vault, ());
-    let vault = VaultClient::new(&env, &vid);
-    vault.initialize(&VaultParams {
-        manager: manager.clone(),
-        trader: trader.clone(),
-        base_asset: base,
-        share_token: share,
-        share_token_admin: manager.clone(),
-        entry_fee_bps: 0,
-        exit_fee_bps: 0,
-        mgmt_fee_bps: 0,
-        perf_fee_bps: 3_001, // > MAX_PERF_FEE_BPS
-    });
+    env.register(
+        Vault,
+        (VaultParams {
+            manager: manager.clone(),
+            trader: trader.clone(),
+            base_asset: base,
+            share_token: share,
+            share_token_admin: manager.clone(),
+            entry_fee_bps: 0,
+            exit_fee_bps: 0,
+            mgmt_fee_bps: 0,
+            perf_fee_bps: 3_001, // > MAX_PERF_FEE_BPS
+        },),
+    );
 }
 
 // ---------------------------------------------------------------------------

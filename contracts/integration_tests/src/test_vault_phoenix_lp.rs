@@ -56,10 +56,9 @@ fn setup() -> World {
     MockPhoenixPoolClient::new(&env, &pool).phoenix_init(&share_token, &token_a, &token_b);
 
     let vault_share_id = env.register(ShareTokenContract, ());
-    let vault_id = env.register(Vault, ());
     let strat_id = env.register(PhoenixLpStrategy, ());
 
-    // Share token: manager as admin; vault init will take admin.
+    // Share token: manager as admin; vault constructor will take admin.
     ShareTokenContractClient::new(&env, &vault_share_id).initialize(
         &manager,
         &String::from_str(&env, "VS"),
@@ -67,19 +66,22 @@ fn setup() -> World {
         &7u32,
     );
 
-    // Vault init.
+    // Deploy vault with constructor (atomic, front-run-proof).
+    let vault_id = env.register(
+        Vault,
+        (VaultParams {
+            manager: manager.clone(),
+            trader: trader.clone(),
+            base_asset: token_a.clone(),
+            share_token: vault_share_id.clone(),
+            share_token_admin: manager.clone(),
+            entry_fee_bps: 0,
+            exit_fee_bps: 0,
+            mgmt_fee_bps: 0,
+            perf_fee_bps: 0,
+        },),
+    );
     let vault = VaultClient::new(&env, &vault_id);
-    vault.initialize(&VaultParams {
-        manager: manager.clone(),
-        trader: trader.clone(),
-        base_asset: token_a.clone(),
-        share_token: vault_share_id.clone(),
-        share_token_admin: manager.clone(),
-        entry_fee_bps: 0,
-        exit_fee_bps: 0,
-        mgmt_fee_bps: 0,
-        perf_fee_bps: 0,
-    });
 
     // Phoenix LP strategy (auto-queries share token from pool).
     let strategy = PhoenixLpStrategyClient::new(&env, &strat_id);

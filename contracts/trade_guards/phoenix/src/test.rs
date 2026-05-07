@@ -1,8 +1,30 @@
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, vec, Address, Env, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, testutils::Address as _, vec, Address, Env, Vec};
 
 use crate::{PhoenixTradeGuard, PhoenixTradeGuardClient, SwapOperation};
+
+// ---------------------------------------------------------------------------
+// MockVault — satisfies guard.initialize()'s vault.get_manager() cross-call
+// ---------------------------------------------------------------------------
+
+#[contracttype]
+enum VaultKey {
+    Manager,
+}
+
+#[contract]
+pub struct MockVault;
+
+#[contractimpl]
+impl MockVault {
+    pub fn set_manager(env: Env, manager: Address) {
+        env.storage().instance().set(&VaultKey::Manager, &manager);
+    }
+    pub fn get_manager(env: Env) -> Address {
+        env.storage().instance().get(&VaultKey::Manager).unwrap()
+    }
+}
 
 struct T {
     env: Env,
@@ -18,8 +40,9 @@ fn setup() -> T {
     let env = Env::default();
     env.mock_all_auths();
 
-    let vault = Address::generate(&env);
     let manager = Address::generate(&env);
+    let vault = env.register(MockVault, ());
+    MockVaultClient::new(&env, &vault).set_manager(&manager);
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
     let token_c = Address::generate(&env);

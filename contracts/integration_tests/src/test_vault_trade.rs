@@ -83,7 +83,6 @@ fn base_world() -> World {
     MockTokenClient::new(&env, &base).initialize(&manager);
 
     let share_id = env.register(ShareTokenContract, ());
-    let vault_id = env.register(Vault, ());
 
     ShareTokenContractClient::new(&env, &share_id).initialize(
         &manager,
@@ -92,18 +91,21 @@ fn base_world() -> World {
         &7u32,
     );
 
+    let vault_id = env.register(
+        Vault,
+        (VaultParams {
+            manager: manager.clone(),
+            trader: trader.clone(),
+            base_asset: base.clone(),
+            share_token: share_id.clone(),
+            share_token_admin: manager.clone(),
+            entry_fee_bps: 0,
+            exit_fee_bps: 0,
+            mgmt_fee_bps: 0,
+            perf_fee_bps: 0,
+        },),
+    );
     let vault = VaultClient::new(&env, &vault_id);
-    vault.initialize(&VaultParams {
-        manager: manager.clone(),
-        trader: trader.clone(),
-        base_asset: base.clone(),
-        share_token: share_id.clone(),
-        share_token_admin: manager.clone(),
-        entry_fee_bps: 0,
-        exit_fee_bps: 0,
-        mgmt_fee_bps: 0,
-        perf_fee_bps: 0,
-    });
 
     MockTokenClient::new(&env, &base).mint(&user, &100_000_0000000i128);
 

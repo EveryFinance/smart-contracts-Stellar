@@ -50,10 +50,7 @@ fn setup_world_with_fees(entry: u32, exit: u32, mgmt: u32, perf: u32) -> World {
     // Deploy real ShareToken.
     let share_id = env.register(ShareTokenContract, ());
 
-    // Deploy real Vault.
-    let vault_id = env.register(Vault, ());
-
-    // Initialize ShareToken with manager as admin; vault init will take admin.
+    // Initialize ShareToken with manager as admin; vault constructor will take admin.
     let share = ShareTokenContractClient::new(&env, &share_id);
     share.initialize(
         &manager,
@@ -62,19 +59,22 @@ fn setup_world_with_fees(entry: u32, exit: u32, mgmt: u32, perf: u32) -> World {
         &7u32,
     );
 
-    // Initialize Vault.
+    // Deploy Vault with constructor (atomic, front-run-proof).
+    let vault_id = env.register(
+        Vault,
+        (VaultParams {
+            manager: manager.clone(),
+            trader: trader.clone(),
+            base_asset: base.clone(),
+            share_token: share_id.clone(),
+            share_token_admin: manager.clone(),
+            entry_fee_bps: entry,
+            exit_fee_bps: exit,
+            mgmt_fee_bps: mgmt,
+            perf_fee_bps: perf,
+        },),
+    );
     let vault_client = VaultClient::new(&env, &vault_id);
-    vault_client.initialize(&VaultParams {
-        manager: manager.clone(),
-        trader: trader.clone(),
-        base_asset: base.clone(),
-        share_token: share_id.clone(),
-        share_token_admin: manager.clone(),
-        entry_fee_bps: entry,
-        exit_fee_bps: exit,
-        mgmt_fee_bps: mgmt,
-        perf_fee_bps: perf,
-    });
 
     // Fund users.
     MockTokenClient::new(&env, &base).mint(&user, &100_000_0000000i128);
