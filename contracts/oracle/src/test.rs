@@ -12,10 +12,9 @@ use crate::{OracleContract, OracleContractClient, PRICE_PRECISION};
 // ---------------------------------------------------------------------------
 
 fn setup(env: &Env) -> (OracleContractClient<'_>, Address) {
-    let id = env.register(OracleContract, ());
-    let client = OracleContractClient::new(env, &id);
     let admin = Address::generate(env);
-    client.initialize(&admin);
+    let id = env.register(OracleContract, (admin.clone(),));
+    let client = OracleContractClient::new(env, &id);
     (client, admin)
 }
 
@@ -29,15 +28,6 @@ fn test_initialize() {
     env.mock_all_auths();
     let (client, admin) = setup(&env);
     assert_eq!(client.get_admin(), admin);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #2)")]
-fn test_double_initialize_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (client, admin) = setup(&env);
-    client.initialize(&admin);
 }
 
 // ---------------------------------------------------------------------------
@@ -161,69 +151,36 @@ fn test_set_admin() {
 }
 
 // ---------------------------------------------------------------------------
-// NotInitialized — operations before initialize() panics
-// ---------------------------------------------------------------------------
-
-#[test]
-#[should_panic]
-fn test_get_admin_not_initialized_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(OracleContract, ());
-    let client = OracleContractClient::new(&env, &id);
-    client.get_admin();
-}
-
-#[test]
-#[should_panic]
-fn test_set_price_not_initialized_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(OracleContract, ());
-    let client = OracleContractClient::new(&env, &id);
-    let asset = Address::generate(&env);
-    client.set_price(&asset, &PRICE_PRECISION);
-}
-
-#[test]
-#[should_panic]
-fn test_get_price_not_initialized_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(OracleContract, ());
-    let client = OracleContractClient::new(&env, &id);
-    let asset = Address::generate(&env);
-    client.get_price(&asset);
-}
-
-// ---------------------------------------------------------------------------
 // Unauthorized access — real auth enforcement (no mock_all_auths)
 // ---------------------------------------------------------------------------
 
-/// Oracle uses `admin.require_auth()` — calling set_price without providing
-/// the admin's auth signature fails at the Soroban auth layer.
+/// `set_price` requires the stored admin's auth — calling without it panics.
 #[test]
 #[should_panic]
 fn test_set_price_unauthorized_no_mock() {
     let env = Env::default();
     // No mock_all_auths — Soroban enforces auth.
-    let id = env.register(OracleContract, ());
-    let client = OracleContractClient::new(&env, &id);
     let admin = Address::generate(&env);
-    // initialize() requires admin auth, so this panics without signatures.
-    client.initialize(&admin);
+    // Constructor runs atomically; no separate initialize call needed.
+    let id = env.register(OracleContract, (admin.clone(),));
+    let client = OracleContractClient::new(&env, &id);
+    let asset = Address::generate(&env);
+    // set_price requires admin.require_auth() — panics without signatures.
+    client.set_price(&asset, &PRICE_PRECISION);
 }
 
-/// Calling set_admin without providing the stored admin's auth fails.
+/// `set_admin` requires the stored admin's auth — calling without it panics.
 #[test]
 #[should_panic]
 fn test_set_admin_unauthorized_no_mock() {
     let env = Env::default();
-    let id = env.register(OracleContract, ());
-    let client = OracleContractClient::new(&env, &id);
+    // No mock_all_auths — Soroban enforces auth.
     let admin = Address::generate(&env);
-    // initialize() requires admin auth, so this panics without signatures.
-    client.initialize(&admin);
+    let id = env.register(OracleContract, (admin.clone(),));
+    let client = OracleContractClient::new(&env, &id);
+    let new_admin = Address::generate(&env);
+    // set_admin requires admin.require_auth() — panics without signatures.
+    client.set_admin(&new_admin);
 }
 
 #[test]

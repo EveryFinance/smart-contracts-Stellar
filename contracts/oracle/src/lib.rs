@@ -27,7 +27,7 @@ pub use error::OracleError;
 use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, Map, Vec};
 
 use storage::{
-    get_admin, get_max_age_ledgers, get_price_data, has_admin, set_admin, set_max_age_ledgers,
+    get_admin, get_max_age_ledgers, get_price_data, set_admin, set_max_age_ledgers,
     set_price, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
 };
 
@@ -55,20 +55,15 @@ impl OracleContract {
     // Lifecycle
     // -----------------------------------------------------------------------
 
-    /// Initialize the oracle and set the first admin.
+    /// Constructor — runs atomically with `CreateContract`, cannot be front-run.
     ///
-    /// Must be called once immediately after deployment.
+    /// The deployer supplies the initial `admin` address. Because this executes
+    /// in the same transaction as contract creation, no attacker can race ahead
+    /// and claim admin rights.
     ///
     /// # Arguments
     /// * `admin` – The address that will be permitted to call [`set_price`].
-    ///
-    /// # Errors
-    /// * [`OracleError::AlreadyInitialized`] if called more than once.
-    pub fn initialize(env: Env, admin: Address) {
-        if has_admin(&env) {
-            panic_with_error!(&env, OracleError::AlreadyInitialized);
-        }
-        admin.require_auth();
+    pub fn __constructor(env: Env, admin: Address) {
         set_admin(&env, &admin);
         set_max_age_ledgers(&env, DEFAULT_MAX_AGE_LEDGERS);
         env.storage()
