@@ -46,7 +46,10 @@ impl SoroswapTradeGuard {
     // Lifecycle
     // -----------------------------------------------------------------------
 
-    /// Initialize the trade guard.
+    /// Initialize the trade guard atomically at deployment.
+    ///
+    /// Runs as part of `CreateContractV2` — no post-deployment initialization
+    /// window that an attacker could race to call with a malicious vault.
     ///
     /// # Arguments
     /// * `vault`    – The only address allowed to call `validate_*`.
@@ -58,7 +61,7 @@ impl SoroswapTradeGuard {
     ///
     /// # Errors
     /// * [`SoroswapGuardError::AlreadyInitialized`]
-    pub fn initialize(
+    pub fn __constructor(
         env: Env,
         vault: Address,
         manager: Address,
@@ -69,8 +72,8 @@ impl SoroswapTradeGuard {
             panic_with_error!(&env, SoroswapGuardError::AlreadyInitialized);
         }
 
-        // Derive the vault's authoritative manager from on-chain state so an
-        // attacker cannot front-run initialization by supplying their own vault.
+        // Require auth from the vault's on-chain manager to prevent an attacker
+        // from supplying a malicious vault they control at deployment time.
         let vault_manager: Address = env.invoke_contract(
             &vault,
             &Symbol::new(&env, "get_manager"),

@@ -70,11 +70,9 @@ fn setup() -> T {
     let token_b = Address::generate(&env);
     let token_c = Address::generate(&env);
 
-    let gid = env.register(SoroswapTradeGuard, ());
-    let guard = SoroswapTradeGuardClient::new(&env, &gid);
-
     let tokens: Vec<Address> = vec![&env, token_a.clone(), token_b.clone(), token_c.clone()];
-    guard.initialize(&vault, &manager, &tokens, &strategy);
+    let gid = env.register(SoroswapTradeGuard, (&vault, &manager, tokens.clone(), &strategy));
+    let guard = SoroswapTradeGuardClient::new(&env, &gid);
 
     let guard: SoroswapTradeGuardClient<'static> = unsafe { core::mem::transmute(guard) };
 
@@ -103,13 +101,10 @@ fn test_initialize_stores_data() {
     assert_eq!(wl.len(), 3);
 }
 
-#[test]
-#[should_panic(expected = "Error(Contract, #1)")]
-fn test_double_initialize_panics() {
-    let t = setup();
-    let tokens: Vec<Address> = vec![&t.env, t.token_a.clone()];
-    t.guard.initialize(&t.vault, &t.manager, &tokens, &t.strategy);
-}
+// Double-initialize test is not applicable to __constructor: the Soroban host
+// enforces that constructors run exactly once at CreateContractV2 time.  The
+// application-level is_initialized guard inside __constructor is defense-in-depth
+// against any host that does not enforce this (older protocol versions).
 
 // ---------------------------------------------------------------------------
 // set_whitelist
@@ -294,43 +289,18 @@ fn test_validate_exact_out_slippage_too_high_panics() {
 }
 
 // ---------------------------------------------------------------------------
-// NotInitialized — calling functions before initialize() panics
+// Constructor stores data correctly (replaces the old not-initialized tests —
+// those registered SoroswapTradeGuard with () which is no longer valid since
+// __constructor requires all arguments at deployment time).
 // ---------------------------------------------------------------------------
 
 #[test]
-#[should_panic]
-fn test_not_initialized_get_vault_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(SoroswapTradeGuard, ());
-    let client = SoroswapTradeGuardClient::new(&env, &id);
-    client.get_vault();
-}
-
-#[test]
-#[should_panic]
-fn test_not_initialized_validate_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(SoroswapTradeGuard, ());
-    let client = SoroswapTradeGuardClient::new(&env, &id);
-    let vault = Address::generate(&env);
-    let token_a = Address::generate(&env);
-    let token_b = Address::generate(&env);
-    let path: Vec<Address> = vec![&env, token_a, token_b];
-    client.validate_swap_exact_in(&vault, &1_000i128, &900i128, &path);
-}
-
-#[test]
-#[should_panic]
-fn test_not_initialized_set_whitelist_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(SoroswapTradeGuard, ());
-    let client = SoroswapTradeGuardClient::new(&env, &id);
-    let manager = Address::generate(&env);
-    let tokens: Vec<Address> = Vec::new(&env);
-    client.set_whitelist(&manager, &tokens);
+fn test_constructor_stores_all_fields() {
+    let t = setup();
+    assert_eq!(t.guard.get_vault(), t.vault);
+    assert_eq!(t.guard.get_manager(), t.manager);
+    assert_eq!(t.guard.get_strategy(), t.strategy);
+    assert_eq!(t.guard.get_whitelist().len(), 3);
 }
 
 // ---------------------------------------------------------------------------

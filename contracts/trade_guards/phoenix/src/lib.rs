@@ -27,8 +27,9 @@ pub use error::PhoenixGuardError;
 use soroban_sdk::{contract, contractimpl, contracttype, panic_with_error, Address, Env, IntoVal, Symbol, Vec};
 
 use storage::{
-    get_manager, get_vault, get_whitelist, is_initialized, set_manager, set_vault, set_whitelist,
-    INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD, MAX_OPERATIONS, MAX_SLIPPAGE_BPS,
+    get_manager, get_router, get_vault, get_whitelist, is_initialized, set_manager, set_router,
+    set_vault, set_whitelist, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD, MAX_OPERATIONS,
+    MAX_SLIPPAGE_BPS,
 };
 
 // ---------------------------------------------------------------------------
@@ -60,22 +61,27 @@ impl PhoenixTradeGuard {
     // Lifecycle
     // -----------------------------------------------------------------------
 
-    /// Initialize the Phoenix trade guard.
+    /// Initialize the Phoenix trade guard atomically at deployment.
+    ///
+    /// Runs as part of `CreateContractV2` — no post-deployment initialization
+    /// window that an attacker could race to call with a malicious vault.
     ///
     /// # Arguments
     /// * `vault`   – The only address allowed to call `validate_swap`.
     /// * `manager` – Account allowed to update the token whitelist.
     /// * `tokens`  – Initial whitelist of tradeable token addresses.
+    /// * `router`  – Contract exposing `quote_exact_in(amount_in, path) -> i128`
+    ///               used to obtain output-token-unit quotes for slippage checks.
     ///
     /// # Errors
     /// * [`PhoenixGuardError::AlreadyInitialized`]
-    pub fn initialize(env: Env, vault: Address, manager: Address, tokens: Vec<Address>) {
+    pub fn __constructor(env: Env, vault: Address, manager: Address, tokens: Vec<Address>, router: Address) {
         if is_initialized(&env) {
             panic_with_error!(&env, PhoenixGuardError::AlreadyInitialized);
         }
 
-        // Derive the vault's authoritative manager from on-chain state so an
-        // attacker cannot front-run initialization by supplying their own vault.
+        // Require auth from the vault's on-chain manager to prevent an attacker
+        // from supplying a malicious vault they control at deployment time.
         let vault_manager: Address = env.invoke_contract(
             &vault,
             &Symbol::new(&env, "get_manager"),
@@ -90,6 +96,7 @@ impl PhoenixTradeGuard {
         set_vault(&env, &vault);
         set_manager(&env, &manager);
         set_whitelist(&env, &tokens);
+        set_router(&env, &router);
     }
 
     // -----------------------------------------------------------------------
@@ -169,7 +176,22 @@ impl PhoenixTradeGuard {
             Self::assert_whitelisted(&op.ask_asset, &whitelist, &env);
         }
 
-        Self::check_slippage(min_out, amount_in, &env);
+        // Build a flat path [offer_0, ask_0, ask_1, …] from the operations so
+        // we can call the router's generic quote_exact_in interface.
+        let mut path: Vec<Address> = Vec::new(&env);
+        let first = operations.get(0).unwrap();
+        path.push_back(first.offer_asset.clone());
+        for op in operations.iter() {
+            path.push_back(op.ask_asset.clone());
+        }
+        let router = get_router(&env);
+        let quoted_out: i128 = env.invoke_contract(
+            &router,
+            &Symbol::new(&env, "quote_exact_in"),
+            (amount_in, path).into_val(&env),
+        );
+
+        Self::check_slippage(min_out, quoted_out, &env);
     }
 
     /// Validate a swap using a flat token path — compatible with the vault's
@@ -231,7 +253,14 @@ impl PhoenixTradeGuard {
             i += 1;
         }
 
-        Self::check_slippage(min_out, amount_in, &env);
+        let router = get_router(&env);
+        let quoted_out: i128 = env.invoke_contract(
+            &router,
+            &Symbol::new(&env, "quote_exact_in"),
+            (amount_in, path.clone()).into_val(&env),
+        );
+
+        Self::check_slippage(min_out, quoted_out, &env);
     }
 
     /// Validate strategy-invest operations guarded by this contract.
@@ -294,6 +323,13 @@ impl PhoenixTradeGuard {
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         get_manager(&env)
+    }
+
+    pub fn get_router(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        get_router(&env)
     }
 
     // -----------------------------------------------------------------------

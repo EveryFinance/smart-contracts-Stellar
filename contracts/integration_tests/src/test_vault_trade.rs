@@ -145,14 +145,16 @@ fn test_soroswap_guard_allows_valid_trade() {
     let sid = register_dex_strategy(&w);
 
     // Deploy real Soroswap guard with strategy address for trusted quoting.
-    let guard_id = w.env.register(SoroswapTradeGuard, ());
-    let guard = SoroswapTradeGuardClient::new(&w.env, &guard_id);
-    guard.initialize(
-        &w.vault_addr,
-        &w.manager,
-        &vec![&w.env, token_a.clone(), token_b.clone()],
-        &sid,
+    let guard_id = w.env.register(
+        SoroswapTradeGuard,
+        (
+            &w.vault_addr,
+            &w.manager,
+            vec![&w.env, token_a.clone(), token_b.clone()],
+            &sid,
+        ),
     );
+    let guard = SoroswapTradeGuardClient::new(&w.env, &guard_id);
 
     // Register strategy and attach guard.
     w.vault
@@ -181,12 +183,14 @@ fn test_soroswap_guard_rejects_excessive_slippage() {
 
     let sid = register_dex_strategy(&w);
 
-    let guard_id = w.env.register(SoroswapTradeGuard, ());
-    SoroswapTradeGuardClient::new(&w.env, &guard_id).initialize(
-        &w.vault_addr,
-        &w.manager,
-        &vec![&w.env, token_a.clone(), token_b.clone()],
-        &sid,
+    let guard_id = w.env.register(
+        SoroswapTradeGuard,
+        (
+            &w.vault_addr,
+            &w.manager,
+            vec![&w.env, token_a.clone(), token_b.clone()],
+            &sid,
+        ),
     );
 
     w.vault
@@ -211,13 +215,15 @@ fn test_soroswap_guard_rejects_unlisted_token() {
 
     let sid = register_dex_strategy(&w);
 
-    let guard_id = w.env.register(SoroswapTradeGuard, ());
     // Whitelist only token_a — unlisted is NOT in it.
-    SoroswapTradeGuardClient::new(&w.env, &guard_id).initialize(
-        &w.vault_addr,
-        &w.manager,
-        &vec![&w.env, token_a.clone()],
-        &sid,
+    let guard_id = w.env.register(
+        SoroswapTradeGuard,
+        (
+            &w.vault_addr,
+            &w.manager,
+            vec![&w.env, token_a.clone()],
+            &sid,
+        ),
     );
 
     w.vault
@@ -241,14 +247,16 @@ fn test_soroswap_guard_whitelist_update_enables_new_token() {
 
     let sid = register_dex_strategy(&w);
 
-    let guard_id = w.env.register(SoroswapTradeGuard, ());
-    let guard = SoroswapTradeGuardClient::new(&w.env, &guard_id);
-    guard.initialize(
-        &w.vault_addr,
-        &w.manager,
-        &vec![&w.env, token_a.clone(), token_b.clone()],
-        &sid,
+    let guard_id = w.env.register(
+        SoroswapTradeGuard,
+        (
+            &w.vault_addr,
+            &w.manager,
+            vec![&w.env, token_a.clone(), token_b.clone()],
+            &sid,
+        ),
     );
+    let guard = SoroswapTradeGuardClient::new(&w.env, &guard_id);
 
     w.vault
         .set_strategies(&w.manager, &vec![&w.env, sid.clone()]);
@@ -279,12 +287,14 @@ fn test_soroswap_guard_rejects_single_token_path() {
 
     let sid = register_dex_strategy(&w);
 
-    let guard_id = w.env.register(SoroswapTradeGuard, ());
-    SoroswapTradeGuardClient::new(&w.env, &guard_id).initialize(
-        &w.vault_addr,
-        &w.manager,
-        &vec![&w.env, token_a.clone()],
-        &sid,
+    let guard_id = w.env.register(
+        SoroswapTradeGuard,
+        (
+            &w.vault_addr,
+            &w.manager,
+            vec![&w.env, token_a.clone()],
+            &sid,
+        ),
     );
 
     w.vault
@@ -308,14 +318,17 @@ fn test_phoenix_guard_allows_valid_swap() {
     let token_a = Address::generate(&w.env);
     let token_b = Address::generate(&w.env);
 
-    let guard_id = w.env.register(PhoenixTradeGuard, ());
-    PhoenixTradeGuardClient::new(&w.env, &guard_id).initialize(
-        &w.vault_addr,
-        &w.manager,
-        &vec![&w.env, token_a.clone(), token_b.clone()],
-    );
-
     let sid = register_dex_strategy(&w);
+
+    let guard_id = w.env.register(
+        PhoenixTradeGuard,
+        (
+            &w.vault_addr,
+            &w.manager,
+            vec![&w.env, token_a.clone(), token_b.clone()],
+            &sid,
+        ),
+    );
     w.vault
         .set_strategies(&w.manager, &vec![&w.env, sid.clone()]);
     // Phoenix guard exposes validate_swap_exact_in — needed by vault's execute_trade.
@@ -349,13 +362,18 @@ fn test_phoenix_guard_rejects_excessive_slippage() {
     let token_a = Address::generate(&w.env);
     let token_b = Address::generate(&w.env);
 
-    let guard_id = w.env.register(PhoenixTradeGuard, ());
-    let guard = PhoenixTradeGuardClient::new(&w.env, &guard_id);
-    guard.initialize(
-        &w.vault_addr,
-        &w.manager,
-        &vec![&w.env, token_a.clone(), token_b.clone()],
+    let sid = register_dex_strategy(&w);
+
+    let guard_id = w.env.register(
+        PhoenixTradeGuard,
+        (
+            &w.vault_addr,
+            &w.manager,
+            vec![&w.env, token_a.clone(), token_b.clone()],
+            &sid,
+        ),
     );
+    let guard = PhoenixTradeGuardClient::new(&w.env, &guard_id);
 
     let ops = vec![
         &w.env,
@@ -382,13 +400,18 @@ fn test_phoenix_guard_rejects_unlisted_token() {
     let token_a = Address::generate(&w.env);
     let unlisted = Address::generate(&w.env);
 
-    let guard_id = w.env.register(PhoenixTradeGuard, ());
-    let guard = PhoenixTradeGuardClient::new(&w.env, &guard_id);
-    guard.initialize(
-        &w.vault_addr,
-        &w.manager,
-        &vec![&w.env, token_a.clone()], // unlisted NOT in whitelist
+    let sid = register_dex_strategy(&w);
+
+    let guard_id = w.env.register(
+        PhoenixTradeGuard,
+        (
+            &w.vault_addr,
+            &w.manager,
+            vec![&w.env, token_a.clone()], // unlisted NOT in whitelist
+            &sid,
+        ),
     );
+    let guard = PhoenixTradeGuardClient::new(&w.env, &guard_id);
 
     let ops = vec![
         &w.env,
@@ -411,13 +434,18 @@ fn test_phoenix_guard_rejects_unlisted_token() {
 fn test_phoenix_guard_rejects_empty_operations() {
     let w = base_world();
 
-    let guard_id = w.env.register(PhoenixTradeGuard, ());
-    let guard = PhoenixTradeGuardClient::new(&w.env, &guard_id);
-    guard.initialize(
-        &w.vault_addr,
-        &w.manager,
-        &vec![&w.env, Address::generate(&w.env)],
+    let sid = register_dex_strategy(&w);
+
+    let guard_id = w.env.register(
+        PhoenixTradeGuard,
+        (
+            &w.vault_addr,
+            &w.manager,
+            vec![&w.env, Address::generate(&w.env)],
+            &sid,
+        ),
     );
+    let guard = PhoenixTradeGuardClient::new(&w.env, &guard_id);
 
     let ops: Vec<SwapOperation> = Vec::new(&w.env);
     guard.validate_swap(
@@ -437,13 +465,18 @@ fn test_phoenix_guard_whitelist_update() {
     let token_b = Address::generate(&w.env);
     let token_c = Address::generate(&w.env);
 
-    let guard_id = w.env.register(PhoenixTradeGuard, ());
-    let guard = PhoenixTradeGuardClient::new(&w.env, &guard_id);
-    guard.initialize(
-        &w.vault_addr,
-        &w.manager,
-        &vec![&w.env, token_a.clone(), token_b.clone()],
+    let sid = register_dex_strategy(&w);
+
+    let guard_id = w.env.register(
+        PhoenixTradeGuard,
+        (
+            &w.vault_addr,
+            &w.manager,
+            vec![&w.env, token_a.clone(), token_b.clone()],
+            &sid,
+        ),
     );
+    let guard = PhoenixTradeGuardClient::new(&w.env, &guard_id);
 
     // Add token_c.
     guard.set_whitelist(
@@ -502,12 +535,14 @@ fn test_non_trader_execute_trade_panics() {
 
     let sid = register_dex_strategy(&w);
 
-    let guard_id = w.env.register(SoroswapTradeGuard, ());
-    SoroswapTradeGuardClient::new(&w.env, &guard_id).initialize(
-        &w.vault_addr,
-        &w.manager,
-        &vec![&w.env, token_a.clone(), token_b.clone()],
-        &sid,
+    let guard_id = w.env.register(
+        SoroswapTradeGuard,
+        (
+            &w.vault_addr,
+            &w.manager,
+            vec![&w.env, token_a.clone(), token_b.clone()],
+            &sid,
+        ),
     );
 
     w.vault

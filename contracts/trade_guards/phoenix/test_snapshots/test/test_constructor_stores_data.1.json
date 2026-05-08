@@ -83,6 +83,7 @@
     ],
     [],
     [],
+    [],
     []
   ],
   "ledger": {
@@ -277,7 +278,7 @@
                         "key": {
                           "vec": [
                             {
-                              "symbol": "Strategy"
+                              "symbol": "Router"
                             }
                           ]
                         },

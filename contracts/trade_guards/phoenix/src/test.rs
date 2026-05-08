@@ -5,7 +5,7 @@ use soroban_sdk::{contract, contractimpl, contracttype, testutils::Address as _,
 use crate::{PhoenixTradeGuard, PhoenixTradeGuardClient, SwapOperation};
 
 // ---------------------------------------------------------------------------
-// MockVault — satisfies guard.initialize()'s vault.get_manager() cross-call
+// MockVault — satisfies guard.__constructor's vault.get_manager() cross-call
 // ---------------------------------------------------------------------------
 
 #[contracttype]
@@ -26,11 +26,26 @@ impl MockVault {
     }
 }
 
+// ---------------------------------------------------------------------------
+// MockRouter — returns amount_in as quote (1:1 exchange rate for tests)
+// ---------------------------------------------------------------------------
+
+#[contract]
+pub struct MockRouter;
+
+#[contractimpl]
+impl MockRouter {
+    pub fn quote_exact_in(_env: Env, amount_in: i128, _path: Vec<Address>) -> i128 {
+        amount_in
+    }
+}
+
 struct T {
     env: Env,
     guard: PhoenixTradeGuardClient<'static>,
     vault: Address,
     manager: Address,
+    router: Address,
     token_a: Address,
     token_b: Address,
     token_c: Address,
@@ -43,15 +58,14 @@ fn setup() -> T {
     let manager = Address::generate(&env);
     let vault = env.register(MockVault, ());
     MockVaultClient::new(&env, &vault).set_manager(&manager);
+    let router = env.register(MockRouter, ());
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
     let token_c = Address::generate(&env);
 
-    let gid = env.register(PhoenixTradeGuard, ());
-    let guard = PhoenixTradeGuardClient::new(&env, &gid);
-
     let tokens: Vec<Address> = vec![&env, token_a.clone(), token_b.clone(), token_c.clone()];
-    guard.initialize(&vault, &manager, &tokens);
+    let gid = env.register(PhoenixTradeGuard, (&vault, &manager, tokens.clone(), &router));
+    let guard = PhoenixTradeGuardClient::new(&env, &gid);
 
     let guard: PhoenixTradeGuardClient<'static> = unsafe { core::mem::transmute(guard) };
 
@@ -60,6 +74,7 @@ fn setup() -> T {
         guard,
         vault,
         manager,
+        router,
         token_a,
         token_b,
         token_c,
@@ -73,25 +88,10 @@ fn op(_env: &Env, offer: &Address, ask: &Address) -> SwapOperation {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Initialization
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_initialize_stores_data() {
-    let t = setup();
-    assert_eq!(t.guard.get_vault(), t.vault);
-    assert_eq!(t.guard.get_manager(), t.manager);
-    assert_eq!(t.guard.get_whitelist().len(), 3);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #1)")]
-fn test_double_initialize_panics() {
-    let t = setup();
-    let tokens: Vec<Address> = vec![&t.env, t.token_a.clone()];
-    t.guard.initialize(&t.vault, &t.manager, &tokens);
-}
+// Double-initialize test is not applicable to __constructor: the Soroban host
+// enforces that constructors run exactly once at CreateContractV2 time.  The
+// application-level is_initialized guard inside __constructor is defense-in-depth
+// against any host that does not enforce this (older protocol versions).
 
 // ---------------------------------------------------------------------------
 // set_whitelist
@@ -283,47 +283,16 @@ fn test_validate_max_operations_exactly() {
 }
 
 // ---------------------------------------------------------------------------
-// NotInitialized — calling functions before initialize() panics
+// Constructor stores data correctly
 // ---------------------------------------------------------------------------
 
 #[test]
-#[should_panic]
-fn test_not_initialized_get_vault_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(PhoenixTradeGuard, ());
-    let client = PhoenixTradeGuardClient::new(&env, &id);
-    client.get_vault();
-}
-
-#[test]
-#[should_panic]
-fn test_not_initialized_get_manager_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(PhoenixTradeGuard, ());
-    let client = PhoenixTradeGuardClient::new(&env, &id);
-    client.get_manager();
-}
-
-#[test]
-#[should_panic]
-fn test_not_initialized_validate_swap_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(PhoenixTradeGuard, ());
-    let client = PhoenixTradeGuardClient::new(&env, &id);
-    let vault = Address::generate(&env);
-    let token_a = Address::generate(&env);
-    let token_b = Address::generate(&env);
-    let ops = vec![
-        &env,
-        SwapOperation {
-            offer_asset: token_a,
-            ask_asset: token_b,
-        },
-    ];
-    client.validate_swap(&vault, &1_000i128, &900i128, &ops);
+fn test_constructor_stores_data() {
+    let t = setup();
+    assert_eq!(t.guard.get_vault(), t.vault);
+    assert_eq!(t.guard.get_manager(), t.manager);
+    assert_eq!(t.guard.get_router(), t.router);
+    assert_eq!(t.guard.get_whitelist().len(), 3);
 }
 
 // ---------------------------------------------------------------------------

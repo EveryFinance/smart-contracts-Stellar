@@ -55,6 +55,10 @@ pub enum DataKey {
     /// Both `offer_asset` and `ask_asset` of every swap operation must appear
     /// in this list.
     Whitelist,
+
+    /// Router/strategy contract whose `quote_exact_in(amount_in, path)` is
+    /// called to obtain a trusted output-token-unit quote for slippage validation.
+    Router,
 }
 
 // ---------------------------------------------------------------------------
@@ -131,4 +135,22 @@ pub fn get_whitelist(env: &Env) -> Vec<Address> {
         .instance()
         .get(&DataKey::Whitelist)
         .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Persist the router address used for on-chain quote fetching.
+pub fn set_router(env: &Env, v: &Address) {
+    bump(env);
+    env.storage().instance().set(&DataKey::Router, v);
+}
+
+/// Read the router address.
+///
+/// # Panics
+/// Panics with [`PhoenixGuardError::NotInitialized`] if absent.
+pub fn get_router(env: &Env) -> Address {
+    bump(env);
+    env.storage()
+        .instance()
+        .get(&DataKey::Router)
+        .unwrap_or_else(|| panic_with_error!(env, PhoenixGuardError::NotInitialized))
 }
