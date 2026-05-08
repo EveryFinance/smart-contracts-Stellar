@@ -27,7 +27,7 @@ pub use error::OracleError;
 use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, Map, Vec};
 
 use storage::{
-    get_admin, get_max_age_ledgers, get_price_data, set_admin, set_max_age_ledgers,
+    get_admin, get_max_age_ledgers, get_price_data, has_admin, set_admin, set_max_age_ledgers,
     set_price, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
 };
 
@@ -64,6 +64,9 @@ impl OracleContract {
     /// # Arguments
     /// * `admin` – The address that will be permitted to call [`set_price`].
     pub fn __constructor(env: Env, admin: Address) {
+        if has_admin(&env) {
+            panic_with_error!(&env, OracleError::AlreadyInitialized);
+        }
         set_admin(&env, &admin);
         set_max_age_ledgers(&env, DEFAULT_MAX_AGE_LEDGERS);
         env.storage()

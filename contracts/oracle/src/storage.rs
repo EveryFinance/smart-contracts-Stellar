@@ -48,6 +48,10 @@ pub fn get_admin(env: &Env) -> Address {
         .unwrap_or_else(|| panic_with_error!(env, OracleError::NotInitialized))
 }
 
+pub fn has_admin(env: &Env) -> bool {
+    env.storage().instance().has(&DataKey::Admin)
+}
+
 // ---------------------------------------------------------------------------
 // Price helpers
 // ---------------------------------------------------------------------------
