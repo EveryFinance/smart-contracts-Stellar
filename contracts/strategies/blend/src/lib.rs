@@ -307,10 +307,18 @@ impl BlendStrategy {
             &env,
             BlendRequest {
                 request_type: REQUEST_WITHDRAW,
-                address: asset,
+                address: asset.clone(),
                 amount,
             }
         ];
+
+        // Measure the balance delta to capture the actual amount Blend
+        // delivers.  Blend's internal rounding may transfer slightly less
+        // than the requested amount; returning the requested value instead
+        // would cause the vault's share accounting to diverge from reality.
+        let token_client = token::Client::new(&env, &asset);
+        let balance_before = token_client.balance(&to);
+
         blend_submit(
             &env,
             &protocol,
@@ -320,7 +328,12 @@ impl BlendStrategy {
             requests,
         );
 
-        amount
+        let balance_after = token_client.balance(&to);
+        let actual = balance_after.saturating_sub(balance_before);
+        if actual <= 0 {
+            panic_with_error!(&env, BlendStrategyError::InvalidAmount);
+        }
+        actual
     }
 
     // -----------------------------------------------------------------------
