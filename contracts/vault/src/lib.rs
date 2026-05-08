@@ -63,7 +63,7 @@ use storage::{
     get_max_concentration_bps, get_max_loss_bps, get_mgmt_fee_bps, get_op_state, get_oracle,
     get_paused, get_perf_fee_bps, get_private_pool, get_share_token, get_strategies,
     get_strategy_price_token, get_trade_guard, get_trader, get_value_manipulation_guard_enabled,
-    is_lp_strategy, is_member, set_announced_entry_fee_bps,
+    is_initialized, is_lp_strategy, is_member, set_announced_entry_fee_bps,
     set_announced_exit_fee_bps, set_announced_fee_activation_ts, set_announced_mgmt_fee_bps,
     set_announced_perf_fee_bps, set_base_asset, set_deposit_cap, set_entry_fee_bps,
     set_exit_cooldown_secs, set_exit_fee_bps, set_high_water_mark, set_last_deposit_ts,
@@ -302,6 +302,9 @@ impl Vault {
     /// # Errors
     /// * [`VaultError::InvalidAmount`] — if any fee exceeds its cap.
     pub fn __constructor(env: Env, params: VaultParams) {
+        if is_initialized(&env) {
+            panic_with_error!(&env, VaultError::AlreadyInitialized);
+        }
         params.manager.require_auth();
         params.trader.require_auth();
         env.storage()

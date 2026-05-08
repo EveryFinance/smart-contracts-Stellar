@@ -25,8 +25,8 @@ use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, String
 
 use storage::{
     get_admin, get_allowance, get_allowance_value, get_balance, get_decimals, get_name, get_symbol,
-    get_total_supply, set_admin, set_allowance, set_balance, set_decimals, set_name, set_symbol,
-    set_total_supply, AllowanceValue, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
+    get_total_supply, has_admin, set_admin, set_allowance, set_balance, set_decimals, set_name,
+    set_symbol, set_total_supply, AllowanceValue, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
 };
 
 // ---------------------------------------------------------------------------
@@ -81,6 +81,9 @@ impl ShareTokenContract {
     /// * `decimals` – Number of decimal places (typically `7` to match Stellar
     ///               native asset precision).
     pub fn __constructor(env: Env, admin: Address, name: String, symbol: String, decimals: u32) {
+        if has_admin(&env) {
+            panic_with_error!(&env, ShareTokenError::AlreadyInitialized);
+        }
         admin.require_auth();
 
         set_admin(&env, &admin);
