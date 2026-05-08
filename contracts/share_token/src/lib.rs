@@ -417,6 +417,15 @@ impl ShareTokenContract {
             .checked_sub(amount)
             .unwrap_or_else(|| panic_with_error!(&env, ShareTokenError::Overflow));
 
+        set_allowance(&env, &from, &spender, new_allowance, expiration_ledger);
+
+        // Self-transfer: consume allowance but do not touch balances — a double
+        // write to the same storage key would leave the balance inflated by amount.
+        if from == to {
+            events::transfer_event(&env, from, to, amount);
+            return;
+        }
+
         let new_from_balance = from_balance
             .checked_sub(amount)
             .unwrap_or_else(|| panic_with_error!(&env, ShareTokenError::Overflow));
@@ -426,7 +435,6 @@ impl ShareTokenContract {
             .checked_add(amount)
             .unwrap_or_else(|| panic_with_error!(&env, ShareTokenError::Overflow));
 
-        set_allowance(&env, &from, &spender, new_allowance, expiration_ledger);
         set_balance(&env, &from, new_from_balance);
         set_balance(&env, &to, new_to_balance);
 
