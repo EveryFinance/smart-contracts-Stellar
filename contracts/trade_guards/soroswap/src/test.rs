@@ -39,6 +39,10 @@ impl MockStrategy {
     pub fn quote_exact_in(_env: Env, amount_in: i128, _path: Vec<Address>) -> i128 {
         amount_in
     }
+    /// Returns amount_out as the quoted input cost (1:1 exchange rate for test simplicity).
+    pub fn quote_exact_out(_env: Env, amount_out: i128, _path: Vec<Address>) -> i128 {
+        amount_out
+    }
 }
 
 struct T {
@@ -266,6 +270,8 @@ fn test_validate_exact_out_not_vault_panics() {
 fn test_validate_exact_out_multi_hop() {
     let t = setup();
     // Three-hop path: A → B → C, all whitelisted.
+    // MockStrategy returns 1:1 quote, so quoted_in = amount_out = 900.
+    // max_in = 990 → (990-900)/900 = 10% exactly = MAX_SLIPPAGE_BPS → passes.
     let path: Vec<Address> = vec![
         &t.env,
         t.token_a.clone(),
@@ -273,7 +279,18 @@ fn test_validate_exact_out_multi_hop() {
         t.token_c.clone(),
     ];
     t.guard
-        .validate_swap_exact_out(&t.vault, &900i128, &1_000i128, &path);
+        .validate_swap_exact_out(&t.vault, &900i128, &990i128, &path);
+}
+
+#[test]
+#[should_panic]
+fn test_validate_exact_out_slippage_too_high_panics() {
+    let t = setup();
+    let path: Vec<Address> = vec![&t.env, t.token_a.clone(), t.token_b.clone()];
+    // MockStrategy returns 1:1 quote: quoted_in = 800. max_in = 1000.
+    // slippage = (1000-800)/800 = 25% > 10% → rejected.
+    t.guard
+        .validate_swap_exact_out(&t.vault, &800i128, &1_000i128, &path);
 }
 
 // ---------------------------------------------------------------------------

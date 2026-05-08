@@ -165,9 +165,9 @@ impl SoroswapTradeGuard {
     /// Validate a `swap_tokens_for_exact_tokens` call.
     ///
     /// Called by the vault before forwarding the swap to the Soroswap router.
-    /// `max_in` is the hard spend cap enforced by the router; slippage
-    /// protection for exact-out swaps is guaranteed by the router rejecting
-    /// executions that would require more than `max_in` input tokens.
+    /// Slippage is enforced by fetching the expected input cost (`quoted_in`)
+    /// from the trusted strategy contract and checking:
+    ///   `(max_in - quoted_in) / quoted_in <= MAX_SLIPPAGE_BPS / 10_000`
     ///
     /// # Arguments
     /// * `caller`     – Must equal the registered vault address.
@@ -181,6 +181,7 @@ impl SoroswapTradeGuard {
     /// * [`SoroswapGuardError::InvalidAmount`]
     /// * [`SoroswapGuardError::PathTooShort`] / [`SoroswapGuardError::PathTooLong`]
     /// * [`SoroswapGuardError::TokenNotWhitelisted`]
+    /// * [`SoroswapGuardError::SlippageTooHigh`]
     pub fn validate_swap_exact_out(
         env: Env,
         caller: Address,
@@ -201,6 +202,18 @@ impl SoroswapTradeGuard {
         Self::check_amount(max_in, &env);
         Self::check_path(&path, &env);
         Self::check_whitelist(&path, &env);
+
+        // Fetch the expected input cost from the trusted strategy contract.
+        // Using a caller-supplied quote would let an attacker bypass the limit
+        // by passing quoted_in == max_in (0% apparent headroom).
+        let strategy = get_strategy(&env);
+        let quoted_in: i128 = env.invoke_contract(
+            &strategy,
+            &Symbol::new(&env, "quote_exact_out"),
+            (amount_out, path.clone()).into_val(&env),
+        );
+
+        Self::check_slippage_out(max_in, quoted_in, &env);
     }
 
     /// Validate strategy-invest operations guarded by this contract.
@@ -320,6 +333,25 @@ impl SoroswapTradeGuard {
             .checked_mul(10_000)
             .unwrap_or_else(|| panic_with_error!(env, SoroswapGuardError::SlippageTooHigh));
         let rhs = quoted_out
+            .checked_mul(MAX_SLIPPAGE_BPS as i128)
+            .unwrap_or_else(|| panic_with_error!(env, SoroswapGuardError::SlippageTooHigh));
+        if lhs > rhs {
+            panic_with_error!(env, SoroswapGuardError::SlippageTooHigh);
+        }
+    }
+
+    /// For exact-out swaps: reject if `(max_in - quoted_in) / quoted_in > MAX_SLIPPAGE_BPS / 10_000`.
+    ///
+    /// Rearranged: `(max_in - quoted_in) * 10_000 > quoted_in * MAX_SLIPPAGE_BPS`
+    fn check_slippage_out(max_in: i128, quoted_in: i128, env: &Env) {
+        if max_in <= 0 || quoted_in <= 0 || max_in < quoted_in {
+            panic_with_error!(env, SoroswapGuardError::SlippageTooHigh);
+        }
+        let diff = max_in - quoted_in;
+        let lhs = diff
+            .checked_mul(10_000)
+            .unwrap_or_else(|| panic_with_error!(env, SoroswapGuardError::SlippageTooHigh));
+        let rhs = quoted_in
             .checked_mul(MAX_SLIPPAGE_BPS as i128)
             .unwrap_or_else(|| panic_with_error!(env, SoroswapGuardError::SlippageTooHigh));
         if lhs > rhs {
