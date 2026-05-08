@@ -83,6 +83,13 @@ impl PhoenixLpStrategy {
             panic_with_error!(&env, PhoenixLpError::AlreadyInitialized);
         }
 
+        // The vault itself must authorize initialization so that only the real
+        // vault (or a deployer acting on its behalf in the same transaction) can
+        // wire this strategy to it.  A fake vault controlled by an attacker can
+        // authorize itself, but a real vault can only be authorized by its own
+        // manager — who must also sign below.
+        vault.require_auth();
+
         // Derive the vault's manager from on-chain state and require their
         // signature to prevent front-running initialization.
         let vault_manager: Address = env.invoke_contract(
