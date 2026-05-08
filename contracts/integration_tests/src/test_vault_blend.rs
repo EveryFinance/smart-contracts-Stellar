@@ -124,7 +124,7 @@ fn test_invest_blend_nav_constant() {
     let deposit = 1_000_0000000i128;
     let invest = 600_0000000i128;
 
-    w.vault.deposit(&deposit, &w.user);
+    w.vault.deposit(&deposit, &w.user, &0i128);
     assert_eq!(w.vault.get_nav(), deposit);
 
     w.vault.invest(&w.manager, &w.strategy_addr, &invest);
@@ -147,7 +147,7 @@ fn test_unwind_blend_returns_to_vault() {
     let deposit = 1_000_0000000i128;
     let invest = 400_0000000i128;
 
-    w.vault.deposit(&deposit, &w.user);
+    w.vault.deposit(&deposit, &w.user, &0i128);
     w.vault.invest(&w.manager, &w.strategy_addr, &invest);
 
     let vault_before = token_balance(&w.env, &w.base, &w.vault_addr);
@@ -173,7 +173,7 @@ fn test_full_blend_lifecycle() {
     let partial = 500_0000000i128;
 
     // Deposit.
-    let shares = w.vault.deposit(&deposit, &w.user);
+    let shares = w.vault.deposit(&deposit, &w.user, &0i128);
     assert_eq!(w.vault.get_nav(), deposit);
 
     // Invest most of it.
@@ -191,7 +191,7 @@ fn test_full_blend_lifecycle() {
 
     // User withdraws all shares — receives full deposit back.
     let user_before = token_balance(&w.env, &w.base, &w.user);
-    let returned = w.vault.withdraw(&shares, &w.user, &w.user);
+    let returned = w.vault.withdraw(&shares, &w.user, &w.user, &0i128);
     assert_eq!(returned, deposit);
     assert_eq!(
         token_balance(&w.env, &w.base, &w.user),
@@ -204,7 +204,7 @@ fn test_full_blend_lifecycle() {
 fn test_multiple_invest_unwind_rounds() {
     let w = setup();
     let deposit = 3_000_0000000i128;
-    w.vault.deposit(&deposit, &w.user);
+    w.vault.deposit(&deposit, &w.user, &0i128);
 
     for _ in 0..3u32 {
         w.vault
@@ -224,7 +224,7 @@ fn test_multiple_invest_unwind_rounds() {
 #[should_panic]
 fn test_invest_into_paused_strategy_panics() {
     let w = setup();
-    w.vault.deposit(&1_000_0000000i128, &w.user);
+    w.vault.deposit(&1_000_0000000i128, &w.user, &0i128);
     w.strategy.pause(&w.manager);
     w.vault
         .invest(&w.manager, &w.strategy_addr, &500_0000000i128);

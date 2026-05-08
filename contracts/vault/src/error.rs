@@ -107,4 +107,8 @@ pub enum VaultError {
 
     /// Same-ledger NAV checkpoint mismatch detected for value-manipulation guard.
     ValueManipulationDetected = 28,
+
+    /// The deposit returned fewer shares than `min_shares_out`, or the
+    /// withdrawal returned fewer base tokens than `min_base_out`.
+    SlippageTooHigh = 29,
 }

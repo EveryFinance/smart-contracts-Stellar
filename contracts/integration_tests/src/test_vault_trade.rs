@@ -162,7 +162,7 @@ fn test_soroswap_guard_allows_valid_trade() {
     w.vault.set_trade_guard(&w.manager, &sid, &guard_id);
 
     // User deposits.
-    w.vault.deposit(&1_000_0000000i128, &w.user);
+    w.vault.deposit(&1_000_0000000i128, &w.user, &0i128);
 
     // Trader executes swap: 5% slippage — within 10% cap.
     let path: Vec<Address> = vec![&w.env, token_a, token_b];
@@ -196,7 +196,7 @@ fn test_soroswap_guard_rejects_excessive_slippage() {
     w.vault
         .set_strategies(&w.manager, &vec![&w.env, sid.clone()]);
     w.vault.set_trade_guard(&w.manager, &sid, &guard_id);
-    w.vault.deposit(&1_000_0000000i128, &w.user);
+    w.vault.deposit(&1_000_0000000i128, &w.user, &0i128);
 
     // 50% slippage — guard will reject.
     let path: Vec<Address> = vec![&w.env, token_a, token_b];
@@ -229,7 +229,7 @@ fn test_soroswap_guard_rejects_unlisted_token() {
     w.vault
         .set_strategies(&w.manager, &vec![&w.env, sid.clone()]);
     w.vault.set_trade_guard(&w.manager, &sid, &guard_id);
-    w.vault.deposit(&1_000_0000000i128, &w.user);
+    w.vault.deposit(&1_000_0000000i128, &w.user, &0i128);
 
     let path: Vec<Address> = vec![&w.env, token_a, unlisted]; // unlisted → rejected
     w.vault
@@ -261,7 +261,7 @@ fn test_soroswap_guard_whitelist_update_enables_new_token() {
     w.vault
         .set_strategies(&w.manager, &vec![&w.env, sid.clone()]);
     w.vault.set_trade_guard(&w.manager, &sid, &guard_id);
-    w.vault.deposit(&1_000_0000000i128, &w.user);
+    w.vault.deposit(&1_000_0000000i128, &w.user, &0i128);
 
     // Add token_c to whitelist.
     guard.set_whitelist(

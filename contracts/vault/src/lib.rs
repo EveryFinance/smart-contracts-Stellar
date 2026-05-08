@@ -380,7 +380,7 @@ impl Vault {
     /// * [`VaultError::Paused`]
     /// * [`VaultError::InvalidAmount`]
     /// * [`VaultError::DepositCapExceeded`]
-    pub fn deposit(env: Env, amount: i128, from: Address) -> i128 {
+    pub fn deposit(env: Env, amount: i128, from: Address, min_shares_out: i128) -> i128 {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
@@ -448,6 +448,10 @@ impl Vault {
         let nav_after = Self::nav(&env, &vault, &base_asset);
         Self::op_guard_post_checkpoint(&env, &from, OP_DEPOSIT, nav_after);
 
+        if min_shares_out > 0 && user_shares < min_shares_out {
+            panic_with_error!(&env, VaultError::SlippageTooHigh);
+        }
+
         deposit_event(&env, &from, amount, user_shares);
 
         user_shares
@@ -476,7 +480,7 @@ impl Vault {
     /// * [`VaultError::Paused`]
     /// * [`VaultError::InvalidAmount`]
     /// * [`VaultError::InsufficientShares`]
-    pub fn withdraw(env: Env, share_amount: i128, from: Address, to: Address) -> i128 {
+    pub fn withdraw(env: Env, share_amount: i128, from: Address, to: Address, min_base_out: i128) -> i128 {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
@@ -604,6 +608,10 @@ impl Vault {
         // Burn shares and transfer base_net to recipient.
         // No explicit fee transfer — the exit-fee fraction stays in the vault.
         share::burn(&env, &share_token, &from, share_amount);
+        if min_base_out > 0 && base_net < min_base_out {
+            panic_with_error!(&env, VaultError::SlippageTooHigh);
+        }
+
         token::Client::new(&env, &base_asset).transfer(&vault, &to, &base_net);
         let nav_after = Self::nav(&env, &vault, &base_asset);
         Self::op_guard_post_checkpoint(&env, &from, OP_WITHDRAW, nav_after);

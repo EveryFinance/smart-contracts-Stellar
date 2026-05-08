@@ -336,7 +336,7 @@ fn test_initialize_entry_fee_too_high_panics() {
 fn test_deposit_mints_shares_bootstrap() {
     let t = setup();
     let amount = 1_000_0000000i128;
-    let shares_minted = t.vault.deposit(&amount, &t.user);
+    let shares_minted = t.vault.deposit(&amount, &t.user, &0i128);
     // Bootstrap: shares_minted = net_amount = amount (no fees).
     assert_eq!(shares_minted, amount);
     assert_eq!(shares(&t, &t.user), amount);
@@ -347,7 +347,7 @@ fn test_deposit_mints_shares_bootstrap() {
 fn test_deposit_with_entry_fee() {
     let t = setup_with_fees(100, 0, 0, 0); // 1% entry
     let amount = 1_000_0000000i128;
-    let user_shares = t.vault.deposit(&amount, &t.user);
+    let user_shares = t.vault.deposit(&amount, &t.user, &0i128);
     // Bootstrap: total_shares = amount; fee_shares = amount * 100/10_000.
     let expected_fee_shares = amount * 100 / 10_000;
     let expected_user_shares = amount - expected_fee_shares;
@@ -363,10 +363,10 @@ fn test_deposit_with_entry_fee() {
 fn test_second_deposit_proportional_shares() {
     let t = setup();
     let first = 1_000_0000000i128;
-    t.vault.deposit(&first, &t.user);
+    t.vault.deposit(&first, &t.user, &0i128);
 
     let second = 500_0000000i128;
-    let shares2 = t.vault.deposit(&second, &t.user2);
+    let shares2 = t.vault.deposit(&second, &t.user2, &0i128);
     // NAV = first, total_supply = first → price = 1.0
     // shares2 should equal second.
     assert_eq!(shares2, second);
@@ -377,14 +377,14 @@ fn test_second_deposit_proportional_shares() {
 fn test_deposit_paused_panics() {
     let t = setup();
     t.vault.pause(&t.manager);
-    t.vault.deposit(&1_000i128, &t.user);
+    t.vault.deposit(&1_000i128, &t.user, &0i128);
 }
 
 #[test]
 #[should_panic]
 fn test_deposit_zero_panics() {
     let t = setup();
-    t.vault.deposit(&0i128, &t.user);
+    t.vault.deposit(&0i128, &t.user, &0i128);
 }
 
 // ---------------------------------------------------------------------------
@@ -395,11 +395,11 @@ fn test_deposit_zero_panics() {
 fn test_withdraw_burns_shares_returns_base() {
     let t = setup();
     let amount = 1_000_0000000i128;
-    t.vault.deposit(&amount, &t.user);
+    t.vault.deposit(&amount, &t.user, &0i128);
 
     let user_shares = shares(&t, &t.user);
     let before_base = base(&t, &t.user);
-    let returned = t.vault.withdraw(&user_shares, &t.user, &t.user);
+    let returned = t.vault.withdraw(&user_shares, &t.user, &t.user, &0i128);
 
     assert_eq!(returned, amount); // no fees, full amount back
     assert_eq!(shares(&t, &t.user), 0);
@@ -411,10 +411,10 @@ fn test_withdraw_with_exit_fee() {
     let t = setup_with_fees(0, 100, 0, 0); // 1% exit
     let amount = 1_000_0000000i128;
     let before_mgr_base = base(&t, &t.manager);
-    t.vault.deposit(&amount, &t.user);
+    t.vault.deposit(&amount, &t.user, &0i128);
 
     let user_shares = shares(&t, &t.user);
-    let returned = t.vault.withdraw(&user_shares, &t.user, &t.user);
+    let returned = t.vault.withdraw(&user_shares, &t.user, &t.user, &0i128);
 
     // User gets (1 − 1%) of gross value.
     let expected_net = amount * (10_000 - 100) / 10_000;
@@ -430,25 +430,25 @@ fn test_withdraw_with_exit_fee() {
 fn test_withdraw_insufficient_shares_panics() {
     let t = setup();
     let amount = 1_000_0000000i128;
-    t.vault.deposit(&amount, &t.user);
-    t.vault.withdraw(&(amount + 1), &t.user, &t.user);
+    t.vault.deposit(&amount, &t.user, &0i128);
+    t.vault.withdraw(&(amount + 1), &t.user, &t.user, &0i128);
 }
 
 #[test]
 #[should_panic]
 fn test_withdraw_paused_panics() {
     let t = setup();
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     t.vault.pause(&t.manager);
-    t.vault.withdraw(&1i128, &t.user, &t.user);
+    t.vault.withdraw(&1i128, &t.user, &t.user, &0i128);
 }
 
 #[test]
 #[should_panic]
 fn test_withdraw_zero_panics() {
     let t = setup();
-    t.vault.deposit(&1_000_0000000i128, &t.user);
-    t.vault.withdraw(&0i128, &t.user, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
+    t.vault.withdraw(&0i128, &t.user, &t.user, &0i128);
 }
 
 // ---------------------------------------------------------------------------
@@ -488,7 +488,7 @@ fn test_invest_and_unwind() {
 
     // Deposit to vault.
     let deposit_amount = 1_000_0000000i128;
-    t.vault.deposit(&deposit_amount, &t.user);
+    t.vault.deposit(&deposit_amount, &t.user, &0i128);
 
     let vault_base_before = base(&t, &t.vault_addr);
     assert_eq!(vault_base_before, deposit_amount);
@@ -514,7 +514,7 @@ fn test_invest_not_manager_panics() {
     let sid = env_register_strategy(&t);
     let strategies: Vec<Address> = vec![&t.env, sid.clone()];
     t.vault.set_strategies(&t.manager, &strategies);
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     let rogue = Address::generate(&t.env);
     t.vault.invest(&rogue, &sid, &100i128);
 }
@@ -523,7 +523,7 @@ fn test_invest_not_manager_panics() {
 #[should_panic]
 fn test_invest_strategy_not_whitelisted_panics() {
     let t = setup();
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     let unlisted = Address::generate(&t.env);
     t.vault.invest(&t.manager, &unlisted, &100i128);
 }
@@ -557,7 +557,7 @@ fn test_pause_not_manager_panics() {
 fn test_nav_and_share_price_without_strategies() {
     let t = setup();
     let amount = 1_000_0000000i128;
-    t.vault.deposit(&amount, &t.user);
+    t.vault.deposit(&amount, &t.user, &0i128);
     assert_eq!(t.vault.get_nav(), amount);
     // share_price = NAV * PRICE_PRECISION / total_supply = 1.0
     assert_eq!(t.vault.get_share_price(), 10_000_000i128);
@@ -574,8 +574,8 @@ fn test_full_lifecycle() {
     // Two users deposit.
     let dep1 = 1_000_0000000i128;
     let dep2 = 500_0000000i128;
-    let s1 = t.vault.deposit(&dep1, &t.user);
-    let s2 = t.vault.deposit(&dep2, &t.user2);
+    let s1 = t.vault.deposit(&dep1, &t.user, &0i128);
+    let s2 = t.vault.deposit(&dep2, &t.user2, &0i128);
 
     assert_eq!(total_supply(&t), s1 + s2);
     assert_eq!(t.vault.get_nav(), dep1 + dep2);
@@ -591,12 +591,12 @@ fn test_full_lifecycle() {
 
     // User 1 withdraws all.
     let before = base(&t, &t.user);
-    t.vault.withdraw(&s1, &t.user, &t.user);
+    t.vault.withdraw(&s1, &t.user, &t.user, &0i128);
     assert_eq!(base(&t, &t.user), before + dep1);
 
     // User 2 withdraws all.
     let before2 = base(&t, &t.user2);
-    t.vault.withdraw(&s2, &t.user2, &t.user2);
+    t.vault.withdraw(&s2, &t.user2, &t.user2, &0i128);
     assert_eq!(base(&t, &t.user2), before2 + dep2);
 
     assert_eq!(total_supply(&t), 0);
@@ -765,7 +765,7 @@ fn test_execute_trade_valid() {
     t.vault.set_trade_guard(&t.manager, &sid, &guard);
 
     // Fund vault so it has base tokens.
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
 
     let token_a = Address::generate(&t.env);
     let token_b = Address::generate(&t.env);
@@ -827,7 +827,7 @@ fn test_execute_trade_guard_rejects_panics() {
     t.vault.set_strategies(&t.manager, &strategies);
     t.vault.set_trade_guard(&t.manager, &sid, &guard);
 
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     let path: Vec<Address> = vec![&t.env, Address::generate(&t.env), Address::generate(&t.env)];
     t.vault
         .execute_trade(&t.trader, &sid, &100i128, &90i128, &path);
@@ -858,7 +858,7 @@ fn test_unwind_not_manager_panics() {
     let sid = env_register_strategy(&t);
     let strategies: Vec<Address> = vec![&t.env, sid.clone()];
     t.vault.set_strategies(&t.manager, &strategies);
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     t.vault.invest(&t.manager, &sid, &500_0000000i128);
     let rogue = Address::generate(&t.env);
     t.vault.unwind(&rogue, &sid, &100_0000000i128);
@@ -870,7 +870,7 @@ fn test_unwind_strategy_not_whitelisted_panics() {
     let t = setup();
     let sid = env_register_strategy(&t);
     // NOT added to whitelist.
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     t.vault.unwind(&t.manager, &sid, &100_0000000i128);
 }
 
@@ -881,7 +881,7 @@ fn test_unwind_zero_amount_panics() {
     let sid = env_register_strategy(&t);
     let strategies: Vec<Address> = vec![&t.env, sid.clone()];
     t.vault.set_strategies(&t.manager, &strategies);
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     t.vault.invest(&t.manager, &sid, &500_0000000i128);
     t.vault.unwind(&t.manager, &sid, &0i128);
 }
@@ -979,12 +979,12 @@ fn test_initialize_perf_fee_too_high_panics() {
 fn test_withdraw_to_different_address() {
     let t = setup();
     let amount = 1_000_0000000i128;
-    t.vault.deposit(&amount, &t.user);
+    t.vault.deposit(&amount, &t.user, &0i128);
 
     let recipient = Address::generate(&t.env);
     let share_amount = shares(&t, &t.user);
     let before_recipient = base(&t, &recipient);
-    t.vault.withdraw(&share_amount, &t.user, &recipient);
+    t.vault.withdraw(&share_amount, &t.user, &recipient, &0i128);
 
     assert_eq!(base(&t, &recipient), before_recipient + amount);
     assert_eq!(shares(&t, &t.user), 0);
@@ -1001,7 +1001,7 @@ fn test_invest_zero_panics() {
     let sid = env_register_strategy(&t);
     let strategies: Vec<Address> = vec![&t.env, sid.clone()];
     t.vault.set_strategies(&t.manager, &strategies);
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     t.vault.invest(&t.manager, &sid, &0i128);
 }
 
@@ -1018,7 +1018,7 @@ fn test_invest_works_while_paused() {
     t.vault.set_strategies(&t.manager, &strategies);
 
     // Deposit before pausing.
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
 
     t.vault.pause(&t.manager);
     // Manager can still invest even while paused (only deposit/withdraw are blocked).
@@ -1051,7 +1051,7 @@ fn test_nav_sums_multiple_strategies() {
     t.vault.set_strategies(&t.manager, &strategies);
 
     let deposit = 2_000_0000000i128;
-    t.vault.deposit(&deposit, &t.user);
+    t.vault.deposit(&deposit, &t.user, &0i128);
 
     t.vault.invest(&t.manager, &s1, &600_0000000i128);
     t.vault.invest(&t.manager, &s2, &400_0000000i128);
@@ -1072,7 +1072,7 @@ fn test_set_entry_fee_bps_updates() {
     advance_time(&t, 86_401);
     t.vault.commit_fee_increase(&t.manager);
     let deposit = 10_000_0000000i128;
-    t.vault.deposit(&deposit, &t.user);
+    t.vault.deposit(&deposit, &t.user, &0i128);
     // Fee charged as shares: fee_shares = deposit * 300 / 10_000.
     let expected_fee_shares = deposit * 300 / 10_000;
     assert_eq!(shares(&t, &t.manager), expected_fee_shares);
@@ -1103,10 +1103,10 @@ fn test_set_exit_fee_bps_updates() {
     advance_time(&t, 86_401);
     t.vault.commit_fee_increase(&t.manager);
     let deposit = 10_000_0000000i128;
-    t.vault.deposit(&deposit, &t.user);
+    t.vault.deposit(&deposit, &t.user, &0i128);
     let share_amount = shares(&t, &t.user);
     let before_mgr_base = base(&t, &t.manager);
-    let returned = t.vault.withdraw(&share_amount, &t.user, &t.user);
+    let returned = t.vault.withdraw(&share_amount, &t.user, &t.user, &0i128);
     // User receives (1 − 2%) of deposit.
     let expected_net = deposit * (10_000 - 200) / 10_000;
     assert_eq!(returned, expected_net);
@@ -1145,7 +1145,7 @@ fn test_set_perf_fee_bps_too_high_panics() {
 fn test_deposit_cap_allows_deposit_below_cap() {
     let t = setup();
     t.vault.set_deposit_cap(&t.manager, &100_000_0000000i128);
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
 }
 
 #[test]
@@ -1153,15 +1153,15 @@ fn test_deposit_cap_allows_deposit_below_cap() {
 fn test_deposit_cap_exceeded_panics() {
     let t = setup();
     t.vault.set_deposit_cap(&t.manager, &500_0000000i128);
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
 }
 
 #[test]
 fn test_deposit_cap_zero_means_uncapped() {
     let t = setup();
     t.vault.set_deposit_cap(&t.manager, &0i128);
-    t.vault.deposit(&10_000_0000000i128, &t.user);
-    t.vault.deposit(&10_000_0000000i128, &t.user2);
+    t.vault.deposit(&10_000_0000000i128, &t.user, &0i128);
+    t.vault.deposit(&10_000_0000000i128, &t.user2, &0i128);
 }
 
 #[test]
@@ -1197,7 +1197,7 @@ fn test_set_strategies_cannot_remove_strategy_with_active_position() {
     let both: Vec<Address> = vec![&t.env, s1.clone(), s2.clone()];
     t.vault.set_strategies(&t.manager, &both);
 
-    t.vault.deposit(&2_000_0000000i128, &t.user);
+    t.vault.deposit(&2_000_0000000i128, &t.user, &0i128);
     t.vault.invest(&t.manager, &s1, &500_0000000i128);
 
     // Attempt to remove s1 while it has a position — must revert.
@@ -1265,7 +1265,7 @@ fn test_invest_with_pass_guard_succeeds() {
     t.vault.set_strategies(&t.manager, &strategies);
     t.vault.set_trade_guard(&t.manager, &sid, &guard);
 
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     t.vault.invest(&t.manager, &sid, &200_0000000i128);
     // Guard passed — strategy received funds.
     assert_eq!(
@@ -1284,7 +1284,7 @@ fn test_invest_with_reject_guard_panics() {
     t.vault.set_strategies(&t.manager, &strategies);
     t.vault.set_trade_guard(&t.manager, &sid, &guard);
 
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     t.vault.invest(&t.manager, &sid, &200_0000000i128);
 }
 
@@ -1297,7 +1297,7 @@ fn test_unwind_with_pass_guard_succeeds() {
     t.vault.set_strategies(&t.manager, &strategies);
     t.vault.set_trade_guard(&t.manager, &sid, &guard);
 
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     t.vault.invest(&t.manager, &sid, &200_0000000i128);
     t.vault.unwind(&t.manager, &sid, &200_0000000i128);
     assert_eq!(
@@ -1316,7 +1316,7 @@ fn test_unwind_with_reject_guard_panics() {
     t.vault.set_strategies(&t.manager, &strategies);
     t.vault.set_trade_guard(&t.manager, &sid, &guard);
 
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     // invest bypasses guard for setup (guard blocks invest too — but we need to
     // invest first; use a fresh strategy without guard for setup then swap).
     // Simpler: no guard during invest, set guard afterwards for unwind test.
@@ -1332,7 +1332,7 @@ fn test_invest_without_guard_succeeds() {
     let strategies: Vec<Address> = vec![&t.env, sid.clone()];
     t.vault.set_strategies(&t.manager, &strategies);
     // No guard set.
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     t.vault.invest(&t.manager, &sid, &300_0000000i128);
     assert_eq!(
         MockStrategyClient::new(&t.env, &sid).get_value(&t.vault_addr),
@@ -1353,7 +1353,7 @@ fn test_auto_unwind_covers_withdrawal_shortfall() {
 
     // Deposit, invest all funds into strategy, leaving vault with zero base balance.
     let deposit_amount = 1_000_0000000i128;
-    t.vault.deposit(&deposit_amount, &t.user);
+    t.vault.deposit(&deposit_amount, &t.user, &0i128);
     t.vault.invest(&t.manager, &sid, &deposit_amount);
 
     // Vault base balance is now 0; strategy holds 1000.
@@ -1361,7 +1361,7 @@ fn test_auto_unwind_covers_withdrawal_shortfall() {
 
     // Withdraw shares — auto-unwind should pull from strategy.
     let user_shares = shares(&t, &t.user);
-    let returned = t.vault.withdraw(&user_shares, &t.user, &t.user);
+    let returned = t.vault.withdraw(&user_shares, &t.user, &t.user, &0i128);
     assert!(returned > 0);
     // User received base asset from strategy unwind.
     assert!(base(&t, &t.user) > 1_000_000_0000000i128 - deposit_amount);
@@ -1381,7 +1381,7 @@ fn test_auto_unwind_skips_lp_strategies() {
     MockStrategyClient::new(&t.env, &lp_sid).set_oracle_enabled(&true);
 
     let deposit_amount = 1_000_0000000i128;
-    t.vault.deposit(&deposit_amount, &t.user);
+    t.vault.deposit(&deposit_amount, &t.user, &0i128);
     // Invest half into single-asset, half into LP.
     t.vault.invest(&t.manager, &sa_sid, &500_0000000i128);
     t.vault.invest(&t.manager, &lp_sid, &500_0000000i128);
@@ -1391,7 +1391,7 @@ fn test_auto_unwind_skips_lp_strategies() {
     // Only sa_sid (500) can be auto-unwound; lp_sid stays invested.
     // This test verifies the call doesn't panic — full amount may not be covered
     // since LP portion is skipped, but the call proceeds without error.
-    let _returned = t.vault.withdraw(&(user_shares / 2), &t.user, &t.user);
+    let _returned = t.vault.withdraw(&(user_shares / 2), &t.user, &t.user, &0i128);
 }
 
 #[test]
@@ -1406,13 +1406,13 @@ fn test_withdraw_panics_when_only_lp_liquidity_remains() {
     t.vault.set_lp_strategy(&t.manager, &lp_sid, &true);
     MockStrategyClient::new(&t.env, &lp_sid).set_oracle_enabled(&true);
 
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     t.vault.invest(&t.manager, &sa_sid, &100_0000000i128);
     t.vault.invest(&t.manager, &lp_sid, &900_0000000i128);
 
     // Full withdraw needs both positions, but auto-unwind can only use single-asset liquidity.
     let user_shares = shares(&t, &t.user);
-    t.vault.withdraw(&user_shares, &t.user, &t.user);
+    t.vault.withdraw(&user_shares, &t.user, &t.user, &0i128);
 }
 
 #[test]
@@ -1473,7 +1473,7 @@ fn test_oracle_nav_scales_strategy_value() {
         .set_strategy_oracle_token(&t.manager, &sid, &lp_token);
 
     // Deposit and invest.
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     t.vault.invest(&t.manager, &sid, &500_0000000i128);
 
     // NAV should be: 500 (vault cash) + 500*2 (oracle-priced strategy) = 1500
@@ -1489,7 +1489,7 @@ fn test_nav_without_oracle_uses_raw_value() {
     t.vault.set_strategies(&t.manager, &strategies);
 
     // No oracle set.
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     t.vault.invest(&t.manager, &sid, &500_0000000i128);
 
     // NAV = 500 (vault) + 500 (raw strategy value) = 1000.
@@ -1515,7 +1515,7 @@ fn test_lp_strategy_without_oracle_rejected_in_nav() {
     t.vault.set_strategies(&t.manager, &strategies);
     t.vault.set_lp_strategy(&t.manager, &sid, &true);
 
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     t.vault.invest(&t.manager, &sid, &500_0000000i128);
 
     // LP strategy has a non-zero position but no internal oracle configured.
@@ -1531,7 +1531,7 @@ fn test_lp_strategy_with_oracle_allows_nav() {
     t.vault.set_lp_strategy(&t.manager, &sid, &true);
     MockStrategyClient::new(&t.env, &sid).set_oracle_enabled(&true);
 
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     t.vault.invest(&t.manager, &sid, &500_0000000i128);
 
     // NAV = 500 (vault) + 500 (LP strategy internal valuation path).
@@ -1550,7 +1550,7 @@ fn test_concentration_limit_allows_within_cap() {
     t.vault.set_strategies(&t.manager, &strategies);
     t.vault.set_max_concentration_bps(&t.manager, &5_000u32); // 50% cap
 
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     // Invest 40% of NAV — should be fine.
     t.vault.invest(&t.manager, &sid, &400_0000000i128);
 }
@@ -1564,7 +1564,7 @@ fn test_concentration_limit_exceeded_panics() {
     t.vault.set_strategies(&t.manager, &strategies);
     t.vault.set_max_concentration_bps(&t.manager, &5_000u32); // 50% cap
 
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     // Invest 60% of NAV — exceeds 50% cap → should panic.
     t.vault.invest(&t.manager, &sid, &600_0000000i128);
 }
@@ -1577,7 +1577,7 @@ fn test_concentration_limit_zero_means_uncapped() {
     t.vault.set_strategies(&t.manager, &strategies);
     t.vault.set_max_concentration_bps(&t.manager, &0u32); // uncapped
 
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     // Invest 100% — no cap in effect.
     t.vault.invest(&t.manager, &sid, &1_000_0000000i128);
 }
@@ -1667,7 +1667,7 @@ fn test_set_max_loss_bps_updates() {
     let strategies: Vec<Address> = vec![&t.env, sid.clone()];
     t.vault.set_strategies(&t.manager, &strategies);
 
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     // Invest via a normal (non-lossy) strategy — NAV is preserved → guard passes.
     t.vault.invest(&t.manager, &sid, &400_0000000i128);
 }
@@ -1689,7 +1689,7 @@ fn test_tvl_guard_enabled_by_default() {
     let strategies: Vec<Address> = vec![&t.env, sid.clone()];
     t.vault.set_strategies(&t.manager, &strategies);
 
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     // Invest 500 — strategy reports only 250 back, breaching default loss guard.
     t.vault.invest(&t.manager, &sid, &500_0000000i128);
 }
@@ -1703,7 +1703,7 @@ fn test_tvl_guard_can_be_disabled_explicitly() {
     t.vault.set_strategies(&t.manager, &strategies);
     t.vault.set_max_loss_bps(&t.manager, &0u32);
 
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     t.vault.invest(&t.manager, &sid, &500_0000000i128);
 }
 
@@ -1717,7 +1717,7 @@ fn test_tvl_guard_passes_within_tolerance() {
     t.vault.set_strategies(&t.manager, &strategies);
     t.vault.set_max_loss_bps(&t.manager, &200u32); // 2% tolerance
 
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     // Invest 1000: strategy takes 1000, reports 990 → NAV drops by 10 (1%).
     // Guard allows up to 2% drop → passes.
     t.vault.invest(&t.manager, &sid, &1_000_0000000i128);
@@ -1734,7 +1734,7 @@ fn test_tvl_guard_trips_when_loss_exceeds_tolerance() {
     t.vault.set_strategies(&t.manager, &strategies);
     t.vault.set_max_loss_bps(&t.manager, &500u32); // 5% tolerance
 
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     // Invest 1000: strategy takes 1000, reports 900 → NAV drops by 100 (10%).
     // Guard allows only 5% → TvlGuardTripped (#17).
     t.vault.invest(&t.manager, &sid, &1_000_0000000i128);
@@ -1763,16 +1763,16 @@ fn test_set_max_concentration_bps_above_denominator_panics() {
 fn test_private_pool_blocks_non_member_deposit() {
     let t = setup();
     t.vault.set_private_pool(&t.manager, &true);
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
 }
 
 #[test]
 fn test_private_pool_allows_manager_and_member() {
     let t = setup();
     t.vault.set_private_pool(&t.manager, &true);
-    t.vault.deposit(&1_000_0000000i128, &t.manager);
+    t.vault.deposit(&1_000_0000000i128, &t.manager, &0i128);
     t.vault.add_member(&t.manager, &t.user);
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     assert!(shares(&t, &t.user) > 0);
 }
 
@@ -1790,20 +1790,20 @@ fn test_add_remove_member_updates_allowlist() {
 fn test_withdraw_respects_exit_cooldown() {
     let t = setup();
     t.vault.set_exit_cooldown_secs(&t.manager, &120u64);
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     let user_shares = shares(&t, &t.user);
-    t.vault.withdraw(&user_shares, &t.user, &t.user);
+    t.vault.withdraw(&user_shares, &t.user, &t.user, &0i128);
 }
 
 #[test]
 fn test_withdraw_after_cooldown_succeeds() {
     let t = setup();
     t.vault.set_exit_cooldown_secs(&t.manager, &120u64);
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     assert!(t.vault.get_exit_remaining_cooldown(&t.user) > 0);
     advance_time(&t, 121);
     let user_shares = shares(&t, &t.user);
-    let returned = t.vault.withdraw(&user_shares, &t.user, &t.user);
+    let returned = t.vault.withdraw(&user_shares, &t.user, &t.user, &0i128);
     assert!(returned > 0);
 }
 
@@ -1852,10 +1852,10 @@ fn test_renounce_fee_increase_clears_pending() {
 fn test_value_guard_same_ledger_operation_type_mismatch_panics() {
     let t = setup();
     t.vault.set_value_guard_enabled(&t.manager, &true);
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     let user_shares = shares(&t, &t.user);
     // Same ledger + same actor but different op type (deposit -> withdraw).
-    t.vault.withdraw(&user_shares, &t.user, &t.user);
+    t.vault.withdraw(&user_shares, &t.user, &t.user, &0i128);
 }
 
 #[test]
@@ -1863,9 +1863,9 @@ fn test_value_guard_same_ledger_operation_type_mismatch_panics() {
 fn test_value_guard_same_ledger_nav_mismatch_panics() {
     let t = setup();
     t.vault.set_value_guard_enabled(&t.manager, &true);
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     // External NAV mutation in same ledger (simulated mint to vault).
     MockTokenClient::new(&t.env, &t.base).mint(&t.vault_addr, &1i128);
     // Same op type (deposit), same ledger, but nav_before != expected_nav_after.
-    t.vault.deposit(&1_000_0000000i128, &t.user);
+    t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
 }

@@ -142,6 +142,9 @@ impl ShareTokenContract {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        if !has_admin(&env) {
+            panic_with_error!(&env, ShareTokenError::NotInitialized);
+        }
         get_total_supply(&env)
     }
 

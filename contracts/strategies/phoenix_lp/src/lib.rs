@@ -314,7 +314,17 @@ impl PhoenixLpStrategy {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-        let shares = get_total_shares(&env);
+
+        let pool = get_phoenix_pool(&env);
+        let asset_a = get_asset_a(&env);
+        let asset_b = get_asset_b(&env);
+        let share_token = get_share_token(&env);
+        let strategy = env.current_contract_address();
+
+        // Use the actual on-chain share-token balance rather than the internal
+        // counter to prevent desync if tokens are transferred directly to or
+        // from this contract outside the normal deposit/withdraw flow.
+        let shares = token::Client::new(&env, &share_token).balance(&strategy);
         if shares == 0 {
             return 0;
         }
@@ -323,11 +333,6 @@ impl PhoenixLpStrategy {
             Some(o) => o,
             None => return shares,
         };
-
-        let pool = get_phoenix_pool(&env);
-        let asset_a = get_asset_a(&env);
-        let asset_b = get_asset_b(&env);
-        let share_token = get_share_token(&env);
 
         // Pool reserves and total share supply.
         let (reserve_a, reserve_b) = PhoenixPoolAdapter::new(&env, &pool).get_reserves();

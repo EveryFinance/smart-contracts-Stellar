@@ -209,11 +209,20 @@ impl SoroswapLpStrategy {
         token::Client::new(&env, &asset_a).approve(&strategy, &router, &zero, &now);
         token::Client::new(&env, &asset_b).approve(&strategy, &router, &zero, &now);
 
+        // Validate that the router did not consume more than what was approved.
+        if a_used > amount_a || b_used > amount_b {
+            panic_with_error!(&env, SoroswapLpError::Overflow);
+        }
+
         // Return any unused tokens to the vault so no funds are stranded in
         // the strategy (AMMs often consume less than the desired amounts due
         // to pool-ratio constraints).
-        let dust_a = amount_a - a_used;
-        let dust_b = amount_b - b_used;
+        let dust_a = amount_a
+            .checked_sub(a_used)
+            .unwrap_or_else(|| panic_with_error!(&env, SoroswapLpError::Overflow));
+        let dust_b = amount_b
+            .checked_sub(b_used)
+            .unwrap_or_else(|| panic_with_error!(&env, SoroswapLpError::Overflow));
         if dust_a > 0 {
             token::Client::new(&env, &asset_a).transfer(&strategy, &from, &dust_a);
         }

@@ -107,7 +107,7 @@ fn test_deposit_mints_real_share_tokens() {
     let w = setup_world();
     let amount = 1_000_0000000i128;
 
-    let shares_minted = w.vault.deposit(&amount, &w.user);
+    let shares_minted = w.vault.deposit(&amount, &w.user, &0i128);
 
     // ShareToken reflects the mint.
     assert_eq!(w.share.balance(&w.user), shares_minted);
@@ -121,7 +121,7 @@ fn test_deposit_mints_real_share_tokens() {
 fn test_bootstrap_share_price_is_one() {
     let w = setup_world();
     let amount = 500_0000000i128;
-    let minted = w.vault.deposit(&amount, &w.user);
+    let minted = w.vault.deposit(&amount, &w.user, &0i128);
     assert_eq!(minted, amount);
     // share_price = NAV * PRICE_PRECISION / total_supply = 1.0 * 10^7
     assert_eq!(w.vault.get_share_price(), 10_000_000i128);
@@ -135,8 +135,8 @@ fn test_two_depositors_proportional_shares() {
     let d1 = 1_000_0000000i128;
     let d2 = 500_0000000i128;
 
-    let s1 = w.vault.deposit(&d1, &w.user);
-    let s2 = w.vault.deposit(&d2, &w.user2);
+    let s1 = w.vault.deposit(&d1, &w.user, &0i128);
+    let s2 = w.vault.deposit(&d2, &w.user2, &0i128);
 
     // Price stays 1.0 → s2 should be proportional to d2.
     assert_eq!(s2, d2);
@@ -150,8 +150,8 @@ fn test_deposit_withdraw_round_trip() {
     let amount = 2_000_0000000i128;
 
     let before = token_balance(&w.env, &w.base, &w.user);
-    let shares = w.vault.deposit(&amount, &w.user);
-    let returned = w.vault.withdraw(&shares, &w.user, &w.user);
+    let shares = w.vault.deposit(&amount, &w.user, &0i128);
+    let returned = w.vault.withdraw(&shares, &w.user, &w.user, &0i128);
     let after = token_balance(&w.env, &w.base, &w.user);
 
     assert_eq!(returned, amount);
@@ -169,7 +169,7 @@ fn test_entry_fee_collected() {
     let amount = 1_000_0000000i128;
 
     let before_mgr_base = token_balance(&w.env, &w.base, &w.manager);
-    let user_shares = w.vault.deposit(&amount, &w.user);
+    let user_shares = w.vault.deposit(&amount, &w.user, &0i128);
 
     // Bootstrap: total_shares = amount, fee_shares = amount * 100 / 10_000.
     let expected_fee_shares = amount * 100 / 10_000;
@@ -193,9 +193,9 @@ fn test_exit_fee_collected() {
     let w = setup_world_with_fees(0, 200, 0, 0); // 2% exit
     let amount = 1_000_0000000i128;
 
-    let shares = w.vault.deposit(&amount, &w.user);
+    let shares = w.vault.deposit(&amount, &w.user, &0i128);
     let before_mgr_base = token_balance(&w.env, &w.base, &w.manager);
-    let returned = w.vault.withdraw(&shares, &w.user, &w.user);
+    let returned = w.vault.withdraw(&shares, &w.user, &w.user, &0i128);
 
     // User gets (1 - 2%) of their gross value.
     let expected_net = amount * (10_000 - 200) / 10_000;
@@ -217,8 +217,8 @@ fn test_withdraw_to_different_recipient() {
     let amount = 800_0000000i128;
     let recipient = Address::generate(&w.env);
 
-    let shares = w.vault.deposit(&amount, &w.user);
-    let returned = w.vault.withdraw(&shares, &w.user, &recipient);
+    let shares = w.vault.deposit(&amount, &w.user, &0i128);
+    let returned = w.vault.withdraw(&shares, &w.user, &recipient, &0i128);
 
     assert_eq!(returned, amount);
     assert_eq!(token_balance(&w.env, &w.base, &recipient), amount);
@@ -235,7 +235,7 @@ fn test_withdraw_to_different_recipient() {
 fn test_pause_blocks_deposit_and_withdraw() {
     let w = setup_world();
     let amount = 1_000_0000000i128;
-    let shares = w.vault.deposit(&amount, &w.user);
+    let shares = w.vault.deposit(&amount, &w.user, &0i128);
 
     w.vault.pause(&w.manager);
     assert!(w.vault.is_paused());
@@ -249,7 +249,7 @@ fn test_pause_blocks_deposit_and_withdraw() {
     assert!(!w.vault.is_paused());
 
     // Withdraw works after unpause.
-    let returned = w.vault.withdraw(&shares, &w.user, &w.user);
+    let returned = w.vault.withdraw(&shares, &w.user, &w.user, &0i128);
     assert_eq!(returned, amount);
 }
 
@@ -260,8 +260,8 @@ fn test_nav_equals_vault_balance_no_strategies() {
     let d1 = 1_500_0000000i128;
     let d2 = 500_0000000i128;
 
-    w.vault.deposit(&d1, &w.user);
-    w.vault.deposit(&d2, &w.user2);
+    w.vault.deposit(&d1, &w.user, &0i128);
+    w.vault.deposit(&d2, &w.user2, &0i128);
 
     assert_eq!(w.vault.get_nav(), d1 + d2);
     assert_eq!(token_balance(&w.env, &w.base, &w.vault_addr), d1 + d2);
@@ -280,7 +280,7 @@ fn test_sequential_deposit_withdraw_integrity() {
     MockTokenClient::new(&w.env, &w.base).mint(&users[2], &10_000_0000000i128);
 
     for (i, (user, amount)) in users.iter().zip(amounts.iter()).enumerate() {
-        share_balances[i] = w.vault.deposit(amount, user);
+        share_balances[i] = w.vault.deposit(amount, user, &0i128);
     }
 
     let total_deposited: i128 = amounts.iter().sum();
@@ -289,7 +289,7 @@ fn test_sequential_deposit_withdraw_integrity() {
     // Each user withdraws in reverse order.
     for i in (0..3).rev() {
         let before = token_balance(&w.env, &w.base, &users[i]);
-        let returned = w.vault.withdraw(&share_balances[i], &users[i], &users[i]);
+        let returned = w.vault.withdraw(&share_balances[i], &users[i], &users[i], &0i128);
         let after = token_balance(&w.env, &w.base, &users[i]);
         assert_eq!(after - before, returned);
         assert!(returned > 0);
@@ -353,5 +353,5 @@ fn test_set_strategies_by_non_manager_panics() {
 fn test_withdraw_with_zero_shares_panics() {
     let w = setup_world();
     // user2 never deposited — has no shares.
-    w.vault.withdraw(&1_000_0000000i128, &w.user2, &w.user2);
+    w.vault.withdraw(&1_000_0000000i128, &w.user2, &w.user2, &0i128);
 }

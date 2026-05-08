@@ -62,6 +62,11 @@ struct World {
 
 fn setup() -> World {
     let env = Env::default();
+    // NOTE: mock_all_auths() bypasses all authorization checks in these tests.
+    // This means auth-specific failure paths (e.g. non-admin calling admin-only
+    // functions) are not verified here. Auth enforcement is tested in unit tests
+    // for each contract where specific require_auth paths are exercised without
+    // this blanket override.
     env.mock_all_auths();
 
     let admin = Address::generate(&env);

@@ -36,6 +36,8 @@ impl MockToken {
         env.storage().instance().set(&TKey::Admin, &admin);
     }
     pub fn mint(env: Env, to: Address, amount: i128) {
+        let admin: Address = env.storage().instance().get(&TKey::Admin).unwrap();
+        admin.require_auth();
         assert!(amount >= 0, "mint: negative amount");
         let b: i128 = env
             .storage()
@@ -308,6 +310,8 @@ pub enum PhoenixKey {
     UnderlyingB,
     ReserveA,
     ReserveB,
+    /// Address that received LP shares during provide_liquidity (the strategy).
+    LastDepositor,
 }
 
 #[contract]
@@ -316,6 +320,10 @@ pub struct MockPhoenixPool;
 #[contractimpl]
 impl MockPhoenixPool {
     pub fn phoenix_init(env: Env, share_token: Address, token_a: Address, token_b: Address) {
+        assert!(
+            !env.storage().instance().has(&PhoenixKey::ShareToken),
+            "phoenix_init: already initialized"
+        );
         env.storage()
             .instance()
             .set(&PhoenixKey::ShareToken, &share_token);
@@ -384,6 +392,10 @@ impl MockPhoenixPool {
                 .transfer_from(&pool, &depositor, &pool, &amount_b);
         }
         MockTokenClient::new(&env, &share_token).mint(&depositor, &shares);
+        // Track last depositor so withdraw_liquidity can burn shares from them.
+        env.storage()
+            .instance()
+            .set(&PhoenixKey::LastDepositor, &depositor);
 
         let reserve_a: i128 = env
             .storage()
@@ -451,6 +463,28 @@ impl MockPhoenixPool {
             .instance()
             .get(&PhoenixKey::UnderlyingB)
             .unwrap();
+        // Burn the redeemed share tokens: pull from the depositor (strategy) using
+        // the allowance it set via approve() before calling withdraw_liquidity.
+        let share_token: Address = env
+            .storage()
+            .instance()
+            .get(&PhoenixKey::ShareToken)
+            .unwrap();
+        let depositor_opt: Option<Address> = env
+            .storage()
+            .instance()
+            .get(&PhoenixKey::LastDepositor);
+        if let Some(depositor) = depositor_opt {
+            let pool = env.current_contract_address();
+            MockTokenClient::new(&env, &share_token).transfer_from(
+                &pool,
+                &depositor,
+                &pool,
+                &share_amount,
+            );
+            MockTokenClient::new(&env, &share_token).burn(&pool, &share_amount);
+        }
+
         MockTokenClient::new(&env, &token_a).mint(&recipient, &amount_a);
         MockTokenClient::new(&env, &token_b).mint(&recipient, &amount_b);
 

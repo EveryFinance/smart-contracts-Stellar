@@ -173,7 +173,7 @@ fn test_full_soroswap_lp_lifecycle() {
 
     // User deposits base token into vault.
     let deposit = 2_000_0000000i128;
-    let _vault_shares = w.vault.deposit(&deposit, &w.user);
+    let _vault_shares = w.vault.deposit(&deposit, &w.user, &0i128);
 
     // Manager invests vault's base tokens AND token_b into LP.
     // (In production the vault would need token_b too; here we pre-funded vault.)

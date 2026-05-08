@@ -239,7 +239,7 @@ impl BlendStrategy {
             &env,
             BlendRequest {
                 request_type: REQUEST_SUPPLY,
-                address: asset,
+                address: asset.clone(),
                 amount,
             }
         ];
@@ -251,6 +251,11 @@ impl BlendStrategy {
             &strategy_addr,
             requests,
         );
+
+        // Revoke any residual allowance to the protocol so leftover approval
+        // cannot be consumed by a future call or a compromised pool.
+        let now = env.ledger().sequence();
+        token::Client::new(&env, &asset).approve(&strategy_addr, &protocol, &0i128, &now);
 
         amount
     }

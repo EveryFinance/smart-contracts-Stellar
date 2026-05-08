@@ -201,7 +201,7 @@ fn test_full_phoenix_lp_lifecycle() {
 
     // User deposits into vault.
     let vault_deposit = 2_000_0000000i128;
-    let vault_shares = w.vault.deposit(&vault_deposit, &w.user);
+    let vault_shares = w.vault.deposit(&vault_deposit, &w.user, &0i128);
     assert!(vault_shares > 0);
 
     // Manager provides liquidity to Phoenix pool.
