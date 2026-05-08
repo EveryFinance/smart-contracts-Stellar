@@ -191,6 +191,21 @@ impl PhoenixLpStrategy {
         token::Client::new(&env, &asset_a).approve(&strategy, &pool, &zero, &now);
         token::Client::new(&env, &asset_b).approve(&strategy, &pool, &zero, &now);
 
+        // Return residual tokens to the vault.  Phoenix pools commonly consume
+        // fewer tokens than provided when the pool ratio forces one side to be
+        // the binding constraint; the unused portion would otherwise be stranded
+        // in this strategy contract forever.
+        let client_a = token::Client::new(&env, &asset_a);
+        let client_b = token::Client::new(&env, &asset_b);
+        let residual_a = client_a.balance(&strategy);
+        let residual_b = client_b.balance(&strategy);
+        if residual_a > 0 {
+            client_a.transfer(&strategy, &from, &residual_a);
+        }
+        if residual_b > 0 {
+            client_b.transfer(&strategy, &from, &residual_b);
+        }
+
         let shares_after = token::Client::new(&env, &share_token).balance(&strategy);
 
         // Guard against a misbehaving pool that burns or redirects shares.
