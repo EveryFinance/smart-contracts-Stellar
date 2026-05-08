@@ -537,16 +537,26 @@ impl Vault {
             if vault_balance < base_net {
                 let shortfall = base_net - vault_balance;
                 let strategies = get_strategies(&env);
+                // Strategies with a price token return NAV-denominated units
+                // from strategy_value_in_nav (raw * price / precision), while
+                // strategy_withdraw expects raw position units.  Passing the
+                // converted amount to withdraw would under- or over-redeem, so
+                // we skip those strategies in the auto-unwind loop; the manager
+                // must unwind them manually.
+                let can_auto_unwind = |s: &Address| -> bool {
+                    !is_lp_strategy(&env, s) && get_strategy_price_token(&env, s).is_none()
+                };
+
                 let mut total_sa_value: i128 = 0;
                 for s in strategies.iter() {
-                    if !is_lp_strategy(&env, &s) {
+                    if can_auto_unwind(&s) {
                         total_sa_value = total_sa_value
                             .saturating_add(Self::strategy_value_in_nav(&env, &vault, &s));
                     }
                 }
                 if total_sa_value > 0 {
                     for s in strategies.iter() {
-                        if !is_lp_strategy(&env, &s) {
+                        if can_auto_unwind(&s) {
                             let sv = Self::strategy_value_in_nav(&env, &vault, &s);
                             if sv > 0 {
                                 let portion = shortfall.saturating_mul(sv) / total_sa_value;
@@ -565,7 +575,7 @@ impl Vault {
                     base_net.saturating_sub(token::Client::new(&env, &base_asset).balance(&vault));
                 if remaining > 0 {
                     for s in strategies.iter() {
-                        if is_lp_strategy(&env, &s) {
+                        if !can_auto_unwind(&s) {
                             continue;
                         }
                         let sv = Self::strategy_value_in_nav(&env, &vault, &s);
