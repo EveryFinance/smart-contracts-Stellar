@@ -724,6 +724,10 @@ impl Vault {
 
         let units = strategy_deposit(&env, &strategy, amount, &vault);
 
+        // Revoke any residual allowance the strategy did not consume.
+        let now = env.ledger().sequence();
+        token::Client::new(&env, &base_asset).approve(&vault, &strategy, &0, &now);
+
         // Compute nav_after once; reuse for both concentration and NAV guard checks.
         let max_conc = get_max_concentration_bps(&env);
         let nav_after = if max_conc > 0 || max_loss_bps > 0 || vm_guard_enabled {
@@ -837,6 +841,11 @@ impl Vault {
 
         let lp_received =
             strategy_deposit_lp(&env, &strategy, amount_a, amount_b, min_a, min_b, &vault);
+
+        // Revoke any residual allowances the strategy did not consume.
+        let now = env.ledger().sequence();
+        token::Client::new(&env, &asset_a).approve(&vault, &strategy, &0, &now);
+        token::Client::new(&env, &asset_b).approve(&vault, &strategy, &0, &now);
 
         // Compute nav_after once for both concentration and NAV guard.
         let max_conc = get_max_concentration_bps(&env);
