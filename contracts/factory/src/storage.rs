@@ -34,8 +34,10 @@ pub const INSTANCE_BUMP_AMOUNT: u32 = 34_560;
 pub const INSTANCE_LIFETIME_THRESHOLD: u32 = 17_280;
 
 /// Ledgers added to each persistent vault entry on access.
-pub const PERSISTENT_BUMP_AMOUNT: u32 = 518_400; // ≈ 30 days
-pub const PERSISTENT_LIFETIME_THRESHOLD: u32 = 259_200; // ≈ 15 days
+/// 5 256 000 ledgers ≈ 1 year — registry entries must survive without
+/// intervention for at least a year to prevent silent expiry corruption.
+pub const PERSISTENT_BUMP_AMOUNT: u32 = 5_256_000;
+pub const PERSISTENT_LIFETIME_THRESHOLD: u32 = 2_628_000; // ≈ 6 months
 
 // ---------------------------------------------------------------------------
 // Storage key enum
@@ -88,6 +90,10 @@ pub fn get_admin(env: &Env) -> Address {
         .instance()
         .get(&DataKey::Admin)
         .unwrap_or_else(|| panic_with_error!(env, FactoryError::NotInitialized))
+}
+
+pub fn has_admin(env: &Env) -> bool {
+    env.storage().instance().has(&DataKey::Admin)
 }
 
 // ---------------------------------------------------------------------------

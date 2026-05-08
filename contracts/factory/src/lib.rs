@@ -33,8 +33,8 @@ use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, IntoVa
 
 use storage::{
     get_admin, get_is_registered, get_vault_by_index, get_vault_count, get_vault_position,
-    remove_registered, remove_vault_by_index, remove_vault_position, set_admin, set_registered,
-    set_vault_by_index, set_vault_count, set_vault_position, INSTANCE_BUMP_AMOUNT,
+    has_admin, remove_registered, remove_vault_by_index, remove_vault_position, set_admin,
+    set_registered, set_vault_by_index, set_vault_count, set_vault_position, INSTANCE_BUMP_AMOUNT,
     INSTANCE_LIFETIME_THRESHOLD,
 };
 
@@ -61,6 +61,9 @@ impl Factory {
 
     /// Initialize the factory. Runs atomically at deployment via `CreateContract`.
     pub fn __constructor(env: Env, admin: Address) {
+        if has_admin(&env) {
+            panic_with_error!(&env, FactoryError::AlreadyInitialized);
+        }
         admin.require_auth();
         env.storage()
             .instance()
