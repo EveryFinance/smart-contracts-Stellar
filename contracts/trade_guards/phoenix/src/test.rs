@@ -124,7 +124,7 @@ fn test_validate_single_hop_valid() {
     let ops = vec![&t.env, op(&t.env, &t.token_a, &t.token_b)];
     // 5% slippage — within limit.
     t.guard
-        .validate_swap(&t.vault, &1_000i128, &950i128, &1_000i128, &ops);
+        .validate_swap(&t.vault, &1_000i128, &950i128, &ops);
 }
 
 #[test]
@@ -136,7 +136,7 @@ fn test_validate_multi_hop_valid() {
         op(&t.env, &t.token_b, &t.token_c),
     ];
     t.guard
-        .validate_swap(&t.vault, &1_000i128, &900i128, &1_000i128, &ops);
+        .validate_swap(&t.vault, &1_000i128, &900i128, &ops);
 }
 
 #[test]
@@ -145,7 +145,7 @@ fn test_validate_exactly_at_slippage_limit() {
     let ops = vec![&t.env, op(&t.env, &t.token_a, &t.token_b)];
     // 10% slippage exactly — should pass (boundary inclusive).
     t.guard
-        .validate_swap(&t.vault, &1_000i128, &900i128, &1_000i128, &ops);
+        .validate_swap(&t.vault, &1_000i128, &900i128, &ops);
 }
 
 // ---------------------------------------------------------------------------
@@ -159,7 +159,7 @@ fn test_validate_not_vault_panics() {
     let rogue = Address::generate(&t.env);
     let ops = vec![&t.env, op(&t.env, &t.token_a, &t.token_b)];
     t.guard
-        .validate_swap(&rogue, &1_000i128, &950i128, &1_000i128, &ops);
+        .validate_swap(&rogue, &1_000i128, &950i128, &ops);
 }
 
 #[test]
@@ -168,7 +168,7 @@ fn test_validate_zero_amount_panics() {
     let t = setup();
     let ops = vec![&t.env, op(&t.env, &t.token_a, &t.token_b)];
     t.guard
-        .validate_swap(&t.vault, &0i128, &0i128, &1_000i128, &ops);
+        .validate_swap(&t.vault, &0i128, &0i128, &ops);
 }
 
 #[test]
@@ -177,7 +177,7 @@ fn test_validate_negative_amount_panics() {
     let t = setup();
     let ops = vec![&t.env, op(&t.env, &t.token_a, &t.token_b)];
     t.guard
-        .validate_swap(&t.vault, &-100i128, &0i128, &1_000i128, &ops);
+        .validate_swap(&t.vault, &-100i128, &0i128, &ops);
 }
 
 #[test]
@@ -186,7 +186,7 @@ fn test_validate_empty_operations_panics() {
     let t = setup();
     let ops: Vec<SwapOperation> = Vec::new(&t.env);
     t.guard
-        .validate_swap(&t.vault, &1_000i128, &900i128, &1_000i128, &ops);
+        .validate_swap(&t.vault, &1_000i128, &900i128, &ops);
 }
 
 #[test]
@@ -214,7 +214,7 @@ fn test_validate_too_many_operations_panics() {
         op(&t.env, &extra_2, &t.token_a),
     ];
     t.guard
-        .validate_swap(&t.vault, &1_000i128, &900i128, &1_000i128, &ops);
+        .validate_swap(&t.vault, &1_000i128, &900i128, &ops);
 }
 
 #[test]
@@ -224,7 +224,7 @@ fn test_validate_offer_not_whitelisted_panics() {
     let unlisted = Address::generate(&t.env);
     let ops = vec![&t.env, op(&t.env, &unlisted, &t.token_b)];
     t.guard
-        .validate_swap(&t.vault, &1_000i128, &900i128, &1_000i128, &ops);
+        .validate_swap(&t.vault, &1_000i128, &900i128, &ops);
 }
 
 #[test]
@@ -234,7 +234,7 @@ fn test_validate_ask_not_whitelisted_panics() {
     let unlisted = Address::generate(&t.env);
     let ops = vec![&t.env, op(&t.env, &t.token_a, &unlisted)];
     t.guard
-        .validate_swap(&t.vault, &1_000i128, &900i128, &1_000i128, &ops);
+        .validate_swap(&t.vault, &1_000i128, &900i128, &ops);
 }
 
 #[test]
@@ -244,7 +244,7 @@ fn test_validate_slippage_too_high_panics() {
     let ops = vec![&t.env, op(&t.env, &t.token_a, &t.token_b)];
     // 50% slippage → rejected.
     t.guard
-        .validate_swap(&t.vault, &1_000i128, &500i128, &1_000i128, &ops);
+        .validate_swap(&t.vault, &1_000i128, &500i128, &ops);
 }
 
 #[test]
@@ -253,7 +253,7 @@ fn test_validate_negative_min_out_panics() {
     let t = setup();
     let ops = vec![&t.env, op(&t.env, &t.token_a, &t.token_b)];
     t.guard
-        .validate_swap(&t.vault, &1_000i128, &-1i128, &1_000i128, &ops);
+        .validate_swap(&t.vault, &1_000i128, &-1i128, &ops);
 }
 
 #[test]
@@ -279,7 +279,7 @@ fn test_validate_max_operations_exactly() {
         op(&t.env, &extra_1, &extra_2),
     ];
     t.guard
-        .validate_swap(&t.vault, &1_000i128, &900i128, &1_000i128, &ops);
+        .validate_swap(&t.vault, &1_000i128, &900i128, &ops);
 }
 
 // ---------------------------------------------------------------------------
@@ -323,7 +323,7 @@ fn test_not_initialized_validate_swap_panics() {
             ask_asset: token_b,
         },
     ];
-    client.validate_swap(&vault, &1_000i128, &900i128, &1_000i128, &ops);
+    client.validate_swap(&vault, &1_000i128, &900i128, &ops);
 }
 
 // ---------------------------------------------------------------------------
@@ -340,7 +340,7 @@ fn test_whitelist_update_invalidates_ops() {
 
     let ops = vec![&t.env, op(&t.env, &t.token_a, &t.token_c)]; // token_c removed
     t.guard
-        .validate_swap(&t.vault, &1_000i128, &900i128, &1_000i128, &ops);
+        .validate_swap(&t.vault, &1_000i128, &900i128, &ops);
 }
 
 // ---------------------------------------------------------------------------
@@ -356,7 +356,7 @@ fn test_empty_whitelist_rejects_all() {
 
     let ops = vec![&t.env, op(&t.env, &t.token_a, &t.token_b)];
     t.guard
-        .validate_swap(&t.vault, &1_000i128, &900i128, &1_000i128, &ops);
+        .validate_swap(&t.vault, &1_000i128, &900i128, &ops);
 }
 
 // ---------------------------------------------------------------------------
@@ -369,7 +369,7 @@ fn test_validate_amount_one_valid() {
     let ops = vec![&t.env, op(&t.env, &t.token_a, &t.token_b)];
     // min_out = 0 would exceed slippage, but amount=1, min_out=1 → 0% slippage.
     t.guard
-        .validate_swap(&t.vault, &1i128, &1i128, &1i128, &ops);
+        .validate_swap(&t.vault, &1i128, &1i128, &ops);
 }
 
 // ---------------------------------------------------------------------------
@@ -382,5 +382,5 @@ fn test_validate_same_token_both_sides() {
     // Not a practical swap but structurally valid for the guard.
     let ops = vec![&t.env, op(&t.env, &t.token_a, &t.token_a)];
     t.guard
-        .validate_swap(&t.vault, &1_000i128, &900i128, &1_000i128, &ops);
+        .validate_swap(&t.vault, &1_000i128, &900i128, &ops);
 }

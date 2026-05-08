@@ -120,6 +120,9 @@ impl PhoenixTradeGuard {
     /// The vault calls this immediately before forwarding the swap to the
     /// Phoenix multi-hop router. The function reverts if any policy is violated.
     ///
+    /// Slippage is checked against `amount_in` (not a caller-supplied quote) so
+    /// that a manipulated `quoted_out` value cannot be used to bypass the limit.
+    ///
     /// # Arguments
     /// * `caller`     – Must equal the registered vault address.
     /// * `amount_in`  – Exact input amount for the first hop (must be positive).
@@ -137,7 +140,6 @@ impl PhoenixTradeGuard {
         caller: Address,
         amount_in: i128,
         min_out: i128,
-        quoted_out: i128,
         operations: Vec<SwapOperation>,
     ) {
         env.storage()
@@ -167,7 +169,7 @@ impl PhoenixTradeGuard {
             Self::assert_whitelisted(&op.ask_asset, &whitelist, &env);
         }
 
-        Self::check_slippage(min_out, quoted_out, &env);
+        Self::check_slippage(min_out, amount_in, &env);
     }
 
     /// Validate a swap using a flat token path — compatible with the vault's
@@ -177,8 +179,10 @@ impl PhoenixTradeGuard {
     /// `SwapOperation`s `[{offer: token_0, ask: token_1}, …, {offer: token_{n-1}, ask: token_n}]`
     /// and applies the same policy checks as [`validate_swap`].
     ///
-    /// The vault calls this function via `guard_validate` before forwarding
-    /// a Phoenix trade.
+    /// Slippage is checked against `amount_in`; no caller-supplied quote is
+    /// accepted, eliminating the spoofed-`quoted_out` attack surface.  This
+    /// also matches the 4-argument call convention the vault uses via
+    /// `guard_validate(vault, amount_in, min_out, path)`.
     ///
     /// # Errors
     /// * [`PhoenixGuardError::NotVault`]
@@ -193,7 +197,6 @@ impl PhoenixTradeGuard {
         amount_in: i128,
         min_out: i128,
         path: Vec<Address>,
-        quoted_out: i128,
     ) {
         env.storage()
             .instance()
@@ -228,7 +231,7 @@ impl PhoenixTradeGuard {
             i += 1;
         }
 
-        Self::check_slippage(min_out, quoted_out, &env);
+        Self::check_slippage(min_out, amount_in, &env);
     }
 
     /// Validate strategy-invest operations guarded by this contract.
