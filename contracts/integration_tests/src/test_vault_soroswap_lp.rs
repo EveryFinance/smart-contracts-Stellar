@@ -36,6 +36,12 @@ struct World {
 
 fn setup() -> World {
     let env = Env::default();
+    // mock_all_auths_allowing_non_root_auth is required instead of mock_all_auths
+    // because the SoroswapLp strategy's initialize() makes a cross-contract call
+    // back into the vault to retrieve the manager address.  mock_all_auths rejects
+    // auth originating from a non-root (non-first) contract in the call stack, which
+    // would cause that internal call to fail.  The allowing_non_root_auth variant
+    // approves auth at every depth, faithfully modelling what the real network does.
     env.mock_all_auths_allowing_non_root_auth();
 
     let manager = Address::generate(&env);

@@ -23,6 +23,10 @@ pub struct BlendRequest {
 enum DataKey {
     Admin,
     Token,
+    // Supply(Address) creates one persistent ledger entry per depositor address.
+    // In a production pool this would require either a minimum-deposit threshold or
+    // an explicit supplier cap to prevent unbounded state growth; here it is an
+    // accepted limitation of the test mock.
     Supply(Address),
     TotalSupply,
 }
