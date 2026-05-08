@@ -579,7 +579,7 @@ pub fn set_last_deposit_ts(env: &Env, user: &Address, ts: u64) {
         .unwrap_or(0)
         .min(u32::MAX as u64) as u32;
     let ttl = cooldown_ledgers.saturating_add(INSTANCE_LIFETIME_THRESHOLD);
-    env.storage().temporary().extend_ttl(&key, 0, ttl);
+    env.storage().temporary().extend_ttl(&key, ttl, ttl);
 }
 
 /// Read the per-user last-deposit timestamp from temporary storage.
@@ -703,7 +703,7 @@ pub fn set_op_state(env: &Env, user: &Address, state: &OperationState) {
     // conservative safety buffer beyond the ledger close.
     env.storage()
         .temporary()
-        .extend_ttl(&key, 0, INSTANCE_LIFETIME_THRESHOLD);
+        .extend_ttl(&key, INSTANCE_LIFETIME_THRESHOLD, INSTANCE_LIFETIME_THRESHOLD);
 }
 
 pub fn get_op_state(env: &Env, user: &Address) -> Option<OperationState> {

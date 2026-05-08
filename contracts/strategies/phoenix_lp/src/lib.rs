@@ -341,12 +341,27 @@ impl PhoenixLpStrategy {
         let price_a = oracle_client.get_price(&asset_a);
         let price_b = oracle_client.get_price(&asset_b);
 
-        let pool_value_a = reserve_a.saturating_mul(price_a) / PRICE_PRECISION;
-        let pool_value_b = reserve_b.saturating_mul(price_b) / PRICE_PRECISION;
-        let pool_value = pool_value_a.saturating_add(pool_value_b);
+        if price_a <= 0 || price_b <= 0 {
+            panic_with_error!(&env, PhoenixLpError::InvalidOraclePrice);
+        }
+
+        let pool_value_a = reserve_a
+            .checked_mul(price_a)
+            .unwrap_or_else(|| panic_with_error!(&env, PhoenixLpError::Overflow))
+            / PRICE_PRECISION;
+        let pool_value_b = reserve_b
+            .checked_mul(price_b)
+            .unwrap_or_else(|| panic_with_error!(&env, PhoenixLpError::Overflow))
+            / PRICE_PRECISION;
+        let pool_value = pool_value_a
+            .checked_add(pool_value_b)
+            .unwrap_or_else(|| panic_with_error!(&env, PhoenixLpError::Overflow));
 
         // position_value = pool_value * shares / total_shares
-        pool_value.saturating_mul(shares) / total_shares
+        pool_value
+            .checked_mul(shares)
+            .unwrap_or_else(|| panic_with_error!(&env, PhoenixLpError::Overflow))
+            / total_shares
     }
 
     pub fn asset_a(env: Env) -> Address {

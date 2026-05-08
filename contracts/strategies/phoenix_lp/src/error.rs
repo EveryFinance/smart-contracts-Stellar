@@ -37,4 +37,8 @@ pub enum PhoenixLpError {
 
     /// An arithmetic operation overflowed `i128`.
     Overflow = 8,
+
+    /// The oracle returned a non-positive price, which would corrupt the NAV
+    /// calculation.
+    InvalidOraclePrice = 9,
 }

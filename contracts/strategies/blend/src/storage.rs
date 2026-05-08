@@ -7,12 +7,12 @@ use crate::error::BlendStrategyError;
 // ---------------------------------------------------------------------------
 
 /// Ledgers added to the instance entry TTL on every entry-point call.
-/// 34 560 ledgers ≈ 2.4 days.
-pub const INSTANCE_BUMP_AMOUNT: u32 = 34_560;
+/// 518 400 ledgers ≈ 30 days.
+pub const INSTANCE_BUMP_AMOUNT: u32 = 518_400;
 
 /// Trigger a bump when the remaining instance TTL drops below this value.
-/// 17 280 ledgers ≈ 1.2 days.
-pub const INSTANCE_LIFETIME_THRESHOLD: u32 = 17_280;
+/// 259 200 ledgers ≈ 15 days.
+pub const INSTANCE_LIFETIME_THRESHOLD: u32 = 259_200;
 
 // ---------------------------------------------------------------------------
 // Storage key enum

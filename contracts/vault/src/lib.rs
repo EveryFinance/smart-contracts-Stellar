@@ -1190,8 +1190,11 @@ impl Vault {
 
             if elapsed > 0 && nav > 0 {
                 // fee_value = NAV * mgmt_fee_bps * elapsed / (10_000 * SECONDS_PER_YEAR)
-                let fee_value = nav.saturating_mul(mgmt_fee_bps).saturating_mul(elapsed)
-                    / (FEE_DENOMINATOR as i128 * SECONDS_PER_YEAR as i128);
+                let fee_value = nav
+                    .checked_mul(mgmt_fee_bps)
+                    .and_then(|v| v.checked_mul(elapsed))
+                    .map(|v| v / (FEE_DENOMINATOR as i128 * SECONDS_PER_YEAR as i128))
+                    .unwrap_or(0);
 
                 if fee_value > 0 {
                     // Convert fee value to shares at current price.
@@ -1217,8 +1220,11 @@ impl Vault {
             if current_price > hwm && hwm > 0 {
                 let gain = current_price - hwm;
                 // fee_value = total_supply * gain * perf_fee_bps / (PRICE_PRECISION * 10_000)
-                let fee_value = new_supply.saturating_mul(gain).saturating_mul(perf_fee_bps)
-                    / (PRICE_PRECISION * FEE_DENOMINATOR as i128);
+                let fee_value = new_supply
+                    .checked_mul(gain)
+                    .and_then(|v| v.checked_mul(perf_fee_bps))
+                    .map(|v| v / (PRICE_PRECISION * FEE_DENOMINATOR as i128))
+                    .unwrap_or(0);
 
                 if fee_value > 0 {
                     let fee_shares = fee_value * PRICE_PRECISION / current_price.max(1);

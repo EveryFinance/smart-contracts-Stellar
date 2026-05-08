@@ -38,18 +38,23 @@ pub struct PriceData {
 // ---------------------------------------------------------------------------
 
 pub fn set_admin(env: &Env, admin: &Address) {
-    env.storage().instance().set(&DataKey::Admin, admin);
+    env.storage().persistent().set(&DataKey::Admin, admin);
+    env.storage().persistent().extend_ttl(
+        &DataKey::Admin,
+        PERSISTENT_LIFETIME_THRESHOLD,
+        PERSISTENT_BUMP_AMOUNT,
+    );
 }
 
 pub fn get_admin(env: &Env) -> Address {
     env.storage()
-        .instance()
+        .persistent()
         .get(&DataKey::Admin)
         .unwrap_or_else(|| panic_with_error!(env, OracleError::NotInitialized))
 }
 
 pub fn has_admin(env: &Env) -> bool {
-    env.storage().instance().has(&DataKey::Admin)
+    env.storage().persistent().has(&DataKey::Admin)
 }
 
 // ---------------------------------------------------------------------------
@@ -87,13 +92,18 @@ pub fn get_price_data(env: &Env, asset: &Address) -> Option<PriceData> {
 
 pub fn set_max_age_ledgers(env: &Env, max_age: u32) {
     env.storage()
-        .instance()
+        .persistent()
         .set(&DataKey::MaxAgeLedgers, &max_age);
+    env.storage().persistent().extend_ttl(
+        &DataKey::MaxAgeLedgers,
+        PERSISTENT_LIFETIME_THRESHOLD,
+        PERSISTENT_BUMP_AMOUNT,
+    );
 }
 
 pub fn get_max_age_ledgers(env: &Env) -> u32 {
     env.storage()
-        .instance()
+        .persistent()
         .get(&DataKey::MaxAgeLedgers)
-        .unwrap_or(0)
+        .unwrap_or_else(|| panic_with_error!(env, OracleError::NotInitialized))
 }

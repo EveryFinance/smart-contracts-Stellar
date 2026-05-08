@@ -390,12 +390,23 @@ impl SoroswapLpStrategy {
         // Reserve decomposition:
         //   pool_value = reserveA × priceA/PREC + reserveB × priceB/PREC
         //   position   = lp_balance / total_lp × pool_value
-        let pool_value_a = reserve_a.saturating_mul(price_a) / PRICE_PRECISION;
-        let pool_value_b = reserve_b.saturating_mul(price_b) / PRICE_PRECISION;
-        let pool_value = pool_value_a.saturating_add(pool_value_b);
+        let pool_value_a = reserve_a
+            .checked_mul(price_a)
+            .unwrap_or_else(|| panic_with_error!(&env, SoroswapLpError::Overflow))
+            / PRICE_PRECISION;
+        let pool_value_b = reserve_b
+            .checked_mul(price_b)
+            .unwrap_or_else(|| panic_with_error!(&env, SoroswapLpError::Overflow))
+            / PRICE_PRECISION;
+        let pool_value = pool_value_a
+            .checked_add(pool_value_b)
+            .unwrap_or_else(|| panic_with_error!(&env, SoroswapLpError::Overflow));
 
         // Use multiply-before-divide to preserve precision.
-        pool_value.saturating_mul(lp_balance) / total_lp
+        pool_value
+            .checked_mul(lp_balance)
+            .unwrap_or_else(|| panic_with_error!(&env, SoroswapLpError::Overflow))
+            / total_lp
     }
 
     // -----------------------------------------------------------------------
