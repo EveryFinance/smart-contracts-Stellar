@@ -38,4 +38,7 @@ pub enum SoroswapLpError {
 
     /// An arithmetic operation overflowed `i128`.
     Overflow = 8,
+
+    /// An oracle returned a non-positive price, which would corrupt NAV math.
+    InvalidOraclePrice = 9,
 }

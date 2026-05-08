@@ -381,6 +381,12 @@ impl SoroswapLpStrategy {
         let price_a = oracle_client.get_price(&asset_a);
         let price_b = oracle_client.get_price(&asset_b);
 
+        // A non-positive price would zero out or negate part of the NAV
+        // calculation, producing a misleading or exploitable share price.
+        if price_a <= 0 || price_b <= 0 {
+            panic_with_error!(&env, SoroswapLpError::InvalidOraclePrice);
+        }
+
         // Reserve decomposition:
         //   pool_value = reserveA × priceA/PREC + reserveB × priceB/PREC
         //   position   = lp_balance / total_lp × pool_value
