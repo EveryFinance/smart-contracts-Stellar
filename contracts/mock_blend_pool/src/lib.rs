@@ -7,6 +7,9 @@ use soroban_sdk::{
 const REQUEST_SUPPLY: u32 = 2;
 const REQUEST_WITHDRAW: u32 = 3;
 
+const PERSISTENT_BUMP_AMOUNT: u32 = 518_400;
+const PERSISTENT_LIFETIME_THRESHOLD: u32 = 259_200;
+
 #[contracttype]
 #[derive(Clone)]
 pub struct BlendRequest {
@@ -86,17 +89,24 @@ impl MockBlendPool {
                     .persistent()
                     .get(&DataKey::Supply(from.clone()))
                     .unwrap_or(0);
-                env.storage()
-                    .persistent()
-                    .set(&DataKey::Supply(from.clone()), &(bal + req.amount));
+                let supply_key = DataKey::Supply(from.clone());
+                env.storage().persistent().set(&supply_key, &(bal + req.amount));
+                env.storage().persistent().extend_ttl(
+                    &supply_key,
+                    PERSISTENT_LIFETIME_THRESHOLD,
+                    PERSISTENT_BUMP_AMOUNT,
+                );
                 let total: i128 = env
                     .storage()
                     .persistent()
                     .get(&DataKey::TotalSupply)
                     .unwrap_or(0);
-                env.storage()
-                    .persistent()
-                    .set(&DataKey::TotalSupply, &(total + req.amount));
+                env.storage().persistent().set(&DataKey::TotalSupply, &(total + req.amount));
+                env.storage().persistent().extend_ttl(
+                    &DataKey::TotalSupply,
+                    PERSISTENT_LIFETIME_THRESHOLD,
+                    PERSISTENT_BUMP_AMOUNT,
+                );
             } else if req.request_type == REQUEST_WITHDRAW {
                 let bal: i128 = env
                     .storage()
@@ -113,16 +123,27 @@ impl MockBlendPool {
                     .get(&DataKey::TotalSupply)
                     .unwrap_or(0);
                 let new_bal = bal - req.amount;
+                let supply_key = DataKey::Supply(from.clone());
                 if new_bal == 0 {
-                    env.storage().persistent().remove(&DataKey::Supply(from.clone()));
+                    env.storage().persistent().remove(&supply_key);
                 } else {
-                    env.storage().persistent().set(&DataKey::Supply(from.clone()), &new_bal);
+                    env.storage().persistent().set(&supply_key, &new_bal);
+                    env.storage().persistent().extend_ttl(
+                        &supply_key,
+                        PERSISTENT_LIFETIME_THRESHOLD,
+                        PERSISTENT_BUMP_AMOUNT,
+                    );
                 }
                 let new_total = total - req.amount;
                 if new_total == 0 {
                     env.storage().persistent().remove(&DataKey::TotalSupply);
                 } else {
                     env.storage().persistent().set(&DataKey::TotalSupply, &new_total);
+                    env.storage().persistent().extend_ttl(
+                        &DataKey::TotalSupply,
+                        PERSISTENT_LIFETIME_THRESHOLD,
+                        PERSISTENT_BUMP_AMOUNT,
+                    );
                 }
                 token::Client::new(&env, &token_addr).transfer(&pool, &to, &req.amount);
             }
@@ -152,9 +173,15 @@ impl MockBlendPool {
     }
 
     pub fn get_supply(env: Env, account: Address) -> i128 {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Supply(account))
-            .unwrap_or(0)
+        let key = DataKey::Supply(account);
+        let val: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+        if val > 0 {
+            env.storage().persistent().extend_ttl(
+                &key,
+                PERSISTENT_LIFETIME_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
+            );
+        }
+        val
     }
 }
