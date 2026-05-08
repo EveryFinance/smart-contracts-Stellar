@@ -336,7 +336,6 @@ fn test_phoenix_guard_allows_valid_swap() {
         &w.vault_addr,
         &1_000_0000000i128,
         &950_0000000i128,
-        &1_000_0000000i128,
         &ops,
     );
 }
@@ -370,7 +369,6 @@ fn test_phoenix_guard_rejects_excessive_slippage() {
         &w.vault_addr,
         &1_000_0000000i128,
         &500_0000000i128,
-        &1_000_0000000i128,
         &ops,
     );
 }
@@ -403,7 +401,6 @@ fn test_phoenix_guard_rejects_unlisted_token() {
         &w.vault_addr,
         &1_000_0000000i128,
         &950_0000000i128,
-        &1_000_0000000i128,
         &ops,
     );
 }
@@ -427,7 +424,6 @@ fn test_phoenix_guard_rejects_empty_operations() {
         &w.vault_addr,
         &1_000_0000000i128,
         &950_0000000i128,
-        &1_000_0000000i128,
         &ops,
     );
 }
@@ -471,7 +467,6 @@ fn test_phoenix_guard_whitelist_update() {
         &w.vault_addr,
         &1_000_0000000i128,
         &900_0000000i128,
-        &1_000_0000000i128,
         &ops,
     );
 }

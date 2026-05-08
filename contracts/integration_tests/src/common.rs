@@ -29,6 +29,10 @@ pub struct MockToken;
 #[contractimpl]
 impl MockToken {
     pub fn initialize(env: Env, admin: Address) {
+        assert!(
+            !env.storage().instance().has(&TKey::Admin),
+            "already initialized"
+        );
         env.storage().instance().set(&TKey::Admin, &admin);
     }
     pub fn mint(env: Env, to: Address, amount: i128) {
@@ -52,6 +56,7 @@ impl MockToken {
     }
     pub fn burn(env: Env, from: Address, amount: i128) {
         from.require_auth();
+        assert!(amount >= 0, "burn: negative amount");
         let b: i128 = env
             .storage()
             .persistent()
@@ -84,6 +89,7 @@ impl MockToken {
     }
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
         from.require_auth();
+        assert!(amount >= 0, "transfer: negative amount");
         let fb: i128 = env
             .storage()
             .persistent()
@@ -356,6 +362,27 @@ impl MockPhoenixPool {
             .instance()
             .get(&PhoenixKey::ShareToken)
             .unwrap();
+        let token_a: Address = env
+            .storage()
+            .instance()
+            .get(&PhoenixKey::UnderlyingA)
+            .unwrap();
+        let token_b_addr: Address = env
+            .storage()
+            .instance()
+            .get(&PhoenixKey::UnderlyingB)
+            .unwrap();
+        let pool = env.current_contract_address();
+        // Transfer tokens from depositor to pool (depositor pre-approved via token.approve).
+        // This models the real Phoenix pool behavior and ensures residual-token logic
+        // in the strategy is correctly exercised.
+        if amount_a > 0 {
+            MockTokenClient::new(&env, &token_a).transfer_from(&pool, &depositor, &pool, &amount_a);
+        }
+        if amount_b > 0 {
+            MockTokenClient::new(&env, &token_b_addr)
+                .transfer_from(&pool, &depositor, &pool, &amount_b);
+        }
         MockTokenClient::new(&env, &share_token).mint(&depositor, &shares);
 
         let reserve_a: i128 = env
