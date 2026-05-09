@@ -94,7 +94,10 @@ impl MockBlendPool {
                     .get(&DataKey::Supply(from.clone()))
                     .unwrap_or(0);
                 let supply_key = DataKey::Supply(from.clone());
-                env.storage().persistent().set(&supply_key, &(bal + req.amount));
+                let new_bal = bal
+                    .checked_add(req.amount)
+                    .unwrap_or_else(|| panic_with_error!(&env, PoolError::InvalidAmount));
+                env.storage().persistent().set(&supply_key, &new_bal);
                 env.storage().persistent().extend_ttl(
                     &supply_key,
                     PERSISTENT_LIFETIME_THRESHOLD,
@@ -105,7 +108,10 @@ impl MockBlendPool {
                     .persistent()
                     .get(&DataKey::TotalSupply)
                     .unwrap_or(0);
-                env.storage().persistent().set(&DataKey::TotalSupply, &(total + req.amount));
+                let new_total = total
+                    .checked_add(req.amount)
+                    .unwrap_or_else(|| panic_with_error!(&env, PoolError::InvalidAmount));
+                env.storage().persistent().set(&DataKey::TotalSupply, &new_total);
                 env.storage().persistent().extend_ttl(
                     &DataKey::TotalSupply,
                     PERSISTENT_LIFETIME_THRESHOLD,
@@ -126,7 +132,9 @@ impl MockBlendPool {
                     .persistent()
                     .get(&DataKey::TotalSupply)
                     .unwrap_or(0);
-                let new_bal = bal - req.amount;
+                let new_bal = bal
+                    .checked_sub(req.amount)
+                    .unwrap_or_else(|| panic_with_error!(&env, PoolError::InvalidAmount));
                 let supply_key = DataKey::Supply(from.clone());
                 if new_bal == 0 {
                     env.storage().persistent().remove(&supply_key);
@@ -138,7 +146,9 @@ impl MockBlendPool {
                         PERSISTENT_BUMP_AMOUNT,
                     );
                 }
-                let new_total = total - req.amount;
+                let new_total = total
+                    .checked_sub(req.amount)
+                    .unwrap_or_else(|| panic_with_error!(&env, PoolError::InvalidAmount));
                 if new_total == 0 {
                     env.storage().persistent().remove(&DataKey::TotalSupply);
                 } else {
@@ -178,14 +188,6 @@ impl MockBlendPool {
 
     pub fn get_supply(env: Env, account: Address) -> i128 {
         let key = DataKey::Supply(account);
-        let val: i128 = env.storage().persistent().get(&key).unwrap_or(0);
-        if val > 0 {
-            env.storage().persistent().extend_ttl(
-                &key,
-                PERSISTENT_LIFETIME_THRESHOLD,
-                PERSISTENT_BUMP_AMOUNT,
-            );
-        }
-        val
+        env.storage().persistent().get(&key).unwrap_or(0)
     }
 }
