@@ -36,6 +36,10 @@ fn setup_world() -> World {
 
 fn setup_world_with_fees(entry: u32, exit: u32, mgmt: u32, perf: u32) -> World {
     let env = Env::default();
+    // NOTE: mock_all_auths() bypasses all authorization checks in these tests.
+    // Auth-specific failure paths (e.g. non-manager calling manager-only functions)
+    // are tested in vault/src/test.rs where require_auth paths are exercised
+    // without this blanket override.
     env.mock_all_auths();
 
     let manager = Address::generate(&env);

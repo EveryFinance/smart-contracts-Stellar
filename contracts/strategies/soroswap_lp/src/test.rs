@@ -493,12 +493,13 @@ fn test_get_name() {
 }
 
 #[test]
-fn test_get_value_equals_lp_balance() {
+fn test_get_value_no_oracle_returns_zero() {
     let t = setup();
-    let lp = t
+    let _lp = t
         .strategy
         .deposit_liquidity(&200_0000000i128, &200_0000000i128, &0, &0, &t.vault);
-    assert_eq!(t.strategy.get_value(&t.vault), lp);
+    // Without an oracle, LP units are not base-asset-denominated; returns 0.
+    assert_eq!(t.strategy.get_value(&t.vault), 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -758,16 +759,14 @@ fn oracle2_client<'a>(
 
 const PRICE_PRECISION: i128 = 10_000_000;
 
-/// Without oracle, `get_value` returns the raw LP token balance.
-/// (Covered already by `test_get_value_equals_lp_balance` above, but we
-/// confirm the pair-token variant behaves the same way.)
+/// Without oracle, `get_value` returns 0 (LP units are not base-asset-denominated).
 #[test]
-fn test_get_value_no_oracle_returns_lp_balance() {
+fn test_get_value_no_oracle_returns_zero_pair_token() {
     let (t, _oracle) = setup_with_pair_token();
-    let lp = t
+    let _lp = t
         .strategy
         .deposit_liquidity(&300_0000000i128, &300_0000000i128, &0, &0, &t.vault);
-    assert_eq!(t.strategy.get_value(&t.vault), lp);
+    assert_eq!(t.strategy.get_value(&t.vault), 0);
 }
 
 /// Core GAP C test: with an oracle and known reserves the value equals
@@ -845,19 +844,19 @@ fn test_get_value_partial_pool_share() {
     assert_eq!(t.strategy.get_value(&t.vault), expected);
 }
 
-/// Edge case: pool has zero reserves → fallback to raw LP balance.
+/// Edge case: pool has zero reserves → returns 0 (cannot decompose empty pool).
 #[test]
-fn test_get_value_zero_reserves_falls_back_to_lp_balance() {
+fn test_get_value_zero_reserves_returns_zero() {
     let (t, oracle_id) = setup_with_pair_token();
-    let lp = t
+    let _lp = t
         .strategy
         .deposit_liquidity(&100_0000000i128, &100_0000000i128, &0, &0, &t.vault);
     // Reserves remain 0 (not set).
     oracle2_client(&t.env, &oracle_id).set_price(&t.token_a, &PRICE_PRECISION);
     oracle2_client(&t.env, &oracle_id).set_price(&t.token_b, &PRICE_PRECISION);
     t.strategy.set_oracle(&t.manager, &oracle_id);
-    // reserve_a = 0 AND reserve_b = 0 → fallback to lp_balance.
-    assert_eq!(t.strategy.get_value(&t.vault), lp);
+    // reserve_a = 0 AND reserve_b = 0 → cannot decompose, return 0.
+    assert_eq!(t.strategy.get_value(&t.vault), 0);
 }
 
 #[test]

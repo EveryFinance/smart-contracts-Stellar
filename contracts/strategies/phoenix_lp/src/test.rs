@@ -510,12 +510,13 @@ fn test_unpause_not_manager_panics() {
 }
 
 #[test]
-fn test_get_value_equals_share_balance() {
+fn test_get_value_no_oracle_returns_zero() {
     let t = setup();
     let shares = t
         .strategy
         .deposit_liquidity(&300_0000000i128, &300_0000000i128, &0, &0, &t.vault);
-    assert_eq!(t.strategy.get_value(&t.vault), shares);
+    // Without an oracle, share units are not base-asset-denominated; returns 0.
+    assert_eq!(t.strategy.get_value(&t.vault), 0);
     assert_eq!(t.strategy.get_share_balance(), shares);
 }
 

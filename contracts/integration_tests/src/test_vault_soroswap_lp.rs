@@ -142,8 +142,8 @@ fn test_deposit_lp_strategy_tracks_lp() {
             .deposit_liquidity(&500_0000000i128, &500_0000000i128, &0, &0, &w.vault_addr);
     assert!(lp > 0);
     assert_eq!(w.strategy.get_lp_balance(), lp);
-    // get_value returns LP balance (proxy for NAV contribution).
-    assert_eq!(w.strategy.get_value(&w.vault_addr), lp);
+    // Without an oracle, get_value returns 0 (LP tokens are not base-asset-denominated).
+    assert_eq!(w.strategy.get_value(&w.vault_addr), 0);
 }
 
 /// Partial withdraw from LP strategy sends underlying tokens to user.

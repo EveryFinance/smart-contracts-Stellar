@@ -202,17 +202,17 @@ fn test_get_vaults_empty() {
 }
 
 // ---------------------------------------------------------------------------
-// set_admin
+// two-step admin transfer
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_set_admin_transfers_role() {
+fn test_set_pending_then_accept_admin() {
     let t = setup();
     let new_admin = Address::generate(&t.env);
-    t.factory.set_admin(&t.admin, &new_admin);
+    t.factory.set_pending_admin(&t.admin, &new_admin);
+    t.factory.accept_admin(&new_admin);
     assert_eq!(t.factory.get_admin(), new_admin);
 
-    // Old admin can no longer register.
     // New admin can register.
     let manager = Address::generate(&t.env);
     let vault = deploy_mock_vault(&t.env, &manager);
@@ -222,11 +222,19 @@ fn test_set_admin_transfers_role() {
 
 #[test]
 #[should_panic]
-fn test_set_admin_not_admin_panics() {
+fn test_set_pending_admin_not_admin_panics() {
     let t = setup();
     let rogue = Address::generate(&t.env);
     let new_admin = Address::generate(&t.env);
-    t.factory.set_admin(&rogue, &new_admin);
+    t.factory.set_pending_admin(&rogue, &new_admin);
+}
+
+#[test]
+#[should_panic]
+fn test_accept_admin_without_pending_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.factory.accept_admin(&rogue);
 }
 
 // ---------------------------------------------------------------------------
@@ -351,14 +359,14 @@ fn test_admin_chain_transfer() {
     let admin2 = Address::generate(&t.env);
     let admin3 = Address::generate(&t.env);
 
-    t.factory.set_admin(&t.admin, &admin2);
+    t.factory.set_pending_admin(&t.admin, &admin2);
+    t.factory.accept_admin(&admin2);
     assert_eq!(t.factory.get_admin(), admin2);
 
-    t.factory.set_admin(&admin2, &admin3);
+    t.factory.set_pending_admin(&admin2, &admin3);
+    t.factory.accept_admin(&admin3);
     assert_eq!(t.factory.get_admin(), admin3);
 
-    // admin2 can no longer operate (but with mock_all_auths it would still
-    // pass require_auth — so we verify the address check fails):
     // Register with admin3 succeeds.
     let manager = Address::generate(&t.env);
     let vault = deploy_mock_vault(&t.env, &manager);

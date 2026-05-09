@@ -211,7 +211,8 @@ fn test_full_phoenix_lp_lifecycle() {
 
     // Strategy tracks LP correctly.
     assert_eq!(w.strategy.get_share_balance(), lp_shares);
-    assert_eq!(w.strategy.get_value(&w.vault_addr), lp_shares);
+    // Without an oracle, get_value returns 0 (LP shares are not base-asset-denominated).
+    assert_eq!(w.strategy.get_value(&w.vault_addr), 0);
 
     // Withdraw half.
     let half = lp_shares / 2;

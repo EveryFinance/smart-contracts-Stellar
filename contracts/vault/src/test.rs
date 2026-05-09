@@ -10,6 +10,12 @@ use crate::{Vault, VaultClient, VaultParams};
 
 // ---------------------------------------------------------------------------
 // MockToken — minimal SEP-41 for testing
+//
+// NOTE: This mock intentionally omits admin-auth checks on mint/burn and does
+// not enforce allowance expiry. It exists only to exercise vault accounting
+// logic; it does NOT test SEP-41 token security properties. Auth enforcement
+// and allowance semantics are verified by the real token contracts in
+// integration tests.
 // ---------------------------------------------------------------------------
 
 #[contracttype]
@@ -1375,10 +1381,9 @@ fn test_auto_unwind_skips_lp_strategies() {
 
     let strategies: Vec<Address> = vec![&t.env, sa_sid.clone(), lp_sid.clone()];
     t.vault.set_strategies(&t.manager, &strategies);
-    // Mark lp_sid as LP.
-    t.vault.set_lp_strategy(&t.manager, &lp_sid, &true);
-    // LP strategies now require internal oracle-backed valuation.
+    // Oracle must be set before marking a strategy as LP.
     MockStrategyClient::new(&t.env, &lp_sid).set_oracle_enabled(&true);
+    t.vault.set_lp_strategy(&t.manager, &lp_sid, &true);
 
     let deposit_amount = 1_000_0000000i128;
     t.vault.deposit(&deposit_amount, &t.user, &0i128);
@@ -1403,8 +1408,8 @@ fn test_withdraw_panics_when_only_lp_liquidity_remains() {
 
     let strategies: Vec<Address> = vec![&t.env, sa_sid.clone(), lp_sid.clone()];
     t.vault.set_strategies(&t.manager, &strategies);
-    t.vault.set_lp_strategy(&t.manager, &lp_sid, &true);
     MockStrategyClient::new(&t.env, &lp_sid).set_oracle_enabled(&true);
+    t.vault.set_lp_strategy(&t.manager, &lp_sid, &true);
 
     t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     t.vault.invest(&t.manager, &sa_sid, &100_0000000i128);
@@ -1422,6 +1427,7 @@ fn test_lp_flag_cannot_be_cleared_once_set() {
     let sid = env_register_strategy(&t);
     let strategies: Vec<Address> = vec![&t.env, sid.clone()];
     t.vault.set_strategies(&t.manager, &strategies);
+    MockStrategyClient::new(&t.env, &sid).set_oracle_enabled(&true);
     t.vault.set_lp_strategy(&t.manager, &sid, &true);
     t.vault.set_lp_strategy(&t.manager, &sid, &false);
 }
@@ -1528,8 +1534,8 @@ fn test_lp_strategy_with_oracle_allows_nav() {
     let sid = env_register_strategy(&t);
     let strategies: Vec<Address> = vec![&t.env, sid.clone()];
     t.vault.set_strategies(&t.manager, &strategies);
-    t.vault.set_lp_strategy(&t.manager, &sid, &true);
     MockStrategyClient::new(&t.env, &sid).set_oracle_enabled(&true);
+    t.vault.set_lp_strategy(&t.manager, &sid, &true);
 
     t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     t.vault.invest(&t.manager, &sid, &500_0000000i128);

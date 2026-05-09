@@ -245,13 +245,14 @@ fn test_get_vaults_limit_capped_at_50() {
     assert_eq!(page.len(), 50);
 }
 
-/// Admin transfer: new admin can register vaults; old admin cannot.
+/// Admin transfer: new admin can register vaults after two-step transfer.
 #[test]
 fn test_admin_transfer_changes_effective_admin() {
     let w = setup();
     let new_admin = Address::generate(&w.env);
 
-    w.factory.set_admin(&w.admin, &new_admin);
+    w.factory.set_pending_admin(&w.admin, &new_admin);
+    w.factory.accept_admin(&new_admin);
     assert_eq!(w.factory.get_admin(), new_admin);
 
     // New admin can register.
@@ -260,28 +261,29 @@ fn test_admin_transfer_changes_effective_admin() {
     assert!(w.factory.is_registered(&v));
 }
 
-/// Old admin cannot act after transfer.
+/// Old admin cannot act after transfer completes.
 #[test]
 #[should_panic]
 fn test_old_admin_cannot_act_after_transfer() {
     let w = setup();
     let new_admin = Address::generate(&w.env);
 
-    w.factory.set_admin(&w.admin, &new_admin);
+    w.factory.set_pending_admin(&w.admin, &new_admin);
+    w.factory.accept_admin(&new_admin);
 
     // Old admin tries to register — NotAdmin.
     let (v, m) = deploy_vault(&w.env);
     w.factory.register_vault(&w.admin, &v, &m);
 }
 
-/// Non-admin cannot call set_admin.
+/// Non-admin cannot call set_pending_admin.
 #[test]
 #[should_panic]
 fn test_set_admin_non_admin_panics() {
     let w = setup();
     let rogue = Address::generate(&w.env);
     let new_admin = Address::generate(&w.env);
-    w.factory.set_admin(&rogue, &new_admin);
+    w.factory.set_pending_admin(&rogue, &new_admin);
 }
 
 /// Register → remove → re-register same vault works.
