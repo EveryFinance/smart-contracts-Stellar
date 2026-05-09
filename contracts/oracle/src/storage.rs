@@ -47,6 +47,11 @@ pub fn set_admin(env: &Env, admin: &Address) {
 }
 
 pub fn get_admin(env: &Env) -> Address {
+    env.storage().persistent().extend_ttl(
+        &DataKey::Admin,
+        PERSISTENT_LIFETIME_THRESHOLD,
+        PERSISTENT_BUMP_AMOUNT,
+    );
     env.storage()
         .persistent()
         .get(&DataKey::Admin)
@@ -102,6 +107,11 @@ pub fn set_max_age_ledgers(env: &Env, max_age: u32) {
 }
 
 pub fn get_max_age_ledgers(env: &Env) -> u32 {
+    env.storage().persistent().extend_ttl(
+        &DataKey::MaxAgeLedgers,
+        PERSISTENT_LIFETIME_THRESHOLD,
+        PERSISTENT_BUMP_AMOUNT,
+    );
     env.storage()
         .persistent()
         .get(&DataKey::MaxAgeLedgers)
