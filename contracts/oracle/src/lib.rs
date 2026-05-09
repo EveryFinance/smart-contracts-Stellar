@@ -96,11 +96,18 @@ impl OracleContract {
 
     /// Set the maximum allowed age of stored prices in ledgers.
     ///
-    /// `max_age_ledgers = 0` disables staleness checks.
+    /// `max_age_ledgers` must be ≥ 1; zero would permanently disable the
+    /// staleness guard, accepting arbitrarily old prices.
+    ///
+    /// # Errors
+    /// * [`OracleError::InvalidMaxAge`] if `max_age_ledgers == 0`.
     pub fn set_max_age_ledgers(env: Env, max_age_ledgers: u32) {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        if max_age_ledgers == 0 {
+            panic_with_error!(&env, OracleError::InvalidMaxAge);
+        }
         let admin = get_admin(&env);
         admin.require_auth();
         set_max_age_ledgers(&env, max_age_ledgers);

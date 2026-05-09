@@ -204,22 +204,13 @@ fn test_stale_price_panics() {
 }
 
 #[test]
-fn test_max_age_zero_disables_staleness_checks() {
+#[should_panic]
+fn test_max_age_zero_rejected() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 100;
-    });
-
     let (client, _) = setup(&env);
-    let asset = Address::generate(&env);
-    client.set_price(&asset, &PRICE_PRECISION);
+    // max_age_ledgers == 0 would permanently disable staleness checks; must be rejected.
     client.set_max_age_ledgers(&0u32);
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 10_000;
-    });
-    assert_eq!(client.get_price(&asset), PRICE_PRECISION);
 }
 
 // ---------------------------------------------------------------------------

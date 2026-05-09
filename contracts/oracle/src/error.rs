@@ -17,4 +17,8 @@ pub enum OracleError {
     NonPositivePrice = 5,
     /// Price exists but is older than the allowed freshness threshold.
     StalePrice = 6,
+
+    /// `max_age_ledgers` must be at least 1; zero would disable the staleness
+    /// check entirely, meaning any arbitrarily old price would be accepted.
+    InvalidMaxAge = 7,
 }
