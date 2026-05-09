@@ -85,6 +85,8 @@ use events::{
 const PRICE_PRECISION: i128 = 10_000_000;
 /// Default NAV-loss guard tolerance (10%) for manager operations.
 const DEFAULT_MAX_LOSS_BPS: u32 = 1_000;
+/// Maximum number of whitelisted strategies to bound NAV computation cost.
+const MAX_STRATEGIES: u32 = 10;
 /// Delay before announced fee increases can be committed.
 const FEE_INCREASE_DELAY_SECS: u64 = 86_400;
 
@@ -643,6 +645,20 @@ impl Vault {
         caller.require_auth();
         if caller != get_manager(&env) {
             panic_with_error!(&env, VaultError::NotManager);
+        }
+
+        // Enforce list size limit.
+        if strategies.len() > MAX_STRATEGIES {
+            panic_with_error!(&env, VaultError::InvalidAmount);
+        }
+
+        // Reject duplicate entries in the new list.
+        for i in 0..strategies.len() {
+            for j in (i + 1)..strategies.len() {
+                if strategies.get(i).unwrap() == strategies.get(j).unwrap() {
+                    panic_with_error!(&env, VaultError::InvalidAmount);
+                }
+            }
         }
 
         // Safety check: any strategy being removed must have no active position.
@@ -1606,6 +1622,9 @@ impl Vault {
         }
         if !is_lp && is_lp_strategy(&env, &strategy) {
             panic_with_error!(&env, VaultError::LpStrategyFlagImmutable);
+        }
+        if is_lp && !strategy_has_oracle(&env, &strategy) {
+            panic_with_error!(&env, VaultError::LpStrategyOracleRequired);
         }
         set_lp_strategy(&env, &strategy, is_lp);
     }
