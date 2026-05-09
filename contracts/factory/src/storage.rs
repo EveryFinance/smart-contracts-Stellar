@@ -49,6 +49,8 @@ pub const PERSISTENT_LIFETIME_THRESHOLD: u32 = 2_628_000; // ≈ 6 months
 pub enum DataKey {
     /// Factory admin address.
     Admin,
+    /// Pending admin address awaiting acceptance (two-step transfer).
+    PendingAdmin,
     /// Total number of registered vaults.
     VaultCount,
     /// Vault address at index *i* (0-based).
@@ -96,6 +98,20 @@ pub fn has_admin(env: &Env) -> bool {
     env.storage().instance().has(&DataKey::Admin)
 }
 
+pub fn set_pending_admin(env: &Env, v: &Address) {
+    bump_instance(env);
+    env.storage().instance().set(&DataKey::PendingAdmin, v);
+}
+
+pub fn get_pending_admin(env: &Env) -> Option<Address> {
+    bump_instance(env);
+    env.storage().instance().get(&DataKey::PendingAdmin)
+}
+
+pub fn clear_pending_admin(env: &Env) {
+    env.storage().instance().remove(&DataKey::PendingAdmin);
+}
+
 // ---------------------------------------------------------------------------
 // Count helpers  (instance storage)
 // ---------------------------------------------------------------------------
@@ -119,6 +135,9 @@ pub fn set_vault_count(env: &Env, count: u32) {
 
 pub fn get_vault_by_index(env: &Env, idx: u32) -> Address {
     let key = DataKey::VaultByIndex(idx);
+    if !env.storage().persistent().has(&key) {
+        panic_with_error!(env, FactoryError::VaultNotFound);
+    }
     bump_persistent(env, &key);
     env.storage().persistent().get(&key).unwrap()
 }
@@ -141,6 +160,9 @@ pub fn remove_vault_by_index(env: &Env, idx: u32) {
 
 pub fn get_vault_position(env: &Env, vault: &Address) -> u32 {
     let key = DataKey::VaultPosition(vault.clone());
+    if !env.storage().persistent().has(&key) {
+        panic_with_error!(env, FactoryError::VaultNotFound);
+    }
     bump_persistent(env, &key);
     env.storage().persistent().get(&key).unwrap()
 }

@@ -32,10 +32,10 @@ pub use error::FactoryError;
 use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, IntoVal, Symbol, Vec};
 
 use storage::{
-    get_admin, get_is_registered, get_vault_by_index, get_vault_count, get_vault_position,
-    has_admin, remove_registered, remove_vault_by_index, remove_vault_position, set_admin,
-    set_registered, set_vault_by_index, set_vault_count, set_vault_position, INSTANCE_BUMP_AMOUNT,
-    INSTANCE_LIFETIME_THRESHOLD,
+    clear_pending_admin, get_admin, get_is_registered, get_pending_admin, get_vault_by_index,
+    get_vault_count, get_vault_position, has_admin, remove_registered, remove_vault_by_index,
+    remove_vault_position, set_admin, set_pending_admin, set_registered, set_vault_by_index,
+    set_vault_count, set_vault_position, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
 };
 
 use events::{admin_changed_event, vault_registered_event, vault_removed_event};
@@ -197,11 +197,15 @@ impl Factory {
     // Admin management
     // -----------------------------------------------------------------------
 
-    /// Transfer admin role to a new address. Current admin only.
+    /// Begin a two-step admin transfer. Current admin only.
+    ///
+    /// Records `new_admin` as the pending admin; the transfer is not complete
+    /// until `new_admin` calls [`accept_admin`].  This prevents accidental
+    /// lock-out if a wrong address is supplied.
     ///
     /// # Errors
     /// * [`FactoryError::NotAdmin`]
-    pub fn set_admin(env: Env, caller: Address, new_admin: Address) {
+    pub fn set_pending_admin(env: Env, caller: Address, new_admin: Address) {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
@@ -211,8 +215,33 @@ impl Factory {
             panic_with_error!(&env, FactoryError::NotAdmin);
         }
 
-        set_admin(&env, &new_admin);
-        admin_changed_event(&env, &new_admin);
+        set_pending_admin(&env, &new_admin);
+    }
+
+    /// Complete a two-step admin transfer. Pending admin only.
+    ///
+    /// The address previously set via [`set_pending_admin`] must authorize
+    /// this call. On success, that address becomes the new admin.
+    ///
+    /// # Errors
+    /// * [`FactoryError::NoPendingAdmin`] if no transfer is in progress.
+    pub fn accept_admin(env: Env, caller: Address) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        caller.require_auth();
+
+        let pending = get_pending_admin(&env)
+            .unwrap_or_else(|| panic_with_error!(&env, FactoryError::NoPendingAdmin));
+
+        if caller != pending {
+            panic_with_error!(&env, FactoryError::NotAdmin);
+        }
+
+        set_admin(&env, &pending);
+        clear_pending_admin(&env);
+        admin_changed_event(&env, &pending);
     }
 
     // -----------------------------------------------------------------------

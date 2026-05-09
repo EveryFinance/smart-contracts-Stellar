@@ -29,4 +29,7 @@ pub enum FactoryError {
     /// The manager supplied to `register_vault` does not match
     /// `vault.get_manager()`.
     ManagerMismatch = 6,
+
+    /// `accept_admin` was called but no pending admin transfer is in progress.
+    NoPendingAdmin = 7,
 }
