@@ -368,8 +368,9 @@ impl SoroswapLpStrategy {
 
         let oracle = match get_oracle(&env) {
             Some(o) => o,
-            // No oracle configured — fall back to raw LP units.
-            None => return lp_balance,
+            // Without an oracle the LP units are not base-asset-denominated;
+            // returning them as NAV would inflate share price.
+            None => return 0,
         };
 
         let lp_token = get_lp_token(&env);
@@ -382,7 +383,8 @@ impl SoroswapLpStrategy {
         let total_lp = pair.total_supply();
 
         if total_lp == 0 || (reserve_a == 0 && reserve_b == 0) {
-            return lp_balance;
+            // Cannot compute reserve decomposition — treat as zero NAV contribution.
+            return 0;
         }
 
         // Oracle prices (PRICE_PRECISION-scaled) for each underlying asset.
@@ -422,7 +424,7 @@ impl SoroswapLpStrategy {
     // Oracle configuration
     // -----------------------------------------------------------------------
 
-    /// Set the oracle used for reserve-decomposition NAV. Manager only.
+    /// Set the oracle used for reserve-decomposition NAV. Vault manager only.
     ///
     /// Once set, `get_value()` will call `oracle.get_price(asset_a)` and
     /// `oracle.get_price(asset_b)` and compute NAV from pool reserves rather
@@ -432,7 +434,13 @@ impl SoroswapLpStrategy {
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         caller.require_auth();
-        if caller != get_manager(&env) {
+        let vault = get_vault(&env);
+        let vault_manager: Address = env.invoke_contract(
+            &vault,
+            &Symbol::new(&env, "get_manager"),
+            ().into_val(&env),
+        );
+        if caller != vault_manager {
             panic_with_error!(&env, SoroswapLpError::NotManager);
         }
         set_oracle(&env, &oracle);
@@ -502,31 +510,37 @@ impl SoroswapLpStrategy {
     // Emergency controls
     // -----------------------------------------------------------------------
 
-    /// Pause the strategy (blocks deposits and withdrawals).
-    ///
-    /// # Auth
-    /// Manager must authorize.
+    /// Pause the strategy (blocks deposits and withdrawals). Vault manager only.
     pub fn pause(env: Env, caller: Address) {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         caller.require_auth();
-        if caller != get_manager(&env) {
+        let vault = get_vault(&env);
+        let vault_manager: Address = env.invoke_contract(
+            &vault,
+            &Symbol::new(&env, "get_manager"),
+            ().into_val(&env),
+        );
+        if caller != vault_manager {
             panic_with_error!(&env, SoroswapLpError::NotManager);
         }
         set_paused(&env, true);
     }
 
-    /// Unpause the strategy.
-    ///
-    /// # Auth
-    /// Manager must authorize.
+    /// Unpause the strategy. Vault manager only.
     pub fn unpause(env: Env, caller: Address) {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         caller.require_auth();
-        if caller != get_manager(&env) {
+        let vault = get_vault(&env);
+        let vault_manager: Address = env.invoke_contract(
+            &vault,
+            &Symbol::new(&env, "get_manager"),
+            ().into_val(&env),
+        );
+        if caller != vault_manager {
             panic_with_error!(&env, SoroswapLpError::NotManager);
         }
         set_paused(&env, false);

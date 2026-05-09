@@ -259,14 +259,16 @@ impl PhoenixLpStrategy {
             panic_with_error!(&env, PhoenixLpError::NotVault);
         }
 
-        let total = get_total_shares(&env);
-        if share_amount > total {
-            panic_with_error!(&env, PhoenixLpError::InsufficientShares);
-        }
-
         let share_token = get_share_token(&env);
         let pool = get_phoenix_pool(&env);
         let strategy = env.current_contract_address();
+
+        // Use the live on-chain balance rather than the internal counter to cap
+        // withdrawals; the counter can desync if shares arrive via direct transfer.
+        let live_balance = token::Client::new(&env, &share_token).balance(&strategy);
+        if share_amount > live_balance {
+            panic_with_error!(&env, PhoenixLpError::InsufficientShares);
+        }
         let expiry = env.ledger().sequence() + 100;
         let deadline = env.ledger().timestamp() + 300;
 
@@ -286,7 +288,7 @@ impl PhoenixLpStrategy {
         let now = env.ledger().sequence();
         token::Client::new(&env, &share_token).approve(&strategy, &pool, &zero, &now);
 
-        let new_total = total
+        let new_total = get_total_shares(&env)
             .checked_sub(share_amount)
             .unwrap_or_else(|| panic_with_error!(&env, PhoenixLpError::Overflow));
         set_total_shares(&env, new_total);
@@ -331,7 +333,9 @@ impl PhoenixLpStrategy {
 
         let oracle = match get_oracle(&env) {
             Some(o) => o,
-            None => return shares,
+            // Without an oracle the share units are not base-asset-denominated;
+            // returning them as NAV would inflate share price.
+            None => return 0,
         };
 
         // Pool reserves and total share supply.
@@ -339,7 +343,8 @@ impl PhoenixLpStrategy {
         let total_shares = Sep41TokenAdapter::new(&env, &share_token).total_supply();
 
         if total_shares == 0 || (reserve_a == 0 && reserve_b == 0) {
-            return shares;
+            // Cannot compute reserve decomposition — treat as zero NAV contribution.
+            return 0;
         }
 
         let oracle_client = OracleAdapter::new(&env, &oracle);
@@ -412,13 +417,19 @@ impl PhoenixLpStrategy {
     // Oracle configuration
     // -----------------------------------------------------------------------
 
-    /// Set the oracle used for reserve-decomposition NAV. Manager only.
+    /// Set the oracle used for reserve-decomposition NAV. Vault manager only.
     pub fn set_oracle(env: Env, caller: Address, oracle: Address) {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         caller.require_auth();
-        if caller != get_manager(&env) {
+        let vault = get_vault(&env);
+        let vault_manager: Address = env.invoke_contract(
+            &vault,
+            &Symbol::new(&env, "get_manager"),
+            ().into_val(&env),
+        );
+        if caller != vault_manager {
             panic_with_error!(&env, PhoenixLpError::NotManager);
         }
         set_oracle(&env, &oracle);
@@ -428,25 +439,37 @@ impl PhoenixLpStrategy {
     // Emergency controls
     // -----------------------------------------------------------------------
 
-    /// Pause the strategy. Manager only.
+    /// Pause the strategy. Vault manager only.
     pub fn pause(env: Env, caller: Address) {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         caller.require_auth();
-        if caller != get_manager(&env) {
+        let vault = get_vault(&env);
+        let vault_manager: Address = env.invoke_contract(
+            &vault,
+            &Symbol::new(&env, "get_manager"),
+            ().into_val(&env),
+        );
+        if caller != vault_manager {
             panic_with_error!(&env, PhoenixLpError::NotManager);
         }
         set_paused(&env, true);
     }
 
-    /// Unpause the strategy. Manager only.
+    /// Unpause the strategy. Vault manager only.
     pub fn unpause(env: Env, caller: Address) {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         caller.require_auth();
-        if caller != get_manager(&env) {
+        let vault = get_vault(&env);
+        let vault_manager: Address = env.invoke_contract(
+            &vault,
+            &Symbol::new(&env, "get_manager"),
+            ().into_val(&env),
+        );
+        if caller != vault_manager {
             panic_with_error!(&env, PhoenixLpError::NotManager);
         }
         set_paused(&env, false);
