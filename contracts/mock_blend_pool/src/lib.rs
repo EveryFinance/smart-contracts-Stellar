@@ -32,9 +32,12 @@ enum DataKey {
     Admin,
     Token,
     // Supply(Address) creates one persistent ledger entry per depositor address.
-    // In a production pool this would require either a minimum-deposit threshold or
-    // an explicit supplier cap to prevent unbounded state growth; here it is an
-    // accepted limitation of the test mock.
+    // This is an accepted limitation of the test mock: in a production pool this
+    // per-address design would enable state-bloat attacks (an attacker could create
+    // an unbounded number of entries by depositing from many addresses, driving up
+    // ledger-entry costs and eventually bricking the pool).  A production implementation
+    // would require a minimum-deposit threshold or explicit supplier cap.  Since this
+    // contract is used only in tests, no such guard is needed here.
     Supply(Address),
     TotalSupply,
 }
