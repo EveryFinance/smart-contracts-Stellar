@@ -1867,7 +1867,12 @@ impl Vault {
         if total_supply == 0 || nav == 0 {
             PRICE_PRECISION // bootstrap price = 1.0
         } else {
-            nav * PRICE_PRECISION / total_supply
+            let p = nav * PRICE_PRECISION / total_supply;
+            // Floor at 1 to prevent a zero share price when
+            // nav * PRICE_PRECISION < total_supply (extreme dilution scenario).
+            // A zero price would cause withdraw to compute base_gross = 0 and
+            // revert with InvalidAmount, permanently locking all funds.
+            if p == 0 { 1 } else { p }
         }
     }
 
