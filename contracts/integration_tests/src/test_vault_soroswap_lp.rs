@@ -42,6 +42,15 @@ fn setup() -> World {
     // auth originating from a non-root (non-first) contract in the call stack, which
     // would cause that internal call to fail.  The allowing_non_root_auth variant
     // approves auth at every depth, faithfully modelling what the real network does.
+    //
+    // LIMITATION: Because this blanket mock auto-approves every auth call, these
+    // tests do not verify that individual `require_auth` calls are actually present
+    // in the production code.  If a `require_auth` were accidentally removed from a
+    // function, the tests here would still pass.  Auth enforcement is verified by:
+    //   (a) unit tests in each contract crate that call functions without mock_all_auths
+    //       and expect panics for unauthorized callers; and
+    //   (b) `test_deposit_liquidity_rejects_non_vault_caller` below, which tests
+    //       real auth rejection outside the mock_all_auths scope.
     env.mock_all_auths_allowing_non_root_auth();
 
     let manager = Address::generate(&env);
@@ -224,4 +233,21 @@ fn test_paused_strategy_deposit_panics() {
     w.strategy.pause(&w.manager);
     w.strategy
         .deposit_liquidity(&100_0000000i128, &100_0000000i128, &0, &0, &w.vault_addr);
+}
+
+/// A caller that is not the registered vault is rejected by deposit_liquidity.
+///
+/// This test exercises the `from != get_vault()` guard in `deposit_liquidity`.
+/// Even though the environment uses `mock_all_auths_allowing_non_root_auth`
+/// (which auto-approves the `from.require_auth()` call), the subsequent
+/// vault-identity check must still reject any address that is not the vault.
+/// This proves the guard is present and enforced independently of auth mocking.
+#[test]
+#[should_panic]
+fn test_deposit_liquidity_rejects_non_vault_caller() {
+    let w = setup();
+    let rogue = Address::generate(&w.env);
+    // rogue is not the vault — must panic with NotVault regardless of auth.
+    w.strategy
+        .deposit_liquidity(&100_0000000i128, &100_0000000i128, &0, &0, &rogue);
 }
