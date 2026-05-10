@@ -344,3 +344,69 @@ fn test_count_consistent_with_paginated_total() {
     let page = w.factory().get_vaults(&0, &50);
     assert_eq!(count, page.len());
 }
+
+/// touch_vaults is a no-op on an empty registry and does not panic.
+#[test]
+fn test_touch_vaults_empty_registry_is_noop() {
+    let w = setup();
+    // No vaults registered — any range should silently return.
+    w.factory().touch_vaults(&0, &10);
+    assert_eq!(w.factory().get_vault_count(), 0);
+}
+
+/// touch_vaults with start >= end is a no-op.
+#[test]
+fn test_touch_vaults_start_ge_end_is_noop() {
+    let w = setup();
+    let (v, m) = deploy_vault(&w.env);
+    w.factory().register_vault(&w.admin, &v, &m);
+
+    w.factory().touch_vaults(&5, &3); // start > end
+    w.factory().touch_vaults(&2, &2); // start == end
+    assert_eq!(w.factory().get_vault_count(), 1);
+}
+
+/// touch_vaults over all registered entries succeeds without error.
+#[test]
+fn test_touch_vaults_full_range() {
+    let w = setup();
+
+    let mut vaults = soroban_sdk::vec![&w.env];
+    for _ in 0..5u32 {
+        let (v, m) = deploy_vault(&w.env);
+        w.factory().register_vault(&w.admin, &v, &m);
+        vaults.push_back(v);
+    }
+
+    // Touching the full range must not panic and leave registry intact.
+    w.factory().touch_vaults(&0, &5);
+    assert_eq!(w.factory().get_vault_count(), 5);
+
+    // Vault order is preserved.
+    let page = w.factory().get_vaults(&0, &10);
+    assert_eq!(page.len(), 5);
+}
+
+/// touch_vaults clamps end to vault_count when u32::MAX is passed.
+#[test]
+fn test_touch_vaults_end_clamped_to_count() {
+    let w = setup();
+    let (v, m) = deploy_vault(&w.env);
+    w.factory().register_vault(&w.admin, &v, &m);
+
+    // u32::MAX as end should be clamped to count=1, touching only index 0.
+    w.factory().touch_vaults(&0, &u32::MAX);
+    assert_eq!(w.factory().get_vault_count(), 1);
+}
+
+/// touch_vaults with start past the last index is a no-op.
+#[test]
+fn test_touch_vaults_start_past_count_is_noop() {
+    let w = setup();
+    let (v, m) = deploy_vault(&w.env);
+    w.factory().register_vault(&w.admin, &v, &m);
+
+    // count=1, start=5 — no entries to touch.
+    w.factory().touch_vaults(&5, &10);
+    assert_eq!(w.factory().get_vault_count(), 1);
+}

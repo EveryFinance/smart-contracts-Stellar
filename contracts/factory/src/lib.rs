@@ -36,7 +36,8 @@ use storage::{
     get_vault_count, get_vault_position, is_factory_initialized, remove_registered,
     remove_vault_by_index, remove_vault_position, set_admin, set_factory_initialized,
     set_pending_admin, set_registered, set_vault_by_index, set_vault_count, set_vault_position,
-    INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
+    DataKey, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT,
+    PERSISTENT_LIFETIME_THRESHOLD,
 };
 
 use events::{admin_changed_event, vault_registered_event, vault_removed_event};
@@ -301,6 +302,53 @@ impl Factory {
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         get_is_registered(&env, &vault)
+    }
+
+    /// Bump the persistent TTL for vault registry entries in index range `[start, end)`.
+    ///
+    /// This function is **permissionless**: any account may call it to pay for
+    /// TTL renewal, preventing registry entries from expiring silently.
+    ///
+    /// # Arguments
+    /// * `start` – First index to touch (inclusive).
+    /// * `end`   – One-past-last index to touch (exclusive).
+    ///
+    /// If `start >= end` or `start >= vault_count` the call is a no-op.
+    /// `end` is clamped to `vault_count` so callers can safely pass `u32::MAX`.
+    pub fn touch_vaults(env: Env, start: u32, end: u32) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        let count = get_vault_count(&env);
+        if start >= count || start >= end {
+            return;
+        }
+        let clamped_end = end.min(count);
+        let mut i = start;
+        while i < clamped_end {
+            let vault = get_vault_by_index(&env, i);
+            // Bump all three persistent keys for this vault slot.
+            let key_by_index = DataKey::VaultByIndex(i);
+            let key_position = DataKey::VaultPosition(vault.clone());
+            let key_registered = DataKey::IsRegistered(vault.clone());
+            env.storage().persistent().extend_ttl(
+                &key_by_index,
+                PERSISTENT_LIFETIME_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
+            );
+            env.storage().persistent().extend_ttl(
+                &key_position,
+                PERSISTENT_LIFETIME_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
+            );
+            env.storage().persistent().extend_ttl(
+                &key_registered,
+                PERSISTENT_LIFETIME_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
+            );
+            i += 1;
+        }
     }
 }
 
