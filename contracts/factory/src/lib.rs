@@ -33,9 +33,10 @@ use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, IntoVa
 
 use storage::{
     clear_pending_admin, get_admin, get_is_registered, get_pending_admin, get_vault_by_index,
-    get_vault_count, get_vault_position, has_admin, remove_registered, remove_vault_by_index,
-    remove_vault_position, set_admin, set_pending_admin, set_registered, set_vault_by_index,
-    set_vault_count, set_vault_position, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
+    get_vault_count, get_vault_position, is_factory_initialized, remove_registered,
+    remove_vault_by_index, remove_vault_position, set_admin, set_factory_initialized,
+    set_pending_admin, set_registered, set_vault_by_index, set_vault_count, set_vault_position,
+    INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
 };
 
 use events::{admin_changed_event, vault_registered_event, vault_removed_event};
@@ -60,8 +61,13 @@ impl Factory {
     // -----------------------------------------------------------------------
 
     /// Initialize the factory. Runs atomically at deployment via `CreateContract`.
+    ///
+    /// Uses a **persistent** storage flag in addition to instance storage so
+    /// that expiry of the instance entry cannot be exploited by an attacker to
+    /// re-run initialization and replace the admin.
     pub fn __constructor(env: Env, admin: Address) {
-        if has_admin(&env) {
+        // Check the persistent flag first — it survives instance TTL expiry.
+        if is_factory_initialized(&env) {
             panic_with_error!(&env, FactoryError::AlreadyInitialized);
         }
         admin.require_auth();
@@ -71,6 +77,9 @@ impl Factory {
 
         set_admin(&env, &admin);
         set_vault_count(&env, 0);
+        // Write the persistent initialization flag last so it only exists if
+        // all prior writes succeed.
+        set_factory_initialized(&env);
     }
 
     // -----------------------------------------------------------------------

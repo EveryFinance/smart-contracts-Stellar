@@ -39,6 +39,13 @@ pub const INSTANCE_LIFETIME_THRESHOLD: u32 = 17_280;
 pub const PERSISTENT_BUMP_AMOUNT: u32 = 5_256_000;
 pub const PERSISTENT_LIFETIME_THRESHOLD: u32 = 2_628_000; // ≈ 6 months
 
+/// Bump amount for the persistent factory-initialized flag.
+/// u32::MAX ≈ 248 000 years — effectively permanent.
+pub const FACTORY_INIT_PERSISTENT_BUMP_AMOUNT: u32 = u32::MAX;
+
+/// Threshold for the persistent factory-initialized flag bump.
+pub const FACTORY_INIT_PERSISTENT_LIFETIME_THRESHOLD: u32 = u32::MAX / 2;
+
 // ---------------------------------------------------------------------------
 // Storage key enum
 // ---------------------------------------------------------------------------
@@ -59,6 +66,14 @@ pub enum DataKey {
     VaultPosition(Address),
     /// Membership flag for quick duplicate detection.
     IsRegistered(Address),
+    /// Persistent initialization flag.
+    ///
+    /// Stored in **persistent** storage so it survives instance TTL expiry.
+    /// If only the instance-storage `Admin` key were used as the guard,
+    /// an attacker could wait for the instance to expire and re-call
+    /// `__constructor` with their own admin address, effectively taking over
+    /// the factory registry.
+    Initialized,
 }
 
 // ---------------------------------------------------------------------------
@@ -75,6 +90,35 @@ fn bump_persistent(env: &Env, key: &DataKey) {
     env.storage()
         .persistent()
         .extend_ttl(key, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+}
+
+// ---------------------------------------------------------------------------
+// Factory initialization guard (persistent storage)
+// ---------------------------------------------------------------------------
+
+/// Persist the factory-initialized flag in **persistent** storage.
+///
+/// Persistent storage survives instance-entry TTL expiry, preventing an
+/// attacker from calling `__constructor` again after the instance expires.
+pub fn set_factory_initialized(env: &Env) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::Initialized, &true);
+    env.storage().persistent().extend_ttl(
+        &DataKey::Initialized,
+        FACTORY_INIT_PERSISTENT_LIFETIME_THRESHOLD,
+        FACTORY_INIT_PERSISTENT_BUMP_AMOUNT,
+    );
+}
+
+/// Return `true` when the factory has been initialized.
+///
+/// Checks the **persistent** `Initialized` flag so that expiry of the
+/// instance entry cannot be exploited to re-run `__constructor`.
+pub fn is_factory_initialized(env: &Env) -> bool {
+    env.storage()
+        .persistent()
+        .has(&DataKey::Initialized)
 }
 
 // ---------------------------------------------------------------------------
