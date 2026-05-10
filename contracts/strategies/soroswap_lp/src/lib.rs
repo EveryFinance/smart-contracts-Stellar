@@ -369,9 +369,13 @@ impl SoroswapLpStrategy {
     /// This correctly accounts for impermanent loss and does **not** require an
     /// oracle for the LP token itself — only for the underlying pair assets.
     ///
-    /// ## Without oracle (fallback)
-    /// Returns raw LP token balance.  Vault NAV will be approximate; wire the
-    /// oracle via `set_oracle(manager, oracle_address)` for a production build.
+    /// ## Without oracle (returns 0)
+    /// Returns 0 when no oracle is configured.  This is intentionally safe:
+    /// the vault's `invest_lp` enforces that an oracle must be set on the
+    /// strategy **before** any liquidity is deposited, so a non-zero LP balance
+    /// without an oracle is not reachable through the vault's normal flow.
+    /// Returning 0 rather than raw LP units prevents NAV inflation from
+    /// non-base-asset-denominated LP share counts.
     pub fn get_value(env: Env, _vault: Address) -> i128 {
         env.storage()
             .instance()
