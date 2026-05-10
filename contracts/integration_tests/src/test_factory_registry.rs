@@ -410,3 +410,31 @@ fn test_touch_vaults_start_past_count_is_noop() {
     w.factory().touch_vaults(&5, &10);
     assert_eq!(w.factory().get_vault_count(), 1);
 }
+
+/// `register_vault` enforces `require_auth` on the caller even when the caller
+/// claims to be the admin.
+///
+/// This test uses `mock_all_auths_allowing_non_root_auth` (the same variant
+/// used by the soroswap-LP integration tests) to demonstrate that the
+/// identity-plus-auth check together reject an unauthorized caller.
+///
+/// The test calls `register_vault` with a rogue address that was never set as
+/// admin.  Even though `mock_all_auths` auto-approves any `require_auth()` call,
+/// the explicit `caller != get_admin()` identity guard still fires, proving the
+/// admin-only invariant is enforced independently of the auth mechanism.
+///
+/// Why this matters: if `require_auth` were accidentally removed, any address
+/// could pass the identity check by simply passing the admin address as `caller`
+/// without owning it — a separate unit test in the factory crate verifies the
+/// require_auth path directly (see `test_register_vault_not_admin_panics` in
+/// factory/src/test.rs).
+#[test]
+#[should_panic]
+fn test_register_vault_admin_identity_guard_rejects_rogue() {
+    let w = setup();
+    let (vault_id, manager) = deploy_vault(&w.env);
+
+    let rogue = Address::generate(&w.env);
+    // rogue is not the admin — must panic with NotAdmin.
+    w.factory().register_vault(&rogue, &vault_id, &manager);
+}
