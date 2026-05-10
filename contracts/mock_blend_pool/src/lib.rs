@@ -10,6 +10,14 @@ const REQUEST_WITHDRAW: u32 = 3;
 const PERSISTENT_BUMP_AMOUNT: u32 = 518_400;
 const PERSISTENT_LIFETIME_THRESHOLD: u32 = 259_200;
 
+/// Ledgers added to the instance TTL on every entry-point call.
+/// 518 400 ledgers ≈ 30 days.
+const INSTANCE_BUMP_AMOUNT: u32 = 518_400;
+
+/// Trigger an instance bump when TTL drops below this threshold.
+/// 259 200 ledgers ≈ 15 days.
+const INSTANCE_LIFETIME_THRESHOLD: u32 = 259_200;
+
 #[contracttype]
 #[derive(Clone)]
 pub struct BlendRequest {
@@ -51,6 +59,9 @@ impl MockBlendPool {
             panic_with_error!(&env, PoolError::NotInitialized);
         }
         admin.require_auth();
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Token, &token);
     }
@@ -69,6 +80,9 @@ impl MockBlendPool {
         // auth model and prevents any third party from draining positions or
         // triggering supplies on behalf of an arbitrary `from`.
         from.require_auth();
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         let token_addr: Address = env
             .storage()
@@ -169,6 +183,9 @@ impl MockBlendPool {
             panic_with_error!(&env, PoolError::InvalidAmount);
         }
         caller.require_auth();
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         let admin: Address = env
             .storage()
             .instance()
