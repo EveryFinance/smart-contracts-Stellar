@@ -1512,11 +1512,16 @@ impl Vault {
     /// [`VaultError::TvlGuardTripped`], preventing the manager from silently
     /// draining TVL through repeated high-slippage operations.
     ///
-    /// Set `0` to disable the guard (default).  A typical production value is
-    /// `100` (1 % per transaction).
+    /// A typical production value is `100` (1 % per transaction).
+    ///
+    /// Setting `0` is rejected because a zero tolerance disables the NAV-loss
+    /// guard entirely, which would allow a manager to execute a damaging
+    /// operation without any on-chain slippage protection.  Use the default
+    /// of [`DEFAULT_MAX_LOSS_BPS`] (1 000 bps = 10 %) or another non-zero value.
     ///
     /// # Errors
     /// * [`VaultError::NotManager`]
+    /// * [`VaultError::InvalidAmount`] — if `bps == 0` or `bps > FEE_DENOMINATOR`
     pub fn set_max_loss_bps(env: Env, caller: Address, bps: u32) {
         env.storage()
             .instance()
@@ -1525,7 +1530,7 @@ impl Vault {
         if caller != get_manager(&env) {
             panic_with_error!(&env, VaultError::NotManager);
         }
-        if bps > FEE_DENOMINATOR {
+        if bps == 0 || bps > FEE_DENOMINATOR {
             panic_with_error!(&env, VaultError::InvalidAmount);
         }
         set_max_loss_bps(&env, bps);

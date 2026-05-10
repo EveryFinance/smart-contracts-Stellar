@@ -1700,17 +1700,26 @@ fn test_tvl_guard_enabled_by_default() {
     t.vault.invest(&t.manager, &sid, &500_0000000i128);
 }
 
-/// Explicitly setting max_loss_bps = 0 disables the guard.
+/// The TVL guard can be raised to a very permissive value (not zero — zero is forbidden).
 #[test]
-fn test_tvl_guard_can_be_disabled_explicitly() {
+fn test_tvl_guard_very_permissive_value() {
     let t = setup();
     let sid = env_register_lossy_strategy(&t, 5_000);
     let strategies: Vec<Address> = vec![&t.env, sid.clone()];
     t.vault.set_strategies(&t.manager, &strategies);
-    t.vault.set_max_loss_bps(&t.manager, &0u32);
+    // Set tolerance to 10_000 bps (100%) — allows any loss short of total wipeout.
+    t.vault.set_max_loss_bps(&t.manager, &10_000u32);
 
     t.vault.deposit(&1_000_0000000i128, &t.user, &0i128);
     t.vault.invest(&t.manager, &sid, &500_0000000i128);
+}
+
+/// Setting max_loss_bps = 0 must be rejected: zero disables the guard entirely.
+#[test]
+#[should_panic]
+fn test_set_max_loss_bps_zero_panics() {
+    let t = setup();
+    t.vault.set_max_loss_bps(&t.manager, &0u32);
 }
 
 /// Guard allows invest when NAV loss is within the configured tolerance.
