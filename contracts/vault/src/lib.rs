@@ -634,6 +634,20 @@ impl Vault {
     /// a manager from silently abandoning active positions, which would cause
     /// NAV understatement and share-price manipulation.
     ///
+    /// ## Trust model
+    /// Adding a strategy to the whitelist is a privileged manager action.  A
+    /// compromised or malicious manager could add an attacker-controlled
+    /// strategy that misreports `get_value` or drains approved tokens.  The
+    /// mitigations in place are:
+    /// * Manager authorisation is required (`caller.require_auth()`).
+    /// * A full event is emitted on every change so off-chain monitoring can
+    ///   detect unexpected additions immediately.
+    /// * The list is bounded (`MAX_STRATEGIES`) and deduplicated.
+    ///
+    /// Full governance (timelock, multisig, factory-registry allowlist) would
+    /// further reduce this risk but is an architectural decision outside the
+    /// scope of the on-chain contracts.
+    ///
     /// # Errors
     /// * [`VaultError::NotManager`]
     /// * [`VaultError::StrategyHasActivePosition`] — if a removed strategy
