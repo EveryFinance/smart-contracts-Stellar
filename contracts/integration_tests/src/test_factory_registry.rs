@@ -56,8 +56,16 @@ fn deploy_vault(env: &Env) -> (Address, Address) {
 
 struct World {
     env: Env,
-    factory: FactoryClient<'static>,
+    factory_id: Address,
     admin: Address,
+}
+
+impl World {
+    /// Construct a `FactoryClient` on demand. The client borrows from `self.env`
+    /// so its lifetime is tied to the `World` reference — no unsafe transmute needed.
+    fn factory(&self) -> FactoryClient<'_> {
+        FactoryClient::new(&self.env, &self.factory_id)
+    }
 }
 
 fn setup() -> World {
@@ -71,12 +79,9 @@ fn setup() -> World {
 
     let admin = Address::generate(&env);
     let factory_id = env.register(Factory, (admin.clone(),));
-    let factory = FactoryClient::new(&env, &factory_id);
-
-    let factory: FactoryClient<'static> = unsafe { core::mem::transmute(factory) };
     World {
         env,
-        factory,
+        factory_id,
         admin,
     }
 }
@@ -89,9 +94,9 @@ fn setup() -> World {
 #[test]
 fn test_factory_initializes_empty() {
     let w = setup();
-    assert_eq!(w.factory.get_vault_count(), 0);
-    assert_eq!(w.factory.get_admin(), w.admin);
-    let page = w.factory.get_vaults(&0, &10);
+    assert_eq!(w.factory().get_vault_count(), 0);
+    assert_eq!(w.factory().get_admin(), w.admin);
+    let page = w.factory().get_vaults(&0, &10);
     assert_eq!(page.len(), 0);
 }
 
@@ -101,10 +106,10 @@ fn test_register_single_vault() {
     let w = setup();
     let (vault_id, manager) = deploy_vault(&w.env);
 
-    w.factory.register_vault(&w.admin, &vault_id, &manager);
+    w.factory().register_vault(&w.admin, &vault_id, &manager);
 
-    assert_eq!(w.factory.get_vault_count(), 1);
-    assert!(w.factory.is_registered(&vault_id));
+    assert_eq!(w.factory().get_vault_count(), 1);
+    assert!(w.factory().is_registered(&vault_id));
 }
 
 /// Registering three vaults accumulates count correctly.
@@ -114,10 +119,10 @@ fn test_register_multiple_vaults_count() {
 
     for _ in 0..3u32 {
         let (vault_id, manager) = deploy_vault(&w.env);
-        w.factory.register_vault(&w.admin, &vault_id, &manager);
+        w.factory().register_vault(&w.admin, &vault_id, &manager);
     }
 
-    assert_eq!(w.factory.get_vault_count(), 3);
+    assert_eq!(w.factory().get_vault_count(), 3);
 }
 
 /// is_registered returns false for an address never registered.
@@ -125,7 +130,7 @@ fn test_register_multiple_vaults_count() {
 fn test_is_registered_unknown_vault_false() {
     let w = setup();
     let random = Address::generate(&w.env);
-    assert!(!w.factory.is_registered(&random));
+    assert!(!w.factory().is_registered(&random));
 }
 
 /// Removing a registered vault decrements the count and is_registered → false.
@@ -135,15 +140,15 @@ fn test_remove_vault_decrements_count() {
     let (v1, m1) = deploy_vault(&w.env);
     let (v2, m2) = deploy_vault(&w.env);
 
-    w.factory.register_vault(&w.admin, &v1, &m1);
-    w.factory.register_vault(&w.admin, &v2, &m2);
-    assert_eq!(w.factory.get_vault_count(), 2);
+    w.factory().register_vault(&w.admin, &v1, &m1);
+    w.factory().register_vault(&w.admin, &v2, &m2);
+    assert_eq!(w.factory().get_vault_count(), 2);
 
-    w.factory.remove_vault(&w.admin, &v1);
+    w.factory().remove_vault(&w.admin, &v1);
 
-    assert_eq!(w.factory.get_vault_count(), 1);
-    assert!(!w.factory.is_registered(&v1));
-    assert!(w.factory.is_registered(&v2));
+    assert_eq!(w.factory().get_vault_count(), 1);
+    assert!(!w.factory().is_registered(&v1));
+    assert!(w.factory().is_registered(&v2));
 }
 
 /// Removing a vault not in the registry panics with VaultNotFound.
@@ -152,7 +157,7 @@ fn test_remove_vault_decrements_count() {
 fn test_remove_nonexistent_vault_panics() {
     let w = setup();
     let random = Address::generate(&w.env);
-    w.factory.remove_vault(&w.admin, &random);
+    w.factory().remove_vault(&w.admin, &random);
 }
 
 /// Non-admin cannot register a vault.
@@ -162,7 +167,7 @@ fn test_register_vault_non_admin_panics() {
     let w = setup();
     let (vault_id, manager) = deploy_vault(&w.env);
     let rogue = Address::generate(&w.env);
-    w.factory.register_vault(&rogue, &vault_id, &manager);
+    w.factory().register_vault(&rogue, &vault_id, &manager);
 }
 
 /// Non-admin cannot remove a vault.
@@ -171,10 +176,10 @@ fn test_register_vault_non_admin_panics() {
 fn test_remove_vault_non_admin_panics() {
     let w = setup();
     let (vault_id, manager) = deploy_vault(&w.env);
-    w.factory.register_vault(&w.admin, &vault_id, &manager);
+    w.factory().register_vault(&w.admin, &vault_id, &manager);
 
     let rogue = Address::generate(&w.env);
-    w.factory.remove_vault(&rogue, &vault_id);
+    w.factory().remove_vault(&rogue, &vault_id);
 }
 
 /// Paginated get_vaults returns correct slice (offset=0, limit=2 of 4).
@@ -187,12 +192,12 @@ fn test_get_vaults_pagination_first_page() {
     let (v2, m2) = deploy_vault(&w.env);
     let (v3, m3) = deploy_vault(&w.env);
 
-    w.factory.register_vault(&w.admin, &v0, &m0);
-    w.factory.register_vault(&w.admin, &v1, &m1);
-    w.factory.register_vault(&w.admin, &v2, &m2);
-    w.factory.register_vault(&w.admin, &v3, &m3);
+    w.factory().register_vault(&w.admin, &v0, &m0);
+    w.factory().register_vault(&w.admin, &v1, &m1);
+    w.factory().register_vault(&w.admin, &v2, &m2);
+    w.factory().register_vault(&w.admin, &v3, &m3);
 
-    let page = w.factory.get_vaults(&0, &2);
+    let page = w.factory().get_vaults(&0, &2);
     assert_eq!(page.len(), 2);
     assert_eq!(page.get(0).unwrap(), v0);
     assert_eq!(page.get(1).unwrap(), v1);
@@ -208,12 +213,12 @@ fn test_get_vaults_pagination_second_page() {
     let (v2, m2) = deploy_vault(&w.env);
     let (v3, m3) = deploy_vault(&w.env);
 
-    w.factory.register_vault(&w.admin, &v0, &m0);
-    w.factory.register_vault(&w.admin, &v1, &m1);
-    w.factory.register_vault(&w.admin, &v2, &m2);
-    w.factory.register_vault(&w.admin, &v3, &m3);
+    w.factory().register_vault(&w.admin, &v0, &m0);
+    w.factory().register_vault(&w.admin, &v1, &m1);
+    w.factory().register_vault(&w.admin, &v2, &m2);
+    w.factory().register_vault(&w.admin, &v3, &m3);
 
-    let page = w.factory.get_vaults(&2, &2);
+    let page = w.factory().get_vaults(&2, &2);
     assert_eq!(page.len(), 2);
     assert_eq!(page.get(0).unwrap(), v2);
     assert_eq!(page.get(1).unwrap(), v3);
@@ -224,9 +229,9 @@ fn test_get_vaults_pagination_second_page() {
 fn test_get_vaults_offset_past_end_returns_empty() {
     let w = setup();
     let (v, m) = deploy_vault(&w.env);
-    w.factory.register_vault(&w.admin, &v, &m);
+    w.factory().register_vault(&w.admin, &v, &m);
 
-    let page = w.factory.get_vaults(&10, &5);
+    let page = w.factory().get_vaults(&10, &5);
     assert_eq!(page.len(), 0);
 }
 
@@ -238,10 +243,10 @@ fn test_get_vaults_limit_capped_at_50() {
     // Register 55 vaults.
     for _ in 0..55u32 {
         let (v, m) = deploy_vault(&w.env);
-        w.factory.register_vault(&w.admin, &v, &m);
+        w.factory().register_vault(&w.admin, &v, &m);
     }
 
-    let page = w.factory.get_vaults(&0, &100); // ask for 100, cap is 50
+    let page = w.factory().get_vaults(&0, &100); // ask for 100, cap is 50
     assert_eq!(page.len(), 50);
 }
 
@@ -251,14 +256,14 @@ fn test_admin_transfer_changes_effective_admin() {
     let w = setup();
     let new_admin = Address::generate(&w.env);
 
-    w.factory.set_pending_admin(&w.admin, &new_admin);
-    w.factory.accept_admin(&new_admin);
-    assert_eq!(w.factory.get_admin(), new_admin);
+    w.factory().set_pending_admin(&w.admin, &new_admin);
+    w.factory().accept_admin(&new_admin);
+    assert_eq!(w.factory().get_admin(), new_admin);
 
     // New admin can register.
     let (v, m) = deploy_vault(&w.env);
-    w.factory.register_vault(&new_admin, &v, &m);
-    assert!(w.factory.is_registered(&v));
+    w.factory().register_vault(&new_admin, &v, &m);
+    assert!(w.factory().is_registered(&v));
 }
 
 /// Old admin cannot act after transfer completes.
@@ -268,12 +273,12 @@ fn test_old_admin_cannot_act_after_transfer() {
     let w = setup();
     let new_admin = Address::generate(&w.env);
 
-    w.factory.set_pending_admin(&w.admin, &new_admin);
-    w.factory.accept_admin(&new_admin);
+    w.factory().set_pending_admin(&w.admin, &new_admin);
+    w.factory().accept_admin(&new_admin);
 
     // Old admin tries to register — NotAdmin.
     let (v, m) = deploy_vault(&w.env);
-    w.factory.register_vault(&w.admin, &v, &m);
+    w.factory().register_vault(&w.admin, &v, &m);
 }
 
 /// Non-admin cannot call set_pending_admin.
@@ -283,7 +288,7 @@ fn test_set_admin_non_admin_panics() {
     let w = setup();
     let rogue = Address::generate(&w.env);
     let new_admin = Address::generate(&w.env);
-    w.factory.set_pending_admin(&rogue, &new_admin);
+    w.factory().set_pending_admin(&rogue, &new_admin);
 }
 
 /// Register → remove → re-register same vault works.
@@ -292,16 +297,16 @@ fn test_reregister_after_remove() {
     let w = setup();
     let (vault_id, manager) = deploy_vault(&w.env);
 
-    w.factory.register_vault(&w.admin, &vault_id, &manager);
-    assert_eq!(w.factory.get_vault_count(), 1);
+    w.factory().register_vault(&w.admin, &vault_id, &manager);
+    assert_eq!(w.factory().get_vault_count(), 1);
 
-    w.factory.remove_vault(&w.admin, &vault_id);
-    assert_eq!(w.factory.get_vault_count(), 0);
-    assert!(!w.factory.is_registered(&vault_id));
+    w.factory().remove_vault(&w.admin, &vault_id);
+    assert_eq!(w.factory().get_vault_count(), 0);
+    assert!(!w.factory().is_registered(&vault_id));
 
-    w.factory.register_vault(&w.admin, &vault_id, &manager);
-    assert_eq!(w.factory.get_vault_count(), 1);
-    assert!(w.factory.is_registered(&vault_id));
+    w.factory().register_vault(&w.admin, &vault_id, &manager);
+    assert_eq!(w.factory().get_vault_count(), 1);
+    assert!(w.factory().is_registered(&vault_id));
 }
 
 /// Removing middle element preserves order of remaining vaults.
@@ -312,14 +317,14 @@ fn test_remove_middle_vault_preserves_order() {
     let (v2, m2) = deploy_vault(&w.env);
     let (v3, m3) = deploy_vault(&w.env);
 
-    w.factory.register_vault(&w.admin, &v1, &m1);
-    w.factory.register_vault(&w.admin, &v2, &m2);
-    w.factory.register_vault(&w.admin, &v3, &m3);
+    w.factory().register_vault(&w.admin, &v1, &m1);
+    w.factory().register_vault(&w.admin, &v2, &m2);
+    w.factory().register_vault(&w.admin, &v3, &m3);
 
     // Remove the middle one.
-    w.factory.remove_vault(&w.admin, &v2);
+    w.factory().remove_vault(&w.admin, &v2);
 
-    let page = w.factory.get_vaults(&0, &10);
+    let page = w.factory().get_vaults(&0, &10);
     assert_eq!(page.len(), 2);
     assert_eq!(page.get(0).unwrap(), v1);
     assert_eq!(page.get(1).unwrap(), v3);
@@ -332,10 +337,10 @@ fn test_count_consistent_with_paginated_total() {
 
     for _ in 0..7u32 {
         let (v, m) = deploy_vault(&w.env);
-        w.factory.register_vault(&w.admin, &v, &m);
+        w.factory().register_vault(&w.admin, &v, &m);
     }
 
-    let count = w.factory.get_vault_count();
-    let page = w.factory.get_vaults(&0, &50);
+    let count = w.factory().get_vault_count();
+    let page = w.factory().get_vaults(&0, &50);
     assert_eq!(count, page.len());
 }
