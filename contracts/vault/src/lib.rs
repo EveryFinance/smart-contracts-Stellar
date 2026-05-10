@@ -677,6 +677,21 @@ impl Vault {
                 if value != 0 {
                     panic_with_error!(&env, VaultError::StrategyHasActivePosition);
                 }
+                // For LP strategies, also check the raw share balance.
+                // `get_value` can return 0 even when shares exist (e.g. pool
+                // reserves are temporarily zero or oracle is not configured).
+                // Allowing removal with non-zero shares would silently abandon
+                // an active LP position, causing NAV understatement.
+                if is_lp_strategy(&env, &s) {
+                    let share_bal: i128 = env.invoke_contract(
+                        &s,
+                        &Symbol::new(&env, "get_share_balance"),
+                        ().into_val(&env),
+                    );
+                    if share_bal != 0 {
+                        panic_with_error!(&env, VaultError::StrategyHasActivePosition);
+                    }
+                }
             }
         }
 

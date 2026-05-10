@@ -340,6 +340,17 @@ impl SoroswapLpStrategy {
         get_lp_balance(&env)
     }
 
+    /// Return the raw LP share balance held by this strategy.
+    ///
+    /// Used by the vault's `set_strategies` removal guard to detect active LP
+    /// positions even when `get_value` returns 0 (e.g. pool reserves temporarily zero).
+    pub fn get_share_balance(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        get_lp_balance(&env)
+    }
+
     /// Return the base-asset value of this strategy's LP position.
     ///
     /// ## With oracle configured (production path — dHedge V2 §3)
