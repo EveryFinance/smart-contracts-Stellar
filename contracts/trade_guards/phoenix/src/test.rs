@@ -353,3 +353,24 @@ fn test_validate_same_token_both_sides() {
     t.guard
         .validate_swap(&t.vault, &1_000i128, &900i128, &ops);
 }
+
+// ---------------------------------------------------------------------------
+// Hop-continuity enforcement (M4)
+// ---------------------------------------------------------------------------
+
+/// Non-contiguous hops must be rejected: operations[0].ask_asset ≠ operations[1].offer_asset
+/// allows a crafted path that passes whitelist checks but routes through a different asset.
+#[test]
+#[should_panic]
+fn test_non_contiguous_hops_rejected() {
+    let t = setup();
+    // operations[0]: A → B
+    // operations[1]: C → A  ← gap: B ≠ C
+    let ops = vec![
+        &t.env,
+        op(&t.env, &t.token_a, &t.token_b),
+        op(&t.env, &t.token_c, &t.token_a), // offer_asset=C != prev ask_asset=B
+    ];
+    t.guard
+        .validate_swap(&t.vault, &1_000i128, &900i128, &ops);
+}

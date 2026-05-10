@@ -170,6 +170,17 @@ impl PhoenixTradeGuard {
             panic_with_error!(&env, PhoenixGuardError::OperationsTooMany);
         }
 
+        // Enforce hop continuity: each hop's output must be the next hop's input.
+        // Without this check a crafted operations list could pass whitelist checks
+        // but compute slippage against a different effective path.
+        for i in 1..n {
+            let prev = operations.get(i - 1).unwrap();
+            let curr = operations.get(i).unwrap();
+            if prev.ask_asset != curr.offer_asset {
+                panic_with_error!(&env, PhoenixGuardError::NonContiguousHops);
+            }
+        }
+
         let whitelist = get_whitelist(&env);
         for op in operations.iter() {
             Self::assert_whitelisted(&op.offer_asset, &whitelist, &env);

@@ -40,4 +40,9 @@ pub enum PhoenixGuardError {
     /// The `operations` list contains more than
     /// [`MAX_OPERATIONS`](crate::storage::MAX_OPERATIONS) hops.
     OperationsTooMany = 9,
+
+    /// Adjacent swap operations are not contiguous: `operations[i].ask_asset ≠
+    /// operations[i+1].offer_asset`.  A non-contiguous path could pass token
+    /// whitelist checks while routing through a different (unvalidated) asset.
+    NonContiguousHops = 10,
 }
