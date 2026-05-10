@@ -94,6 +94,24 @@ impl<'a> PairAdapter<'a> {
         self.env
             .invoke_contract(self.pair, &Symbol::new(self.env, "total_supply"), args)
     }
+
+    /// Return the pair's internal token0 (the token with the smaller address).
+    ///
+    /// Soroswap pairs order tokens by address internally; `get_reserves()` returns
+    /// `(reserve_token0, reserve_token1)`.  Calling `token0()` lets the strategy
+    /// map reserves to the correct asset regardless of the pair's internal order.
+    pub fn token0(&self) -> Address {
+        let args = ().into_val(self.env);
+        self.env
+            .invoke_contract(self.pair, &Symbol::new(self.env, "token0"), args)
+    }
+
+    /// Return the pair's internal token1 (the token with the larger address).
+    pub fn token1(&self) -> Address {
+        let args = ().into_val(self.env);
+        self.env
+            .invoke_contract(self.pair, &Symbol::new(self.env, "token1"), args)
+    }
 }
 
 /// Adapter for oracle calls.

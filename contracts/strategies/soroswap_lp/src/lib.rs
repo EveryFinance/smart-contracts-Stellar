@@ -390,13 +390,24 @@ impl SoroswapLpStrategy {
 
         // Pool reserves and total LP supply from the Soroswap pair contract.
         let pair = PairAdapter::new(&env, &lp_token);
-        let (reserve_a, reserve_b) = pair.get_reserves();
+        let (reserve_0, reserve_1) = pair.get_reserves();
         let total_lp = pair.total_supply();
 
-        if total_lp == 0 || (reserve_a == 0 && reserve_b == 0) {
+        if total_lp == 0 || (reserve_0 == 0 && reserve_1 == 0) {
             // Cannot compute reserve decomposition — treat as zero NAV contribution.
             return 0;
         }
+
+        // Soroswap pairs order tokens by address internally (token0 < token1).
+        // get_reserves() returns (reserve_token0, reserve_token1).  We must map
+        // reserves to our asset_a / asset_b labels using the pair's token0 to
+        // avoid applying the wrong price to the wrong reserve.
+        let token0 = pair.token0();
+        let (reserve_a, reserve_b) = if token0 == asset_a {
+            (reserve_0, reserve_1)
+        } else {
+            (reserve_1, reserve_0)
+        };
 
         // Oracle prices (PRICE_PRECISION-scaled) for each underlying asset.
         let oracle_client = OracleAdapter::new(&env, &oracle);

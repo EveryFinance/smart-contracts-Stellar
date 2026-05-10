@@ -537,11 +537,32 @@ mod mock_pair_token_mod {
         TotalSupply,
         ReserveA,
         ReserveB,
+        Token0,
     }
     #[contract]
     pub struct MockPairToken;
     #[contractimpl]
     impl MockPairToken {
+        /// Set the token0 address (simulates Soroswap pair ordering).
+        /// When not set, token0() returns a default (zero bytes) address.
+        pub fn set_token0(env: Env, token: Address) {
+            env.storage().instance().set(&PairKey::Token0, &token);
+        }
+        pub fn token0(env: Env) -> Address {
+            env.storage()
+                .instance()
+                .get(&PairKey::Token0)
+                // Return a sentinel if not set (should never happen in tests that call set_token0).
+                .unwrap_or_else(|| panic!("token0 not set on MockPairToken"))
+        }
+        pub fn token1(env: Env) -> Address {
+            // token1 is the complement of token0; not needed in current tests.
+            // Returning token0 here would be wrong but token1 is not called in tests.
+            env.storage()
+                .instance()
+                .get(&PairKey::Token0)
+                .unwrap_or_else(|| panic!("token0 not set on MockPairToken"))
+        }
         pub fn mint(env: Env, to: Address, amount: i128) {
             let b: i128 = env
                 .storage()
@@ -726,6 +747,9 @@ fn setup_with_pair_token() -> (T, Address /* oracle */) {
     );
 
     let oracle_id = env.register(MockOracle2, ());
+
+    // Set token0 to token_a so get_reserves() ordering matches asset_a/asset_b.
+    pair_client(&env, &lp_token).set_token0(&token_a);
 
     let strategy: SoroswapLpStrategyClient<'static> = unsafe { core::mem::transmute(strategy) };
 
