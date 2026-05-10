@@ -40,7 +40,7 @@ use soroban_sdk::{
 
 use storage::{
     get_asset, get_manager, get_name, get_paused, get_protocol, get_vault, is_initialized,
-    set_asset, set_manager, set_name, set_paused, set_protocol, set_vault,
+    set_asset, set_initialized, set_manager, set_name, set_paused, set_protocol, set_vault,
     INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
 };
 
@@ -172,6 +172,9 @@ impl BlendStrategy {
         set_manager(&env, &manager);
         set_name(&env, &name);
         set_paused(&env, false);
+        // Mark as initialized in persistent storage — survives instance TTL expiry
+        // and prevents re-initialization after the instance entry expires.
+        set_initialized(&env);
     }
 
     // -----------------------------------------------------------------------

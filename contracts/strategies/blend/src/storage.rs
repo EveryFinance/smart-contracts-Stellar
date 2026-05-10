@@ -14,6 +14,13 @@ pub const INSTANCE_BUMP_AMOUNT: u32 = 518_400;
 /// 259 200 ledgers ≈ 15 days.
 pub const INSTANCE_LIFETIME_THRESHOLD: u32 = 259_200;
 
+/// Bump amount for the persistent initialized flag.
+/// u32::MAX ≈ 248 000 years — effectively permanent.
+pub const PERSISTENT_BUMP_AMOUNT: u32 = u32::MAX;
+
+/// Trigger a persistent bump when TTL drops below this threshold.
+pub const PERSISTENT_LIFETIME_THRESHOLD: u32 = u32::MAX / 2;
+
 // ---------------------------------------------------------------------------
 // Storage key enum
 // ---------------------------------------------------------------------------
@@ -38,6 +45,13 @@ pub enum DataKey {
     Name,
     /// Whether the strategy is currently paused.
     Paused,
+    /// Persistent initialization flag.
+    ///
+    /// Stored in **persistent** storage (not instance) so it survives instance
+    /// TTL expiry.  If only the instance storage `Vault` key were used as the
+    /// guard, an attacker could wait for the instance to expire and re-call
+    /// `initialize` with a malicious vault, effectively taking over the strategy.
+    Initialized,
 }
 
 // ---------------------------------------------------------------------------
@@ -52,9 +66,30 @@ fn bump(env: &Env) {
 
 // ---- initialization guard --------------------------------------------------
 
+/// Persist the initialization flag in **persistent** storage.
+///
+/// Persistent storage survives instance-entry TTL expiry, which prevents an
+/// attacker from re-initializing the strategy after the instance expires.
+pub fn set_initialized(env: &Env) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::Initialized, &true);
+    env.storage().persistent().extend_ttl(
+        &DataKey::Initialized,
+        PERSISTENT_LIFETIME_THRESHOLD,
+        PERSISTENT_BUMP_AMOUNT,
+    );
+}
+
 /// Return `true` when the contract has been initialized.
+///
+/// Checks the **persistent** `Initialized` flag rather than the instance-storage
+/// `Vault` key so that expiry of the instance entry cannot be exploited to
+/// re-run `initialize`.
 pub fn is_initialized(env: &Env) -> bool {
-    env.storage().instance().has(&DataKey::Vault)
+    env.storage()
+        .persistent()
+        .has(&DataKey::Initialized)
 }
 
 // ---- vault -----------------------------------------------------------------
