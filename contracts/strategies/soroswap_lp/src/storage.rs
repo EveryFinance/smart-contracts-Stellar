@@ -51,7 +51,13 @@ pub enum DataKey {
     LpToken,
     /// Soroswap router contract used to add and remove liquidity.
     Router,
-    /// Manager account allowed to pause / unpause and configure the oracle.
+    /// Manager address captured at initialization only.
+    ///
+    /// This address is stored solely to satisfy the `manager.require_auth()`
+    /// call during `initialize` (front-running prevention).  It is **not**
+    /// consulted by post-initialization admin operations (`pause`, `unpause`,
+    /// `set_oracle`), which instead derive authority from `vault.get_manager()`
+    /// on-chain at call time.
     Manager,
     /// Human-readable name for this strategy instance (e.g. "Soroswap USDC/XLM LP").
     Name,

@@ -60,13 +60,18 @@ impl PhoenixLpStrategy {
     /// * `asset_a`      – First token in the pair.
     /// * `asset_b`      – Second token in the pair.
     /// * `phoenix_pool` – Phoenix pool contract address.
-    /// * `manager`      – Account allowed to pause / unpause.
+    /// * `manager`      – Address required **at initialization only** to prevent
+    ///                    front-running.  All post-initialization admin operations
+    ///                    (`pause`, `unpause`, `set_oracle`) are authorized by the
+    ///                    vault's live on-chain manager, not this stored address.
     /// * `name`         – Human-readable strategy name.
     ///
     /// # Auth
     /// Both the vault's current on-chain manager and the designated strategy
-    /// `manager` must authorise this call (see Blend strategy doc for the
-    /// front-running rationale).
+    /// `manager` must authorise this call.  The `manager` parameter is required
+    /// at initialization only to prevent front-running; after initialization the
+    /// vault's live on-chain manager (from `vault.get_manager()`) controls all
+    /// admin operations on this strategy.
     ///
     /// # Errors
     /// * [`PhoenixLpError::AlreadyInitialized`]
@@ -417,7 +422,9 @@ impl PhoenixLpStrategy {
     // Oracle configuration
     // -----------------------------------------------------------------------
 
-    /// Set the oracle used for reserve-decomposition NAV. Vault manager only.
+    /// Set the oracle used for reserve-decomposition NAV.
+    ///
+    /// **Vault manager only** — authorized via `vault.get_manager()` on-chain.
     pub fn set_oracle(env: Env, caller: Address, oracle: Address) {
         env.storage()
             .instance()
@@ -439,7 +446,9 @@ impl PhoenixLpStrategy {
     // Emergency controls
     // -----------------------------------------------------------------------
 
-    /// Pause the strategy. Vault manager only.
+    /// Pause the strategy.
+    ///
+    /// **Vault manager only** — authorized via `vault.get_manager()` on-chain.
     pub fn pause(env: Env, caller: Address) {
         env.storage()
             .instance()
@@ -457,7 +466,9 @@ impl PhoenixLpStrategy {
         set_paused(&env, true);
     }
 
-    /// Unpause the strategy. Vault manager only.
+    /// Unpause the strategy.
+    ///
+    /// **Vault manager only** — authorized via `vault.get_manager()` on-chain.
     pub fn unpause(env: Env, caller: Address) {
         env.storage()
             .instance()

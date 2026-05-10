@@ -51,7 +51,13 @@ pub enum DataKey {
     ShareToken,
     /// Phoenix pool contract used for `provide_liquidity` / `withdraw_liquidity`.
     PhoenixPool,
-    /// Manager account allowed to pause / unpause the strategy.
+    /// Manager address captured at initialization only.
+    ///
+    /// This address is stored solely to satisfy the `manager.require_auth()`
+    /// call during `initialize` (front-running prevention).  It is **not**
+    /// consulted by post-initialization admin operations (`pause`, `unpause`,
+    /// `set_oracle`), which instead derive authority from `vault.get_manager()`
+    /// on-chain at call time.
     Manager,
     /// Human-readable name for this strategy instance.
     Name,
