@@ -1,15 +1,16 @@
 [workspace]
 members = [
+    "contracts/asset_handler",
     "contracts/factory",
     "contracts/vault",
     "contracts/share_token",
     "contracts/oracle",
+    "contracts/oracle_adapters/reflector",
+    "contracts/oracle_adapters/dia",
     "contracts/strategies/blend",
     "contracts/strategies/soroswap_lp",
     "contracts/strategies/phoenix_lp",
-    "contracts/trade_guards/soroswap",
-    "contracts/trade_guards/phoenix",
-    "contracts/integration_tests",
+"contracts/integration_tests",
     "contracts/mock_blend_pool",
 ]
 resolver = "2"

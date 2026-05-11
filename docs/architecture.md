@@ -7,78 +7,159 @@ The protocol is a modular, non-custodial fund management system built on Soroban
 Core design:
 - `vault` is the central accounting and policy engine.
 - `share_token` represents depositor ownership as SEP-41 fungible shares.
-- `strategies` hold and manage external protocol positions.
-- `trade_guards` enforce pre-trade policy constraints.
-- `oracle` provides asset pricing for NAV conversion.
+- `strategies` hold and manage external protocol positions and implement the guard interface.
+- `asset_handler` is the asset registry and three-tier price oracle.
+- `oracle_adapters/reflector` and `oracle_adapters/dia` adapt on-chain oracle networks.
+- `oracle` is a dev/test mock — not for production.
 - `factory` is a registry for deployed vaults.
 
 ## Contract Topology
 
+```
+Users ──────────────────────────────→ vault
+                                       │
+                              ┌────────┴────────┐
+                              │                 │
+                         share_token      strategies (guards)
+                         (mint/burn)      ├─ soroswap_lp
+                                          ├─ phoenix_lp
+                                          └─ blend
+                                               │
+                                               ↓
+                                         external protocols
+                                         (Soroswap, Phoenix, Blend)
+
+vault ──── asset_handler ──── ReflectorAdapter → Reflector network
+                         └─── DIAAdapter        → DIA network
+```
+
 - Users deposit and withdraw through `vault`.
 - `vault` mints/burns `share_token` shares.
-- `vault` allocates capital to strategies via `invest*` and receives funds via `unwind*`.
-- `vault` optionally calls `oracle` during NAV calculation.
-- `vault` calls `trade_guard` contracts before trade execution.
-- `factory` tracks known vaults and supports verified registration.
+- `vault` dispatches manager/trader operations to strategy contracts via `execute_op`.
+- Strategies implement both the guard interface (NAV, withdrawal) and trader-callable operations.
+- `asset_handler` prices assets using a three-tier oracle: per-asset override → Reflector → DIA.
+- `factory` tracks known vaults.
 
 ## Roles
 
-- `manager`: strategy operations, parameter updates, pause/unpause, oracle/guard wiring.
-- `trader`: spot trade execution through `vault.execute_trade`.
-- `oracle admin`: controls oracle admin, max age, and prices.
-- `factory admin`: controls registry admin actions.
+### Vault Admin
 
-Recommended production policy:
-- separate all four roles.
-- use multisig/timelock for `manager`, `oracle admin`, and `factory admin`.
+Controls emergency and access settings. Set at construction time. Cannot be changed without a two-step transfer.
 
-Private-pool mode:
-- when enabled on vault, only manager and allowlisted members can deposit.
+| Action | Description |
+|---|---|
+| `pause_deposits` / `unpause_deposits` | Block/unblock user deposits and withdrawals |
+| `pause_operations` / `unpause_operations` | Block/unblock manager execute_op calls |
+| `set_private_pool` | Toggle member-only deposit mode |
+| `add_member` / `remove_member` | Manage allowlist for private-pool deposits |
+| `set_pending_admin` / `accept_admin` | Two-step admin transfer |
+
+### Vault Manager
+
+Controls vault-level configuration. Assigned by admin.
+
+| Action | Constraint |
+|---|---|
+| `add_portfolio_asset(asset)` | `asset ∈ factory.AuthorizedAssets` |
+| `add_deposit_asset(asset)` | `asset ∈ PortfolioAssets` |
+| `add_active_guard(guard)` | `guard ∈ factory.AuthorizedGuards` |
+| `set_authorized_ops(guard, ops)` | Restrict trader per guard |
+| `set_oracle(oracle)` | Must price all portfolio assets |
+| Fee configuration | Within protocol caps; increases via announce→commit timelock |
+
+### Vault Trader
+
+Executes trades through guard contracts via `vault.execute_op(caller, guard, fn_name, args)`.
+
+- `fn_name` must be in `AuthorizedOps(guard)` — manager whitelists which functions are permitted per guard.
+- The vault **injects its own address** as the first argument — the trader cannot substitute a different source.
+- Operations are blocked when `OpsPaused` is set by admin.
+
+**DEX strategy functions:** `swap`, `add_liquidity`, `remove_liquidity`  
+**Lending strategy functions:** `supply`, `withdraw_from_lending`
+
+## Strategy = Guard
+
+Each strategy contract serves a dual role:
+1. **Guard interface** — called by vault for NAV computation and proportional withdrawal:
+   - `get_total_value(vault) -> i128`
+   - `withdraw_fraction(vault, numerator, denominator, to)`
+   - `asset_in_use(vault, asset) -> bool`
+2. **Trader-callable operations** — called via `vault.execute_op` after authorization checks.
+
+There are no separate "trade guard" contracts. All validation lives inside the strategy's operation functions.
+
+## Asset Governance — Three-Tier Model
+
+```
+factory.AuthorizedAssets  ⊇  vault.PortfolioAssets  ⊇  vault.DepositAssets
+```
+
+- `DepositAssets ⊆ PortfolioAssets` — enforced on `add_deposit_asset`
+- `PortfolioAssets ⊆ factory.AuthorizedAssets` — enforced on `add_portfolio_asset`
+- Cannot remove from `PortfolioAssets` if a guard has `asset_in_use(vault, asset) == true`
+- Cannot remove from `PortfolioAssets` if `token_balance(vault, asset) > 0`
+
+## Oracle Architecture
+
+`AssetHandler` resolves prices with a three-tier cascade:
+
+```
+Tier 1: Per-asset oracle override  → invoke_contract (hard fail)
+Tier 2: Primary oracle (Reflector) → try_invoke_contract (graceful fallback)
+Tier 3: Fallback oracle (DIA)      → invoke_contract (hard fail)
+```
+
+- **ReflectorAdapter** (`contracts/oracle_adapters/reflector`) — wraps Reflector's `lastprice()`, normalizes 8-decimal prices to PRICE_PRECISION (7).
+- **DIAAdapter** (`contracts/oracle_adapters/dia`) — wraps DIA's `read_oracle_value()`, maps `Address → "PAIR/USD"` key, normalizes 8-decimal prices.
+- **Oracle** (`contracts/oracle`) — dev/test mock only; do not deploy in production.
+
+## NAV Formula
+
+```
+NAV = Σ oracle.get_price(asset) × token_balance(vault, asset)   for asset ∈ PortfolioAssets
+    + Σ guard.get_total_value(vault)                             for guard ∈ ActiveGuards
+```
+
+Share price: `share_price = NAV × PRICE_PRECISION / total_supply`
 
 ## Accounting Model
 
 ### Shares
 
 - Deposits mint shares proportional to NAV/share.
-- Withdrawals burn shares and return proportional base-asset value.
-- Entry fee is charged in shares (minted to manager).
-- Exit fee stays in vault (benefits remaining LPs).
+- Withdrawals burn shares and return proportional value from all assets and positions.
+- Entry fee is charged in shares (minted to treasury).
+- Exit fee fraction remains in vault (benefits remaining LPs).
 
-### NAV
+### Inflation Attack Prevention
 
-Vault NAV is computed as:
-- vault base-asset cash,
-- plus strategy values,
-- converted to base units where needed via oracle price tokens.
-
-For LP strategies:
-- valuation is handled inside strategy contracts,
-- vault enforces oracle presence for LP valuation safety.
+Factory `create_vault()` atomically seeds the vault, ensuring `total_supply > 0` from day one and eliminating the first-depositor share-price attack.
 
 ## Fee Architecture
 
-- Entry fee cap: 500 bps.
-- Exit fee cap: 500 bps.
-- Management fee cap: 300 bps annualized.
-- Performance fee cap: 3000 bps.
-
-Vault accrues fees before deposit and withdrawal flows.
+| Fee | Cap | Accrual |
+|-----|-----|---------|
+| Entry fee | 500 bps | On deposit — shares minted to treasury |
+| Exit fee | 500 bps | On withdrawal — fraction stays in vault |
+| Management fee | 300 bps annualized | Streamed continuously; settled as shares to treasury |
+| Performance fee | 3 000 bps | On NAV-per-share exceeding high-water mark |
 
 Fee-increase hardening:
-- direct fee setters are decrease-only for safety,
-- increases use `announce_fee_increase` and delayed `commit_fee_increase`.
+- Direct setters are decrease-only.
+- Increases use `announce_fee_increase` → 86 400 s delay → `commit_fee_increase`.
 
 ## Risk and Control Layers
 
-1. Auth checks (`require_auth`, role equality checks).
-2. Strategy whitelist checks.
-3. Trade guard checks for path/whitelist/slippage.
-4. Concentration controls (`max_concentration_bps`).
-5. TVL/NAV loss guard (`max_loss_bps`) around manager/trader operations.
-6. Oracle freshness checks (`max_age_ledgers`) at read time.
-7. Exit cooldown to reduce atomic deposit/withdraw extraction risk.
-8. Same-ledger operation/value checkpoint guard (`set_value_guard_enabled`).
+1. Auth checks (`require_auth` + role identity checks).
+2. Strategy whitelist (`guard ∈ ActiveGuards`).
+3. Operation whitelist (`fn_name ∈ AuthorizedOps(guard)`).
+4. TVL/NAV loss guard (`max_loss_bps`) around every `execute_op`.
+5. Deposit cap (`deposit_cap`) on total NAV.
+6. Exit cooldown to reduce atomic deposit/withdraw extraction risk.
+7. Same-ledger operation/value checkpoint guard (`set_value_guard_enabled`).
+8. Admin-controlled pause splits: `pause_deposits` (user flows) / `pause_operations` (manager ops).
 
 ## Data Lifetime / TTL
 
-Contracts use instance/persistent TTL bumping patterns to avoid data archiving during normal operation. TTL constants are defined per contract storage module.
+Contracts use instance/persistent TTL bumping on every entry-point call to avoid data archiving during normal operation. Critical keys (Admin, Initialized) use `u32::MAX` TTL. TTL constants are defined per contract storage module.

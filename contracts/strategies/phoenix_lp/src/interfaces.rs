@@ -75,6 +75,33 @@ impl<'a> PhoenixPoolAdapter<'a> {
             args,
         )
     }
+
+    /// Swap `offer_amount` of one pool token for at least `min_ask` of the other.
+    /// `sell_a = true` means selling asset A to receive asset B, and vice versa.
+    /// Tokens are pulled from `sender`; output goes to `recipient`.
+    pub fn swap(
+        &self,
+        sender: Address,
+        recipient: Address,
+        sell_a: bool,
+        offer_amount: i128,
+        min_ask: i128,
+        max_spread_bps: Option<i64>,
+        deadline: Option<u64>,
+    ) {
+        let args = (
+            sender,
+            recipient,
+            sell_a,
+            offer_amount,
+            min_ask,
+            max_spread_bps,
+            deadline,
+        )
+            .into_val(self.env);
+        self.env
+            .invoke_contract::<()>(self.pool, &Symbol::new(self.env, "swap"), args);
+    }
 }
 
 /// Adapter for oracle contract calls.

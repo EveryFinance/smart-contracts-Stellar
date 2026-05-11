@@ -43,6 +43,27 @@ impl<'a> RouterAdapter<'a> {
             .invoke_contract(self.router, &Symbol::new(self.env, "add_liquidity"), args)
     }
 
+    /// Swap an exact amount of `from_asset` for as much `to_asset` as possible.
+    ///
+    /// `path` is `[from_asset, to_asset]`.  The router sends output tokens
+    /// directly to `to`.  Returns the output amounts for each hop.
+    #[allow(clippy::too_many_arguments)]
+    pub fn swap_exact_tokens_for_tokens(
+        &self,
+        amount_in: i128,
+        amount_out_min: i128,
+        path: soroban_sdk::Vec<Address>,
+        to: Address,
+        deadline: u64,
+    ) -> soroban_sdk::Vec<i128> {
+        let args = (amount_in, amount_out_min, path, to, deadline).into_val(self.env);
+        self.env.invoke_contract(
+            self.router,
+            &Symbol::new(self.env, "swap_exact_tokens_for_tokens"),
+            args,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn remove_liquidity(
         &self,
@@ -107,6 +128,7 @@ impl<'a> PairAdapter<'a> {
     }
 
     /// Return the pair's internal token1 (the token with the larger address).
+    #[allow(dead_code)]
     pub fn token1(&self) -> Address {
         let args = ().into_val(self.env);
         self.env

@@ -1,30 +1,18 @@
-# Phoenix Trade Guard Contract
+# Phoenix Trade Guard — Removed
 
-Path: `contracts/trade_guards/phoenix`
+> **This contract has been removed.** The `contracts/trade_guards/phoenix` directory no longer exists.
 
-## Purpose
+## Why it was removed
 
-Policy enforcement for Phoenix multi-hop swap parameters.
+Strategy contracts are the guards. The Phoenix LP strategy (`contracts/strategies/phoenix_lp`) implements both:
 
-## Constants
+1. The **guard interface** (`get_total_value`, `withdraw_fraction`, `asset_in_use`) called by vault internals.
+2. The **trader-callable operations** (`swap`, `add_liquidity`, `remove_liquidity`) dispatched via `vault.execute_op`.
 
-- `MAX_OPERATIONS = 4`
-- `MAX_SLIPPAGE_BPS = 1000` (10%)
+All validation (direction checks, slippage guards, amount checks) lives inside these operation functions. A separate trade guard contract that duplicated the same checks was redundant.
 
-## Public Methods
+## Replacement
 
-- `initialize(vault, manager, tokens)`
-- `set_whitelist(caller, tokens)`
-- `validate_swap(caller, amount_in, min_out, operations, quoted_out)`
-- `validate_swap_exact_in(caller, amount_in, min_out, path, quoted_out)`
-- `validate_invest(caller, amount)`
-- `validate_unwind(caller, units)`
-- `get_whitelist()`, `get_vault()`, `get_manager()`
+See [Phoenix LP Strategy](./phoenix_lp_strategy.md) for the current interface.
 
-## Validation Rules
-
-- vault-only caller.
-- amount positivity.
-- operation/path count bounds.
-- whitelist checks across all offered/asked tokens.
-- slippage check versus quoted output.
+The vault enforces operation-level authorization via `AuthorizedOps(guard)` — the manager whitelists exactly which function names the trader may call per strategy.

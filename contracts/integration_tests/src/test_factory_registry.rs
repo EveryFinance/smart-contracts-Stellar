@@ -39,15 +39,20 @@ fn deploy_vault(env: &Env) -> (Address, Address) {
     let vault_id = env.register(
         Vault,
         (VaultParams {
+            admin: manager.clone(),
             manager: manager.clone(),
+            manager_name: None,
             trader: trader.clone(),
             base_asset: base,
             share_token: share_id,
             share_token_admin: manager.clone(),
+            treasury: manager.clone(),
             entry_fee_bps: 0,
             exit_fee_bps: 0,
             mgmt_fee_bps: 0,
             perf_fee_bps: 0,
+            factory: None,
+            is_private: false,
         },),
     );
 
@@ -78,7 +83,7 @@ fn setup() -> World {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let factory_id = env.register(Factory, (admin.clone(),));
+    let factory_id = env.register(Factory, (admin.clone(), Option::<Address>::None));
     World {
         env,
         factory_id,

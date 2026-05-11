@@ -17,21 +17,23 @@ Dapp: https://www.elyx.finance/
 9. Contract Docs
    - [Vault](./contracts/vault.md)
    - [Share Token (SEP-41)](./contracts/share_token.md)
-   - [Oracle](./contracts/oracle.md)
+   - [Oracle Contracts (AssetHandler, ReflectorAdapter, DIAAdapter, Mock)](./contracts/oracle.md)
    - [Factory](./contracts/factory.md)
    - [Blend Strategy](./contracts/blend_strategy.md)
    - [Soroswap LP Strategy](./contracts/soroswap_lp_strategy.md)
    - [Phoenix LP Strategy](./contracts/phoenix_lp_strategy.md)
-   - [Soroswap Trade Guard](./contracts/soroswap_trade_guard.md)
-   - [Phoenix Trade Guard](./contracts/phoenix_trade_guard.md)
 
 ## Scope and Versioning
 
-- Scope: all contracts in `contracts/` except `integration_tests` (which is test-only).
-- This documentation reflects the currently deployed/tested architecture after the latest audit-driven remediations:
-  - vault/share-token admin handoff hardening,
-  - oracle stale-price enforcement,
-  - exact-out slippage enforcement in Soroswap guard.
+- Scope: all contracts in `contracts/` except `integration_tests` (test-only).
+- This documentation reflects the current architecture after all audit-driven and design remediations:
+  - Three-tier on-chain oracle (AssetHandler + ReflectorAdapter + DIAAdapter)
+  - Split pause controls: `pause_deposits` / `pause_operations` (admin-controlled)
+  - Private-pool controls moved to admin (`set_private_pool`, `add_member`, `remove_member`)
+  - `is_private` field added to `VaultParams` for construction-time private mode
+  - Strategy contracts implement the full guard interface — no separate trade guard contracts
+  - `execute_op` replaces `execute_trade`; vault injects its own address as first arg
+  - Multi-asset NAV, proportional withdrawal, PnL tracking
 
 ## Deployment References
 
@@ -43,18 +45,10 @@ Dapp: https://www.elyx.finance/
 
 Deployment timestamp: `2026-04-16 15:05:21` (file: `deployments/testnet-20260416-150521.env`)
 
+> Note: the addresses below predate the current architecture revision.
+> Redeploy after upgrading to pick up vault admin split, adapter contracts, and AssetHandler.
+
 - Share Token: `CBD2NZHYBNTN4ECUWVUT7KBTCQOXAK2D6TFDMHZPJIWL2MP56KPQWAN7`
 - Vault: `CBVK3IC7ALAA5PRWKIRELDHOT6ZXSM6DZHSXDT5Y3Z5WHHVU46EIDJHE`
-- Oracle: `CCFACGTFLN3CV4LRLRTPK73VUAS2VXDOPMJAZVE4HNVNVNAMREF3QMD2`
+- Oracle (mock): `CCFACGTFLN3CV4LRLRTPK73VUAS2VXDOPMJAZVE4HNVNVNAMREF3QMD2`
 - Factory: `CCER4YYGW2GEYAYHC7E2ULUQPV5OLTYXV3GUTBQ5IG62CV5YNWHDSJKV`
-- Soroswap Guard: `CAC5D67PTM7E7W7GZO7J4ENNBTMA443MQZTWHD3YTFRBZWVVMEFVPPPB`
-- Phoenix Guard: `CBH4GEYHKXU54D3434M7OKJODM3LNT7ED5P6KYFYS2UG4Q46UJPCGXG3`
-
-Explorer links:
-
-- https://stellar.expert/explorer/testnet/contract/CBD2NZHYBNTN4ECUWVUT7KBTCQOXAK2D6TFDMHZPJIWL2MP56KPQWAN7
-- https://stellar.expert/explorer/testnet/contract/CBVK3IC7ALAA5PRWKIRELDHOT6ZXSM6DZHSXDT5Y3Z5WHHVU46EIDJHE
-- https://stellar.expert/explorer/testnet/contract/CCFACGTFLN3CV4LRLRTPK73VUAS2VXDOPMJAZVE4HNVNVNAMREF3QMD2
-- https://stellar.expert/explorer/testnet/contract/CCER4YYGW2GEYAYHC7E2ULUQPV5OLTYXV3GUTBQ5IG62CV5YNWHDSJKV
-- https://stellar.expert/explorer/testnet/contract/CAC5D67PTM7E7W7GZO7J4ENNBTMA443MQZTWHD3YTFRBZWVVMEFVPPPB
-- https://stellar.expert/explorer/testnet/contract/CBH4GEYHKXU54D3434M7OKJODM3LNT7ED5P6KYFYS2UG4Q46UJPCGXG3

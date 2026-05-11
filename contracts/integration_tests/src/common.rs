@@ -200,9 +200,15 @@ impl MockBlendPool {
         requests: Vec<blend_strategy::BlendRequest>,
     ) {
         from.require_auth();
+        let pool = env.current_contract_address();
+        let token: Address = env.storage().instance().get(&BlendPoolKey::Token).unwrap();
         for req in requests.iter() {
             if req.request_type == 2 {
-                // Supply — record position for `from`.
+                // Supply — pull tokens from `from` into the pool, record position.
+                // This mirrors the real Blend pool using the strategy's pre-approved allowance.
+                MockTokenClient::new(&env, &token).transfer_from(
+                    &pool, &from, &pool, &req.amount,
+                );
                 let bal: i128 = env
                     .storage()
                     .persistent()
@@ -212,7 +218,7 @@ impl MockBlendPool {
                     .persistent()
                     .set(&BlendKey::Supply(from.clone()), &(bal + req.amount));
             } else if req.request_type == 3 {
-                // Withdraw — reduce position, mint tokens to `to`.
+                // Withdraw — reduce position, transfer tokens from pool to `to`.
                 let bal: i128 = env
                     .storage()
                     .persistent()
@@ -222,9 +228,7 @@ impl MockBlendPool {
                 env.storage()
                     .persistent()
                     .set(&BlendKey::Supply(from.clone()), &(bal - req.amount));
-                // Mint underlying to `to` to simulate Blend returning funds.
-                let token: Address = env.storage().instance().get(&BlendPoolKey::Token).unwrap();
-                MockTokenClient::new(&env, &token).mint(&to, &req.amount);
+                MockTokenClient::new(&env, &token).transfer(&pool, &to, &req.amount);
             }
         }
     }
@@ -296,6 +300,25 @@ impl MockSoroswapRouter {
         MockTokenClient::new(&env, &token_a).mint(&to, &half);
         MockTokenClient::new(&env, &token_b).mint(&to, &half);
         (half, half)
+    }
+
+    /// 1:1 swap mock: mints `amount_in` of path[1] directly to `to`.
+    /// Ignores path[0] balance — tests verify the vault received the output token.
+    pub fn swap_exact_tokens_for_tokens(
+        env: Env,
+        amount_in: i128,
+        amount_out_min: i128,
+        path: Vec<Address>,
+        to: Address,
+        _deadline: u64,
+    ) -> Vec<i128> {
+        to.require_auth();
+        assert!(path.len() >= 2, "swap: path must have at least 2 tokens");
+        let amount_out = amount_in; // 1:1 rate for tests
+        assert!(amount_out >= amount_out_min, "swap: insufficient output amount");
+        let out_token = path.get(path.len() - 1).unwrap();
+        MockTokenClient::new(&env, &out_token).mint(&to, &amount_out);
+        soroban_sdk::vec![&env, amount_in, amount_out]
     }
 }
 

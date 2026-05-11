@@ -151,6 +151,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "asset_handler"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -451,6 +458,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "dia-adapter"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -558,6 +572,7 @@ checksum = "ca81e6b4777c89fd810c25a4be2b1bd93ea034fbe58e6a75216a34c6b82c539b"
 name = "factory"
 version = "0.1.0"
 dependencies = [
+ "asset_handler",
  "soroban-sdk",
 ]
 
@@ -736,11 +751,9 @@ dependencies = [
  "factory",
  "oracle",
  "phoenix-lp-strategy",
- "phoenix-trade-guard",
  "share-token",
  "soroban-sdk",
  "soroswap-lp-strategy",
- "soroswap-trade-guard",
  "vault",
 ]
 
@@ -905,13 +918,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "phoenix-trade-guard"
-version = "0.1.0"
-dependencies = [
- "soroban-sdk",
-]
-
-[[package]]
 name = "pkcs8"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1021,6 +1027,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "reflector-adapter"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk",
 ]
 
 [[package]]
@@ -1406,13 +1419,6 @@ dependencies = [
 
 [[package]]
 name = "soroswap-lp-strategy"
-version = "0.1.0"
-dependencies = [
- "soroban-sdk",
-]
-
-[[package]]
-name = "soroswap-trade-guard"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk",

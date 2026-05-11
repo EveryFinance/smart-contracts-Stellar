@@ -1,41 +1,37 @@
-//! Integration tests: Vault ↔ PhoenixLpStrategy ↔ MockPhoenixPool
-//!
-//! Verifies the Phoenix LP strategy's share-token tracking, provide/withdraw
-//! lifecycle, and interaction with the vault's NAV calculation.
+//! Integration tests: Vault ↔ Phoenix LP strategy (execute_op API)
 
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, vec, Address, Env, String};
-
 use phoenix_lp_strategy::{PhoenixLpStrategy, PhoenixLpStrategyClient};
-use share_token::{ShareTokenContract, ShareTokenContractClient};
+use share_token::ShareTokenContract;
+use soroban_sdk::{testutils::Address as _, Address, Env, IntoVal, String, Symbol, Val, Vec};
 use vault::{Vault, VaultClient, VaultParams};
 
 use crate::common::{
-    token_balance, MockOracle, MockOracleClient, MockPhoenixPool, MockPhoenixPoolClient, MockToken,
-    MockTokenClient,
+    token_balance, MockPhoenixPool, MockPhoenixPoolClient, MockToken, MockTokenClient,
 };
 
 // ---------------------------------------------------------------------------
-// Setup
+// World fixture
 // ---------------------------------------------------------------------------
 
-struct World {
+struct PhoenixWorld {
     env: Env,
     vault: VaultClient<'static>,
     vault_addr: Address,
     strategy: PhoenixLpStrategyClient<'static>,
     strategy_addr: Address,
-    token_a: Address,
-    token_b: Address,
-    share_token: Address, // Phoenix LP share token
-    _pool: Address,
+    pool: MockPhoenixPoolClient<'static>,
+    pool_addr: Address,
+    asset_a: Address,
+    asset_b: Address,
+    share_token: Address,
     manager: Address,
-    _trader: Address,
+    trader: Address,
     user: Address,
 }
 
-fn setup() -> World {
+fn setup_phoenix() -> PhoenixWorld {
     let env = Env::default();
     env.mock_all_auths_allowing_non_root_auth();
 
@@ -43,80 +39,104 @@ fn setup() -> World {
     let trader = Address::generate(&env);
     let user = Address::generate(&env);
 
-    let token_a = env.register(MockToken, ());
-    let token_b = env.register(MockToken, ());
-    let share_token = env.register(MockToken, ());
+    // Two underlying assets.
+    let asset_a = env.register(MockToken, ());
+    MockTokenClient::new(&env, &asset_a).initialize(&manager);
 
-    MockTokenClient::new(&env, &token_a).initialize(&manager);
-    MockTokenClient::new(&env, &token_b).initialize(&manager);
+    let asset_b = env.register(MockToken, ());
+    MockTokenClient::new(&env, &asset_b).initialize(&manager);
+
+    // Phoenix LP share token.
+    let share_token = env.register(MockToken, ());
     MockTokenClient::new(&env, &share_token).initialize(&manager);
 
-    // Phoenix pool mock.
-    let pool = env.register(MockPhoenixPool, ());
-    MockPhoenixPoolClient::new(&env, &pool).phoenix_init(&share_token, &token_a, &token_b);
-
-    // Share token: deployed atomically with manager as admin; vault constructor will take admin.
+    // Use asset_a as the vault's base asset.
     let vault_share_id = env.register(
         ShareTokenContract,
         (
             manager.clone(),
-            String::from_str(&env, "VS"),
-            String::from_str(&env, "VS"),
+            String::from_str(&env, "Phoenix Vault Share"),
+            String::from_str(&env, "PVS"),
             7u32,
         ),
     );
-    let strat_id = env.register(PhoenixLpStrategy, ());
 
-    // Deploy vault with constructor (atomic, front-run-proof).
     let vault_id = env.register(
         Vault,
         (VaultParams {
+            admin: manager.clone(),
             manager: manager.clone(),
+            manager_name: None,
             trader: trader.clone(),
-            base_asset: token_a.clone(),
+            base_asset: asset_a.clone(),
             share_token: vault_share_id.clone(),
             share_token_admin: manager.clone(),
+            treasury: manager.clone(),
             entry_fee_bps: 0,
             exit_fee_bps: 0,
             mgmt_fee_bps: 0,
             perf_fee_bps: 0,
+            factory: None,
+            is_private: false,
         },),
     );
     let vault = VaultClient::new(&env, &vault_id);
 
-    // Phoenix LP strategy (auto-queries share token from pool).
-    let strategy = PhoenixLpStrategyClient::new(&env, &strat_id);
-    strategy.initialize(
+    // MockPhoenixPool.
+    let pool_id = env.register(MockPhoenixPool, ());
+    MockPhoenixPoolClient::new(&env, &pool_id).phoenix_init(&share_token, &asset_a, &asset_b);
+
+    // PhoenixLpStrategy — auto-queries share_token from pool during initialize.
+    let strategy_id = env.register(PhoenixLpStrategy, ());
+    PhoenixLpStrategyClient::new(&env, &strategy_id).initialize(
         &vault_id,
-        &token_a,
-        &token_b,
-        &pool,
+        &asset_a,
+        &asset_b,
+        &pool_id,
         &manager,
-        &String::from_str(&env, "Phoenix LP"),
+        &String::from_str(&env, "Phoenix USDC-XLM"),
     );
 
-    vault.set_strategies(&manager, &vec![&env, strat_id.clone()]);
+    // Whitelist asset_a (base) in portfolio.  LP positions require an oracle for
+    // accurate NAV; we disable the TVL guard in these dispatch-focused tests.
+    vault.add_portfolio_asset(&manager, &asset_a);
 
-    // Fund vault with both tokens.
-    MockTokenClient::new(&env, &token_a).mint(&vault_id, &10_000_0000000i128);
-    MockTokenClient::new(&env, &token_b).mint(&vault_id, &10_000_0000000i128);
-    MockTokenClient::new(&env, &token_a).mint(&user, &100_000_0000000i128);
+    vault.add_active_guard(&manager, &strategy_id);
+    let ops: Vec<Symbol> = soroban_sdk::vec![
+        &env,
+        Symbol::new(&env, "add_liquidity"),
+        Symbol::new(&env, "remove_liquidity"),
+    ];
+    vault.set_authorized_ops(&manager, &strategy_id, &ops);
+
+    // Disable TVL guard: LP oracle not configured in these dispatch tests.
+    vault.set_max_loss_bps(&manager, &0u32);
+
+    // Fund vault with both underlying assets.
+    MockTokenClient::new(&env, &asset_a).mint(&vault_id, &50_000_0000000i128);
+    MockTokenClient::new(&env, &asset_b).mint(&vault_id, &50_000_0000000i128);
+    // Fund user with asset_a.
+    MockTokenClient::new(&env, &asset_a).mint(&user, &10_000_0000000i128);
 
     let vault: VaultClient<'static> = unsafe { core::mem::transmute(vault) };
-    let strategy: PhoenixLpStrategyClient<'static> = unsafe { core::mem::transmute(strategy) };
+    let strategy: PhoenixLpStrategyClient<'static> =
+        unsafe { core::mem::transmute(PhoenixLpStrategyClient::new(&env, &strategy_id)) };
+    let pool: MockPhoenixPoolClient<'static> =
+        unsafe { core::mem::transmute(MockPhoenixPoolClient::new(&env, &pool_id)) };
 
-    World {
+    PhoenixWorld {
         env,
         vault,
         vault_addr: vault_id,
         strategy,
-        strategy_addr: strat_id,
-        token_a,
-        token_b,
+        strategy_addr: strategy_id,
+        pool,
+        pool_addr: pool_id,
+        asset_a,
+        asset_b,
         share_token,
-        _pool: pool,
         manager,
-        _trader: trader,
+        trader,
         user,
     }
 }
@@ -125,170 +145,221 @@ fn setup() -> World {
 // Tests
 // ---------------------------------------------------------------------------
 
-/// Phoenix pool auto-queries share token on initialize.
+/// add_liquidity via execute_op: vault tokens → strategy → Phoenix pool →
+/// share tokens minted to strategy.
+///
+/// MockPhoenixPool.provide_liquidity pulls tokens from the strategy via
+/// transfer_from(pool, strategy, pool) after the strategy approves pool.
+/// The strategy first pulls tokens from vault via transfer_from(strategy, vault, strategy).
 #[test]
-fn test_initialize_auto_queries_share_token() {
-    let w = setup();
-    // Strategy should have stored the share token queried from the pool.
-    assert_eq!(w.strategy.share_token(), w.share_token);
-}
+fn test_phoenix_add_liquidity_via_execute_op() {
+    let w = setup_phoenix();
+    let amount_a = 1_000_0000000i128;
+    let amount_b = 1_000_0000000i128;
 
-/// Providing liquidity mints Phoenix shares to the strategy.
-#[test]
-fn test_provide_liquidity_mints_shares() {
-    let w = setup();
-    let shares =
-        w.strategy
-            .deposit_liquidity(&500_0000000i128, &500_0000000i128, &0, &0, &w.vault_addr);
-    assert!(shares > 0);
-    assert_eq!(w.strategy.get_share_balance(), shares);
-
-    // Phoenix LP share tokens held by strategy.
-    let strategy_shares = token_balance(&w.env, &w.share_token, &w.strategy_addr);
-    assert_eq!(strategy_shares, shares);
-}
-
-/// Withdrawing from Phoenix LP delivers underlying tokens directly to user.
-#[test]
-fn test_withdraw_delivers_to_user() {
-    let w = setup();
-    let shares = w.strategy.deposit_liquidity(
-        &1_000_0000000i128,
-        &1_000_0000000i128,
-        &0,
-        &0,
+    // Strategy pulls from vault → vault must approve strategy.
+    MockTokenClient::new(&w.env, &w.asset_a).approve(
         &w.vault_addr,
-    );
-
-    let user_a_before = token_balance(&w.env, &w.token_a, &w.user);
-    let user_b_before = token_balance(&w.env, &w.token_b, &w.user);
-
-    let (a, b) = w.strategy.withdraw(&shares, &0, &0, &w.vault_addr, &w.user);
-
-    // Tokens go directly to user (not vault).
-    assert_eq!(
-        token_balance(&w.env, &w.token_a, &w.user),
-        user_a_before + a
-    );
-    assert_eq!(
-        token_balance(&w.env, &w.token_b, &w.user),
-        user_b_before + b
-    );
-    assert_eq!(w.strategy.get_share_balance(), 0);
-}
-
-/// Partial withdraw leaves remaining shares in strategy.
-#[test]
-fn test_partial_withdraw_leaves_remainder() {
-    let w = setup();
-    let shares =
-        w.strategy
-            .deposit_liquidity(&800_0000000i128, &800_0000000i128, &0, &0, &w.vault_addr);
-
-    let half = shares / 2;
-    w.strategy.withdraw(&half, &0, &0, &w.vault_addr, &w.user);
-    assert_eq!(w.strategy.get_share_balance(), shares - half);
-
-    w.strategy
-        .withdraw(&(shares - half), &0, &0, &w.vault_addr, &w.user);
-    assert_eq!(w.strategy.get_share_balance(), 0);
-}
-
-/// Full lifecycle with vault deposit and multiple LP rounds.
-#[test]
-fn test_full_phoenix_lp_lifecycle() {
-    let w = setup();
-
-    // User deposits into vault.
-    let vault_deposit = 2_000_0000000i128;
-    let vault_shares = w.vault.deposit(&vault_deposit, &w.user, &0i128);
-    assert!(vault_shares > 0);
-
-    // Manager provides liquidity to Phoenix pool.
-    let lp_shares =
-        w.strategy
-            .deposit_liquidity(&500_0000000i128, &500_0000000i128, &0, &0, &w.vault_addr);
-
-    // Strategy tracks LP correctly.
-    assert_eq!(w.strategy.get_share_balance(), lp_shares);
-    // Without an oracle, get_value returns 0 (LP shares are not base-asset-denominated).
-    assert_eq!(w.strategy.get_value(&w.vault_addr), 0);
-
-    // Withdraw half.
-    let half = lp_shares / 2;
-    w.strategy.withdraw(&half, &0, &0, &w.vault_addr, &w.user);
-    assert_eq!(w.strategy.get_share_balance(), lp_shares - half);
-
-    // Withdraw rest.
-    w.strategy
-        .withdraw(&(lp_shares - half), &0, &0, &w.vault_addr, &w.user);
-    assert_eq!(w.strategy.get_share_balance(), 0);
-}
-
-/// Paused strategy blocks both provide_liquidity and withdraw.
-#[test]
-#[should_panic]
-fn test_paused_phoenix_strategy_deposit_panics() {
-    let w = setup();
-    w.strategy.pause(&w.manager);
-    w.strategy
-        .deposit_liquidity(&100_0000000i128, &100_0000000i128, &0, &0, &w.vault_addr);
-}
-
-/// Paused strategy blocks withdraw.
-#[test]
-#[should_panic]
-fn test_paused_phoenix_strategy_withdraw_panics() {
-    let w = setup();
-    let shares =
-        w.strategy
-            .deposit_liquidity(&100_0000000i128, &100_0000000i128, &0, &0, &w.vault_addr);
-    w.strategy.pause(&w.manager);
-    w.strategy.withdraw(&shares, &0, &0, &w.vault_addr, &w.user);
-}
-
-/// Vault-level LP invest must fail when strategy oracle is missing.
-#[test]
-#[should_panic(expected = "Error(Contract, #19)")]
-fn test_vault_invest_lp_requires_oracle() {
-    let w = setup();
-    w.vault.set_lp_strategy(&w.manager, &w.strategy_addr, &true);
-    w.vault.invest_lp(
-        &w.manager,
         &w.strategy_addr,
-        &500_0000000i128,
-        &500_0000000i128,
-        &0,
-        &0,
+        &amount_a,
+        &1000u32,
+    );
+    MockTokenClient::new(&w.env, &w.asset_b).approve(
+        &w.vault_addr,
+        &w.strategy_addr,
+        &amount_b,
+        &1000u32,
+    );
+    // Pool pulls from strategy → strategy approves pool (done inside add_liquidity).
+    // We also need vault → pool approvals for the mock's transfer_from(pool, strategy, pool).
+    // The strategy sets approve(strategy, pool) before calling provide_liquidity,
+    // so no extra setup is needed here.
+
+    let args: Vec<Val> = soroban_sdk::vec![
+        &w.env,
+        amount_a.into_val(&w.env),
+        amount_b.into_val(&w.env),
+        0i128.into_val(&w.env), // min_a
+        0i128.into_val(&w.env), // min_b
+    ];
+    w.vault.execute_op(
+        &w.trader,
+        &w.strategy_addr,
+        &Symbol::new(&w.env, "add_liquidity"),
+        &args,
+    );
+
+    // MockPhoenixPool mints min(amount_a, amount_b) share tokens to strategy.
+    let shares_minted = amount_a.min(amount_b);
+    assert_eq!(
+        token_balance(&w.env, &w.share_token, &w.strategy_addr),
+        shares_minted
+    );
+    // Strategy's tracked share count matches.
+    assert_eq!(w.strategy.get_share_balance(), shares_minted);
+
+    // Vault lost both assets.
+    assert_eq!(
+        token_balance(&w.env, &w.asset_a, &w.vault_addr),
+        50_000_0000000i128 - amount_a
+    );
+    assert_eq!(
+        token_balance(&w.env, &w.asset_b, &w.vault_addr),
+        50_000_0000000i128 - amount_b
     );
 }
 
-/// With strategy oracle configured, vault NAV includes Phoenix reserve-decomposed value.
+/// remove_liquidity via execute_op: share tokens burned at pool → underlying
+/// tokens minted directly to vault.
 #[test]
-fn test_vault_nav_with_phoenix_oracle_valuation() {
-    let w = setup();
-    let oracle = w.env.register(MockOracle, ());
-    let oracle_client = MockOracleClient::new(&w.env, &oracle);
-    oracle_client.oracle_init(&w.manager);
+fn test_phoenix_remove_liquidity_via_execute_op() {
+    let w = setup_phoenix();
+    let amount_a = 2_000_0000000i128;
+    let amount_b = 2_000_0000000i128;
 
-    // Price both assets at 1.0 in PRICE_PRECISION units.
-    oracle_client.set_price(&w.token_a, &10_000_000i128);
-    oracle_client.set_price(&w.token_b, &10_000_000i128);
-    w.strategy.set_oracle(&w.manager, &oracle);
-    w.vault.set_lp_strategy(&w.manager, &w.strategy_addr, &true);
-
-    // invest_lp spends 500 token_a from vault base balance and deposits
-    // 500/500 into the Phoenix pool; strategy value should read as 1000.
-    let _lp = w.vault.invest_lp(
-        &w.manager,
+    // --- add liquidity first ---
+    MockTokenClient::new(&w.env, &w.asset_a).approve(
+        &w.vault_addr,
         &w.strategy_addr,
-        &500_0000000i128,
-        &500_0000000i128,
-        &0,
-        &0,
+        &amount_a,
+        &1000u32,
+    );
+    MockTokenClient::new(&w.env, &w.asset_b).approve(
+        &w.vault_addr,
+        &w.strategy_addr,
+        &amount_b,
+        &1000u32,
+    );
+    let add_args: Vec<Val> = soroban_sdk::vec![
+        &w.env,
+        amount_a.into_val(&w.env),
+        amount_b.into_val(&w.env),
+        0i128.into_val(&w.env),
+        0i128.into_val(&w.env),
+    ];
+    w.vault.execute_op(
+        &w.trader,
+        &w.strategy_addr,
+        &Symbol::new(&w.env, "add_liquidity"),
+        &add_args,
     );
 
-    assert_eq!(w.strategy.get_value(&w.vault_addr), 1_000_0000000i128);
-    // NAV = vault token_a balance (10_000 - 500) + strategy value (1_000).
-    assert_eq!(w.vault.get_nav(), 10_500_0000000i128);
+    let shares_minted = amount_a.min(amount_b);
+    let vault_a_before = token_balance(&w.env, &w.asset_a, &w.vault_addr);
+    let vault_b_before = token_balance(&w.env, &w.asset_b, &w.vault_addr);
+
+    // --- remove all liquidity ---
+    // Strategy calls approve(strategy, pool, share_amount) internally before
+    // withdraw_liquidity; pool calls transfer_from(pool, strategy, pool) to burn shares.
+    // No extra allowance setup needed in tests.
+    let remove_args: Vec<Val> = soroban_sdk::vec![
+        &w.env,
+        shares_minted.into_val(&w.env),
+        0i128.into_val(&w.env), // min_a
+        0i128.into_val(&w.env), // min_b
+    ];
+    w.vault.execute_op(
+        &w.trader,
+        &w.strategy_addr,
+        &Symbol::new(&w.env, "remove_liquidity"),
+        &remove_args,
+    );
+
+    // MockPhoenixPool distributes proportional assets to vault.
+    // With total_shares = shares_minted and equal reserves, each gets ~half.
+    let (expected_a, expected_b) = {
+        // Mirror MockPhoenixPool logic: reserve_a * share / total_shares.
+        let total = shares_minted;
+        let ra = amount_a;
+        let rb = amount_b;
+        (ra * shares_minted / total, rb * shares_minted / total)
+    };
+    assert_eq!(
+        token_balance(&w.env, &w.asset_a, &w.vault_addr),
+        vault_a_before + expected_a
+    );
+    assert_eq!(
+        token_balance(&w.env, &w.asset_b, &w.vault_addr),
+        vault_b_before + expected_b
+    );
+
+    // Strategy holds no share tokens.
+    assert_eq!(token_balance(&w.env, &w.share_token, &w.strategy_addr), 0);
+    assert_eq!(w.strategy.get_share_balance(), 0);
+}
+
+/// asset_in_use returns true for both underlying assets after add_liquidity.
+#[test]
+fn test_phoenix_asset_in_use_after_add_liquidity() {
+    let w = setup_phoenix();
+    let amount = 1_000_0000000i128;
+
+    assert!(!w.strategy.asset_in_use(&w.vault_addr, &w.asset_a));
+    assert!(!w.strategy.asset_in_use(&w.vault_addr, &w.asset_b));
+
+    MockTokenClient::new(&w.env, &w.asset_a).approve(
+        &w.vault_addr,
+        &w.strategy_addr,
+        &amount,
+        &1000u32,
+    );
+    MockTokenClient::new(&w.env, &w.asset_b).approve(
+        &w.vault_addr,
+        &w.strategy_addr,
+        &amount,
+        &1000u32,
+    );
+    let args: Vec<Val> = soroban_sdk::vec![
+        &w.env,
+        amount.into_val(&w.env),
+        amount.into_val(&w.env),
+        0i128.into_val(&w.env),
+        0i128.into_val(&w.env),
+    ];
+    w.vault.execute_op(
+        &w.trader,
+        &w.strategy_addr,
+        &Symbol::new(&w.env, "add_liquidity"),
+        &args,
+    );
+
+    assert!(w.strategy.asset_in_use(&w.vault_addr, &w.asset_a));
+    assert!(w.strategy.asset_in_use(&w.vault_addr, &w.asset_b));
+}
+
+/// get_total_value returns 0 when no oracle is configured.
+#[test]
+fn test_phoenix_get_total_value_without_oracle_returns_zero() {
+    let w = setup_phoenix();
+    assert_eq!(w.strategy.get_total_value(&w.vault_addr), 0);
+
+    // After adding liquidity, still 0 without an oracle.
+    let amount = 1_000_0000000i128;
+    MockTokenClient::new(&w.env, &w.asset_a).approve(
+        &w.vault_addr,
+        &w.strategy_addr,
+        &amount,
+        &1000u32,
+    );
+    MockTokenClient::new(&w.env, &w.asset_b).approve(
+        &w.vault_addr,
+        &w.strategy_addr,
+        &amount,
+        &1000u32,
+    );
+    let args: Vec<Val> = soroban_sdk::vec![
+        &w.env,
+        amount.into_val(&w.env),
+        amount.into_val(&w.env),
+        0i128.into_val(&w.env),
+        0i128.into_val(&w.env),
+    ];
+    w.vault.execute_op(
+        &w.trader,
+        &w.strategy_addr,
+        &Symbol::new(&w.env, "add_liquidity"),
+        &args,
+    );
+
+    assert_eq!(w.strategy.get_total_value(&w.vault_addr), 0);
 }

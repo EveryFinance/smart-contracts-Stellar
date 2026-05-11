@@ -6,30 +6,30 @@
 //!
 //! ## Storage key reference
 //!
-//! | Key                           | Type             | Description                                    |
-//! |-------------------------------|------------------|------------------------------------------------|
-//! | `Manager`                     | `Address`        | Fund manager / operator                        |
-//! | `Trader`                      | `Address`        | Account authorised to execute trades           |
-//! | `BaseAsset`                   | `Address`        | Denomination token (e.g. USDC)                 |
-//! | `ShareToken`                  | `Address`        | SEP-41 share token contract                    |
-//! | `Paused`                      | `bool`           | Emergency pause flag                           |
-//! | `EntryFeeBps`                 | `u32`            | Deposit fee in basis points (max 500 bps)      |
-//! | `ExitFeeBps`                  | `u32`            | Withdrawal fee in basis points (max 500 bps)   |
-//! | `MgmtFeeBps`                  | `u32`            | Annual management fee (max 300 bps)            |
-//! | `PerfFeeBps`                  | `u32`            | Performance fee (max 3 000 bps)                |
-//! | `LastMgmtFeeTs`               | `u64`            | UNIX timestamp of last management fee accrual  |
-//! | `HighWaterMark`               | `i128`           | NAV-per-share high-water mark for perf fees    |
-//! | `Strategies`                  | `Vec<Address>`   | Whitelisted strategy contracts                 |
-//! | `TradeGuard(strategy)`        | `Address`        | Optional guard contract for a strategy         |
-//! | `DepositCap`                  | `i128`           | Maximum total NAV allowed (0 = uncapped)       |
-//! | `Oracle`                      | `Address`        | Optional price oracle contract                 |
-//! | `StrategyPriceToken(strategy)`| `Address`        | Token used to price a strategy via the oracle  |
-//! | `MaxConcentrationBps`         | `u32`            | Per-strategy NAV cap (bps, 0 = uncapped)       |
-//! | `LpStrategy(strategy)`        | `bool`           | Whether a strategy is an LP (two-asset) type   |
-//! | `MaxLossBps`                  | `u32`            | Maximum NAV loss per operation (bps, 0 = off)  |
+//! | Key                    | Type           | Description                                    |
+//! |------------------------|----------------|------------------------------------------------|
+//! | `Manager`              | `Address`      | Fund manager / operator                        |
+//! | `Trader`               | `Address`      | Account authorised to call execute_op          |
+//! | `BaseAsset`            | `Address`      | Denomination token (e.g. USDC)                 |
+//! | `ShareToken`           | `Address`      | SEP-41 share token contract                    |
+//! | `Paused`               | `bool`         | Emergency pause flag                           |
+//! | `EntryFeeBps`          | `u32`          | Deposit fee in basis points (max 500 bps)      |
+//! | `ExitFeeBps`           | `u32`          | Withdrawal fee in basis points (max 500 bps)   |
+//! | `MgmtFeeBps`           | `u32`          | Annual management fee (max 300 bps)            |
+//! | `PerfFeeBps`           | `u32`          | Performance fee (max 3 000 bps)                |
+//! | `LastMgmtFeeTs`        | `u64`          | UNIX timestamp of last management fee accrual  |
+//! | `HighWaterMark`        | `i128`         | NAV-per-share high-water mark for perf fees    |
+//! | `DepositCap`           | `i128`         | Maximum total NAV allowed (0 = uncapped)       |
+//! | `Oracle`               | `Address`      | Price oracle for portfolio asset NAV           |
+//! | `MaxLossBps`           | `u32`          | Maximum NAV loss per execute_op (bps, 0 = off) |
+//! | `PortfolioAssets`      | `Vec<Address>` | All assets tracked in NAV                      |
+//! | `DepositAssets`        | `Vec<Address>` | Assets users may deposit                       |
+//! | `ActiveGuards`         | `Vec<Address>` | Active strategy/guard contracts                |
+//! | `AuthorizedOps(guard)` | `Vec<Symbol>`  | Permitted function names per guard             |
+//! | `Factory`              | `Address`      | Factory for whitelist validation               |
 
 use crate::error::VaultError;
-use soroban_sdk::{contracttype, panic_with_error, Address, Env, Vec};
+use soroban_sdk::{contracttype, panic_with_error, Address, Env, String, Symbol, Vec};
 
 // ---------------------------------------------------------------------------
 // TTL constants (in ledgers; ~6 s/ledger on Stellar mainnet)
@@ -70,11 +70,14 @@ pub const SECONDS_PER_YEAR: u64 = 31_536_000;
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
-    /// Fund manager — sole address allowed to call `invest`, `unwind`,
-    /// `set_strategies`, fee-configuration methods, etc.
+    /// Vault admin — can change manager and treasury; separate from manager role.
+    Admin,
+
+    /// Fund manager — sole address allowed to call `execute_op`,
+    /// fee-configuration methods, guard/portfolio management, etc.
     Manager,
 
-    /// Trader — sole address allowed to call `execute_trade`.
+    /// Trader — address allowed to call `execute_op` alongside the manager.
     Trader,
 
     /// Denomination token (e.g. USDC) that the vault accepts for deposits and
@@ -85,8 +88,11 @@ pub enum DataKey {
     /// `mint` / `burn` to manage share supply.
     ShareToken,
 
-    /// Emergency pause flag.  When `true`, `deposit` and `withdraw` revert.
+    /// Deposit/withdrawal pause flag. When `true`, `deposit` and `withdraw` revert.
     Paused,
+
+    /// Operations pause flag. When `true`, `execute_op` reverts.
+    OpsPaused,
 
     /// Entry fee in basis points charged on deposit.  Fee is taken as share
     /// tokens minted to the manager (dHedge V2 §1 Step 6).
@@ -111,14 +117,6 @@ pub enum DataKey {
     /// (PRICE_PRECISION-scaled, same unit as `get_share_price()`).
     HighWaterMark,
 
-    /// Ordered list of whitelisted strategy contract addresses.
-    /// Only strategies in this list may receive allocations via `invest`.
-    Strategies,
-
-    /// Optional trade-guard contract address associated with a strategy.
-    /// When set, the vault calls `guard.validate_*` before `execute_trade`.
-    TradeGuard(Address),
-
     /// Maximum total NAV the vault will accept in deposits.
     /// `0` means uncapped.
     DepositCap,
@@ -127,22 +125,6 @@ pub enum DataKey {
     /// `oracle.get_price(price_token)` to convert strategy values to base-asset
     /// terms before summing.
     Oracle,
-
-    /// Optional base-asset price token for a strategy.
-    /// When set alongside `Oracle`, `nav()` computes:
-    /// `strategy_value × oracle.get_price(price_token) / PRICE_PRECISION`.
-    StrategyPriceToken(Address),
-
-    /// Maximum single-strategy NAV share in basis points.
-    /// After `invest`, if `strategy_value / total_nav > max_concentration_bps / 10_000`
-    /// the transaction reverts with [`VaultError::ConcentrationLimitExceeded`].
-    /// `0` means uncapped.
-    MaxConcentrationBps,
-
-    /// Whether a strategy is an LP (two-asset) strategy.
-    /// LP strategies are skipped during proportional auto-unwind on withdrawal
-    /// because they cannot accept a single-asset partial redemption request.
-    LpStrategy(Address),
 
     /// Maximum allowed NAV loss per manager operation, in basis points.
     ///
@@ -183,6 +165,47 @@ pub enum DataKey {
 
     /// Per-caller operation state for same-ledger manipulation checks.
     OpState(Address),
+
+    // -----------------------------------------------------------------------
+    // Multi-asset v2 keys
+    // -----------------------------------------------------------------------
+
+    /// Ordered list of all assets tracked in NAV (base_asset + USDT + XLM …).
+    /// Every asset in this list is priced via the oracle and included in NAV.
+    /// Vault managers may only add assets that appear in factory.AuthorizedAssets.
+    PortfolioAssets,
+
+    /// Subset of PortfolioAssets that users may deposit.
+    /// Must always be a subset of PortfolioAssets.
+    DepositAssets,
+
+    /// Ordered list of active strategy guard contract addresses.
+    /// Each guard exposes get_total_value / withdraw_fraction / asset_in_use.
+    /// Replaces the old flat Strategies list for multi-asset vaults.
+    ActiveGuards,
+
+    /// Permitted operation types for a given guard contract.
+    /// E.g., a DEX guard may be restricted to [Swap] only, disallowing
+    /// AddLiquidity and RemoveLiquidity for this vault.
+    AuthorizedOps(Address),
+
+    /// Factory contract address. Used to validate that portfolio assets are
+    /// in the factory's global AuthorizedAssets whitelist.
+    Factory,
+
+    /// Treasury address — receives all fee payments (entry, mgmt, perf).
+    Treasury,
+
+    /// Optional human-readable name of the manager for display purposes.
+    ManagerName,
+
+    /// Whether the anti-inflation seed deposit has already been executed.
+    /// Set to true by seed_deposit(); prevents a second call.
+    SeedDeposited,
+
+    /// Per-user PnL tracking stored in **persistent** storage so it survives
+    /// independent of the vault instance TTL.
+    UserPosition(Address),
 }
 
 /// Per-user same-ledger operation checkpoint.
@@ -243,10 +266,12 @@ macro_rules! addr_fns {
     };
 }
 
+addr_fns!(set_admin, get_admin, Admin);
 addr_fns!(set_manager, get_manager, Manager);
 addr_fns!(set_trader, get_trader, Trader);
 addr_fns!(set_base_asset, get_base_asset, BaseAsset);
 addr_fns!(set_share_token, get_share_token, ShareToken);
+addr_fns!(set_treasury, get_treasury, Treasury);
 
 // ---------------------------------------------------------------------------
 // Boolean helpers
@@ -258,12 +283,27 @@ pub fn set_paused(env: &Env, v: bool) {
     env.storage().instance().set(&DataKey::Paused, &v);
 }
 
-/// Read the pause flag (defaults to `false` when not yet set).
+/// Read the deposit/withdrawal pause flag (defaults to `false` when not yet set).
 pub fn get_paused(env: &Env) -> bool {
     bump(env);
     env.storage()
         .instance()
         .get(&DataKey::Paused)
+        .unwrap_or(false)
+}
+
+/// Persist the operations pause flag in instance storage.
+pub fn set_ops_paused(env: &Env, v: bool) {
+    bump(env);
+    env.storage().instance().set(&DataKey::OpsPaused, &v);
+}
+
+/// Read the operations pause flag (defaults to `false` when not yet set).
+pub fn get_ops_paused(env: &Env) -> bool {
+    bump(env);
+    env.storage()
+        .instance()
+        .get(&DataKey::OpsPaused)
         .unwrap_or(false)
 }
 
@@ -332,27 +372,6 @@ pub fn get_high_water_mark(env: &Env) -> i128 {
 }
 
 // ---------------------------------------------------------------------------
-// Strategy whitelist
-// ---------------------------------------------------------------------------
-
-/// Persist the ordered list of whitelisted strategy addresses.
-pub fn set_strategies(env: &Env, v: &Vec<Address>) {
-    bump(env);
-    env.storage().instance().set(&DataKey::Strategies, v);
-}
-
-/// Read the ordered list of whitelisted strategy addresses.
-///
-/// Returns an empty `Vec` when no strategies have been configured.
-pub fn get_strategies(env: &Env) -> Vec<Address> {
-    bump(env);
-    env.storage()
-        .instance()
-        .get(&DataKey::Strategies)
-        .unwrap_or_else(|| Vec::new(env))
-}
-
-// ---------------------------------------------------------------------------
 // Deposit cap
 // ---------------------------------------------------------------------------
 
@@ -373,27 +392,6 @@ pub fn get_deposit_cap(env: &Env) -> i128 {
 }
 
 // ---------------------------------------------------------------------------
-// Per-strategy trade guard
-// ---------------------------------------------------------------------------
-
-/// Associate `guard` with `strategy`.  Called by the manager via
-/// `set_trade_guard`.
-pub fn set_trade_guard(env: &Env, strategy: &Address, guard: &Address) {
-    bump(env);
-    env.storage()
-        .instance()
-        .set(&DataKey::TradeGuard(strategy.clone()), guard);
-}
-
-/// Return the trade-guard address for `strategy`, or `None` if not set.
-pub fn get_trade_guard(env: &Env, strategy: &Address) -> Option<Address> {
-    bump(env);
-    env.storage()
-        .instance()
-        .get(&DataKey::TradeGuard(strategy.clone()))
-}
-
-// ---------------------------------------------------------------------------
 // Oracle
 // ---------------------------------------------------------------------------
 
@@ -411,74 +409,17 @@ pub fn get_oracle(env: &Env) -> Option<Address> {
 }
 
 // ---------------------------------------------------------------------------
-// Per-strategy price token (oracle-based NAV)
+// Manager name
 // ---------------------------------------------------------------------------
 
-/// Associate `token` with `strategy` for oracle-based NAV pricing.
-///
-/// When set, `nav()` calls `oracle.get_price(token)` and multiplies the
-/// strategy's raw value by the result (PRICE_PRECISION-scaled).
-pub fn set_strategy_price_token(env: &Env, strategy: &Address, token: &Address) {
+pub fn set_manager_name(env: &Env, v: &String) {
     bump(env);
-    env.storage()
-        .instance()
-        .set(&DataKey::StrategyPriceToken(strategy.clone()), token);
+    env.storage().instance().set(&DataKey::ManagerName, v);
 }
 
-/// Return the price token for `strategy`, or `None` if not set.
-pub fn get_strategy_price_token(env: &Env, strategy: &Address) -> Option<Address> {
+pub fn get_manager_name(env: &Env) -> Option<String> {
     bump(env);
-    env.storage()
-        .instance()
-        .get(&DataKey::StrategyPriceToken(strategy.clone()))
-}
-
-// ---------------------------------------------------------------------------
-// Concentration limit
-// ---------------------------------------------------------------------------
-
-/// Persist the per-strategy concentration cap in basis points.
-/// `0` means uncapped.
-pub fn set_max_concentration_bps(env: &Env, v: u32) {
-    bump(env);
-    env.storage()
-        .instance()
-        .set(&DataKey::MaxConcentrationBps, &v);
-}
-
-/// Read the per-strategy concentration cap.  Returns `0` (uncapped) when not
-/// configured.
-pub fn get_max_concentration_bps(env: &Env) -> u32 {
-    bump(env);
-    env.storage()
-        .instance()
-        .get(&DataKey::MaxConcentrationBps)
-        .unwrap_or(0)
-}
-
-// ---------------------------------------------------------------------------
-// LP strategy flag (auto-unwind)
-// ---------------------------------------------------------------------------
-
-/// Mark or unmark `strategy` as an LP strategy.
-///
-/// LP strategies are skipped during proportional auto-unwind on withdrawal
-/// because they cannot accept a single-asset partial redemption.
-pub fn set_lp_strategy(env: &Env, strategy: &Address, is_lp: bool) {
-    bump(env);
-    env.storage()
-        .instance()
-        .set(&DataKey::LpStrategy(strategy.clone()), &is_lp);
-}
-
-/// Return `true` when `strategy` has been marked as an LP strategy.
-/// Defaults to `false` for unknown strategies.
-pub fn is_lp_strategy(env: &Env, strategy: &Address) -> bool {
-    bump(env);
-    env.storage()
-        .instance()
-        .get(&DataKey::LpStrategy(strategy.clone()))
-        .unwrap_or(false)
+    env.storage().instance().get(&DataKey::ManagerName)
 }
 
 // ---------------------------------------------------------------------------
@@ -716,4 +657,165 @@ pub fn clear_op_state(env: &Env, user: &Address) {
     env.storage()
         .temporary()
         .remove(&DataKey::OpState(user.clone()));
+}
+
+// ---------------------------------------------------------------------------
+// Persistent storage TTL constants (multi-asset v2)
+// ---------------------------------------------------------------------------
+
+/// Ledgers added to persistent user-position entries.
+/// 5 256 000 ledgers ≈ 1 year.
+pub const PERSISTENT_BUMP_AMOUNT: u32 = 5_256_000;
+pub const PERSISTENT_LIFETIME_THRESHOLD: u32 = 2_628_000; // ≈ 6 months
+
+/// Maximum number of active guards (bounds NAV iteration cost).
+pub const MAX_GUARDS: usize = 10;
+
+/// Maximum number of portfolio assets (bounds NAV iteration cost).
+pub const MAX_PORTFOLIO_ASSETS: usize = 20;
+
+// ---------------------------------------------------------------------------
+// UserPosition struct (PnL tracking)
+// ---------------------------------------------------------------------------
+
+/// Per-user PnL tracking record.
+///
+/// `cost_basis` tracks the base-asset-denominated value paid for currently
+/// held shares (updated on deposit and withdrawal).  `realized_pnl` accumulates
+/// gain or loss each time shares are burned.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UserPosition {
+    /// Total cost in base_asset units for the user's current share holdings.
+    pub cost_basis: i128,
+    /// Accumulated realized gain/loss from all past withdrawals.
+    pub realized_pnl: i128,
+}
+
+// ---------------------------------------------------------------------------
+// Portfolio assets (instance storage)
+// ---------------------------------------------------------------------------
+
+pub fn get_portfolio_assets(env: &Env) -> Vec<Address> {
+    bump(env);
+    env.storage()
+        .instance()
+        .get(&DataKey::PortfolioAssets)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn set_portfolio_assets(env: &Env, v: &Vec<Address>) {
+    bump(env);
+    env.storage().instance().set(&DataKey::PortfolioAssets, v);
+}
+
+// ---------------------------------------------------------------------------
+// Deposit assets (instance storage)
+// ---------------------------------------------------------------------------
+
+pub fn get_deposit_assets(env: &Env) -> Vec<Address> {
+    bump(env);
+    env.storage()
+        .instance()
+        .get(&DataKey::DepositAssets)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn set_deposit_assets(env: &Env, v: &Vec<Address>) {
+    bump(env);
+    env.storage().instance().set(&DataKey::DepositAssets, v);
+}
+
+// ---------------------------------------------------------------------------
+// Active guards (instance storage)
+// ---------------------------------------------------------------------------
+
+pub fn get_active_guards(env: &Env) -> Vec<Address> {
+    bump(env);
+    env.storage()
+        .instance()
+        .get(&DataKey::ActiveGuards)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn set_active_guards(env: &Env, v: &Vec<Address>) {
+    bump(env);
+    env.storage().instance().set(&DataKey::ActiveGuards, v);
+}
+
+// ---------------------------------------------------------------------------
+// Authorized ops per guard (instance storage)
+// ---------------------------------------------------------------------------
+
+pub fn get_authorized_ops(env: &Env, guard: &Address) -> Vec<Symbol> {
+    bump(env);
+    env.storage()
+        .instance()
+        .get(&DataKey::AuthorizedOps(guard.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn set_authorized_ops(env: &Env, guard: &Address, ops: &Vec<Symbol>) {
+    bump(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::AuthorizedOps(guard.clone()), ops);
+}
+
+// ---------------------------------------------------------------------------
+// Factory reference (instance storage)
+// ---------------------------------------------------------------------------
+
+pub fn get_factory(env: &Env) -> Option<Address> {
+    bump(env);
+    env.storage().instance().get(&DataKey::Factory)
+}
+
+pub fn set_factory(env: &Env, factory: &Address) {
+    bump(env);
+    env.storage().instance().set(&DataKey::Factory, factory);
+}
+
+// ---------------------------------------------------------------------------
+// Seed deposit guard (instance storage)
+// ---------------------------------------------------------------------------
+
+pub fn is_seed_deposited(env: &Env) -> bool {
+    bump(env);
+    env.storage()
+        .instance()
+        .get(&DataKey::SeedDeposited)
+        .unwrap_or(false)
+}
+
+pub fn set_seed_deposited(env: &Env) {
+    bump(env);
+    env.storage().instance().set(&DataKey::SeedDeposited, &true);
+}
+
+// ---------------------------------------------------------------------------
+// UserPosition PnL tracking (persistent storage)
+// ---------------------------------------------------------------------------
+
+pub fn get_user_position(env: &Env, user: &Address) -> UserPosition {
+    let key = DataKey::UserPosition(user.clone());
+    if env.storage().persistent().has(&key) {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        env.storage().persistent().get(&key).unwrap()
+    } else {
+        UserPosition {
+            cost_basis: 0,
+            realized_pnl: 0,
+        }
+    }
+}
+
+pub fn set_user_position(env: &Env, user: &Address, pos: &UserPosition) {
+    let key = DataKey::UserPosition(user.clone());
+    env.storage().persistent().set(&key, pos);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
 }

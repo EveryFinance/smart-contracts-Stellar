@@ -13,7 +13,7 @@
 //! function below.  All amounts are in the token's native precision (7 decimal
 //! places for Stellar assets).
 
-use soroban_sdk::{Address, Env, Symbol};
+use soroban_sdk::{Address, Env, Symbol, Val};
 
 /// Emitted after a successful [`deposit`](crate::Vault::deposit).
 ///
@@ -43,45 +43,17 @@ pub fn withdraw_event(env: &Env, to: &Address, shares_burned: i128, base_amount:
     );
 }
 
-/// Emitted after a successful [`invest`](crate::Vault::invest) or
-/// [`invest_lp`](crate::Vault::invest_lp).
+/// Emitted after a successful [`execute_op`](crate::Vault::execute_op).
 ///
 /// # Data
-/// `(strategy: Address, amount: i128)`
-/// * `strategy` — The strategy contract that received the allocation.
-/// * `amount`   — Base-asset units (or paired amounts) sent to the strategy.
-pub fn invest_event(env: &Env, strategy: &Address, amount: i128) {
+/// `(guard: Address, fn_name: Symbol, args_len: u32)`
+/// * `guard`    — The guard contract that executed the operation.
+/// * `fn_name`  — The function name dispatched on the guard.
+/// * `args_len` — Number of caller-provided arguments (vault address not counted).
+pub fn execute_op_event(env: &Env, guard: &Address, fn_name: &Symbol, args: &soroban_sdk::Vec<Val>) {
     env.events().publish(
-        (Symbol::new(env, "invest"), env.current_contract_address()),
-        (strategy.clone(), amount),
-    );
-}
-
-/// Emitted after a successful [`unwind`](crate::Vault::unwind) or
-/// [`unwind_lp`](crate::Vault::unwind_lp).
-///
-/// # Data
-/// `(strategy: Address, shares: i128)`
-/// * `strategy` — The strategy contract that was unwound.
-/// * `shares`   — Strategy position units redeemed.
-pub fn unwind_event(env: &Env, strategy: &Address, shares: i128) {
-    env.events().publish(
-        (Symbol::new(env, "unwind"), env.current_contract_address()),
-        (strategy.clone(), shares),
-    );
-}
-
-/// Emitted after a successful [`execute_trade`](crate::Vault::execute_trade).
-///
-/// # Data
-/// `(strategy: Address, amount_in: i128, min_out: i128)`
-/// * `strategy`  — The strategy / router contract used.
-/// * `amount_in` — Input token amount swapped.
-/// * `min_out`   — Minimum output amount specified (slippage bound).
-pub fn trade_event(env: &Env, strategy: &Address, amount_in: i128, min_out: i128) {
-    env.events().publish(
-        (Symbol::new(env, "trade"), env.current_contract_address()),
-        (strategy.clone(), amount_in, min_out),
+        (Symbol::new(env, "execute_op"), env.current_contract_address()),
+        (guard.clone(), fn_name.clone(), args.len()),
     );
 }
 
@@ -119,21 +91,6 @@ pub fn pause_event(env: &Env, paused: bool) {
     env.events().publish(
         (Symbol::new(env, "pause"), env.current_contract_address()),
         paused,
-    );
-}
-
-/// Emitted when the strategy whitelist is updated via
-/// [`set_strategies`](crate::Vault::set_strategies).
-///
-/// # Data
-/// `strategies: Vec<Address>` — The new complete list of whitelisted strategies.
-pub fn strategy_set_event(env: &Env, strategies: &soroban_sdk::Vec<Address>) {
-    env.events().publish(
-        (
-            Symbol::new(env, "strategies"),
-            env.current_contract_address(),
-        ),
-        strategies.clone(),
     );
 }
 

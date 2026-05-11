@@ -252,6 +252,7 @@ mod mock_oracle {
 #[contracttype]
 enum VaultKey {
     Manager,
+    Factory,
 }
 
 #[contract]
@@ -264,6 +265,30 @@ impl MockVault {
     }
     pub fn get_manager(env: Env) -> Address {
         env.storage().instance().get(&VaultKey::Manager).unwrap()
+    }
+    pub fn set_factory(env: Env, factory: Address) {
+        env.storage().instance().set(&VaultKey::Factory, &factory);
+    }
+    pub fn get_factory(env: Env) -> Option<Address> {
+        env.storage().instance().get(&VaultKey::Factory)
+    }
+}
+
+// MockFactory — satisfies factory.get_asset_handler() in get_total_value/compute_lp_value
+
+#[contracttype]
+enum FactoryKey { AssetHandler }
+
+#[contract]
+pub struct MockFactory;
+
+#[contractimpl]
+impl MockFactory {
+    pub fn set_asset_handler(env: Env, ah: Address) {
+        env.storage().instance().set(&FactoryKey::AssetHandler, &ah);
+    }
+    pub fn get_asset_handler(env: Env) -> Option<Address> {
+        env.storage().instance().get(&FactoryKey::AssetHandler)
     }
 }
 
@@ -279,6 +304,7 @@ struct T {
     share_token: Address,
     pool: Address,
     vault: Address,
+    factory: Address,
     manager: Address,
     user: Address,
 }
@@ -295,10 +321,12 @@ fn setup() -> T {
     MockPhoenixPoolClient::new(&env, &pool).init(&share_token, &token_a, &token_b);
 
     let manager = Address::generate(&env);
+    let factory = env.register(MockFactory, ());
     // Register a mock vault so strategy.initialize() can cross-call
-    // vault.get_manager() to derive the authoritative initializer.
+    // vault.get_manager() and vault.get_factory().
     let vault = env.register(MockVault, ());
     MockVaultClient::new(&env, &vault).set_manager(&manager);
+    MockVaultClient::new(&env, &vault).set_factory(&factory);
     let user = Address::generate(&env);
 
     // Fund vault with underlying tokens.
@@ -326,6 +354,7 @@ fn setup() -> T {
         share_token,
         pool,
         vault,
+        factory,
         manager,
         user,
     }
@@ -385,8 +414,8 @@ fn test_get_value_with_oracle_uses_reserve_decomposition() {
     mock_oracle::MockOracleClient::new(&t.env, &oracle).set_price(&t.token_a, &10_000_000i128);
     mock_oracle::MockOracleClient::new(&t.env, &oracle).set_price(&t.token_b, &10_000_000i128);
 
-    // Configure oracle.
-    t.strategy.set_oracle(&t.manager, &oracle);
+    // Wire the oracle as the factory's AssetHandler (it exposes get_price(asset)).
+    MockFactoryClient::new(&t.env, &t.factory).set_asset_handler(&oracle);
 
     // With reserves = 1_000000000 each, pool value = 2_000000000.
     // Strategy owns all shares in this mock, so get_value should be ~2_000000000.

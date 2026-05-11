@@ -67,18 +67,29 @@ fn setup_world_with_fees(entry: u32, exit: u32, mgmt: u32, perf: u32) -> World {
     let vault_id = env.register(
         Vault,
         (VaultParams {
+            admin: manager.clone(),
             manager: manager.clone(),
+            manager_name: None,
             trader: trader.clone(),
             base_asset: base.clone(),
             share_token: share_id.clone(),
             share_token_admin: manager.clone(),
+            treasury: manager.clone(),
             entry_fee_bps: entry,
             exit_fee_bps: exit,
             mgmt_fee_bps: mgmt,
             perf_fee_bps: perf,
+            factory: None,
+            is_private: false,
         },),
     );
     let vault_client = VaultClient::new(&env, &vault_id);
+
+    // Whitelist base in portfolio and as a deposit asset.
+    // NAV only counts assets explicitly in PortfolioAssets; the manager must
+    // add the base asset for idle vault cash to appear in NAV calculations.
+    vault_client.add_portfolio_asset(&manager, &base);
+    vault_client.add_deposit_asset(&manager, &base);
 
     // Fund users.
     MockTokenClient::new(&env, &base).mint(&user, &100_000_0000000i128);
@@ -111,7 +122,7 @@ fn test_deposit_mints_real_share_tokens() {
     let w = setup_world();
     let amount = 1_000_0000000i128;
 
-    let shares_minted = w.vault.deposit(&amount, &w.user, &0i128);
+    let shares_minted = w.vault.deposit(&amount, &w.user, &w.base, &0i128);
 
     // ShareToken reflects the mint.
     assert_eq!(w.share.balance(&w.user), shares_minted);
@@ -125,7 +136,7 @@ fn test_deposit_mints_real_share_tokens() {
 fn test_bootstrap_share_price_is_one() {
     let w = setup_world();
     let amount = 500_0000000i128;
-    let minted = w.vault.deposit(&amount, &w.user, &0i128);
+    let minted = w.vault.deposit(&amount, &w.user, &w.base, &0i128);
     assert_eq!(minted, amount);
     // share_price = NAV * PRICE_PRECISION / total_supply = 1.0 * 10^7
     assert_eq!(w.vault.get_share_price(), 10_000_000i128);
@@ -139,8 +150,8 @@ fn test_two_depositors_proportional_shares() {
     let d1 = 1_000_0000000i128;
     let d2 = 500_0000000i128;
 
-    let s1 = w.vault.deposit(&d1, &w.user, &0i128);
-    let s2 = w.vault.deposit(&d2, &w.user2, &0i128);
+    let s1 = w.vault.deposit(&d1, &w.user, &w.base, &0i128);
+    let s2 = w.vault.deposit(&d2, &w.user2, &w.base, &0i128);
 
     // Price stays 1.0 → s2 should be proportional to d2.
     assert_eq!(s2, d2);
@@ -154,7 +165,7 @@ fn test_deposit_withdraw_round_trip() {
     let amount = 2_000_0000000i128;
 
     let before = token_balance(&w.env, &w.base, &w.user);
-    let shares = w.vault.deposit(&amount, &w.user, &0i128);
+    let shares = w.vault.deposit(&amount, &w.user, &w.base, &0i128);
     let returned = w.vault.withdraw(&shares, &w.user, &w.user, &0i128);
     let after = token_balance(&w.env, &w.base, &w.user);
 
@@ -173,7 +184,7 @@ fn test_entry_fee_collected() {
     let amount = 1_000_0000000i128;
 
     let before_mgr_base = token_balance(&w.env, &w.base, &w.manager);
-    let user_shares = w.vault.deposit(&amount, &w.user, &0i128);
+    let user_shares = w.vault.deposit(&amount, &w.user, &w.base, &0i128);
 
     // Bootstrap: total_shares = amount, fee_shares = amount * 100 / 10_000.
     let expected_fee_shares = amount * 100 / 10_000;
@@ -197,7 +208,7 @@ fn test_exit_fee_collected() {
     let w = setup_world_with_fees(0, 200, 0, 0); // 2% exit
     let amount = 1_000_0000000i128;
 
-    let shares = w.vault.deposit(&amount, &w.user, &0i128);
+    let shares = w.vault.deposit(&amount, &w.user, &w.base, &0i128);
     let before_mgr_base = token_balance(&w.env, &w.base, &w.manager);
     let returned = w.vault.withdraw(&shares, &w.user, &w.user, &0i128);
 
@@ -221,7 +232,7 @@ fn test_withdraw_to_different_recipient() {
     let amount = 800_0000000i128;
     let recipient = Address::generate(&w.env);
 
-    let shares = w.vault.deposit(&amount, &w.user, &0i128);
+    let shares = w.vault.deposit(&amount, &w.user, &w.base, &0i128);
     let returned = w.vault.withdraw(&shares, &w.user, &recipient, &0i128);
 
     assert_eq!(returned, amount);
@@ -239,9 +250,9 @@ fn test_withdraw_to_different_recipient() {
 fn test_pause_blocks_deposit_and_withdraw() {
     let w = setup_world();
     let amount = 1_000_0000000i128;
-    let shares = w.vault.deposit(&amount, &w.user, &0i128);
+    let shares = w.vault.deposit(&amount, &w.user, &w.base, &0i128);
 
-    w.vault.pause(&w.manager);
+    w.vault.pause_deposits(&w.manager);
     assert!(w.vault.is_paused());
 
     let deposit_err = std::panic::catch_unwind(|| {
@@ -249,7 +260,7 @@ fn test_pause_blocks_deposit_and_withdraw() {
     });
     let _ = deposit_err;
 
-    w.vault.unpause(&w.manager);
+    w.vault.unpause_deposits(&w.manager);
     assert!(!w.vault.is_paused());
 
     // Withdraw works after unpause.
@@ -264,8 +275,8 @@ fn test_nav_equals_vault_balance_no_strategies() {
     let d1 = 1_500_0000000i128;
     let d2 = 500_0000000i128;
 
-    w.vault.deposit(&d1, &w.user, &0i128);
-    w.vault.deposit(&d2, &w.user2, &0i128);
+    w.vault.deposit(&d1, &w.user, &w.base, &0i128);
+    w.vault.deposit(&d2, &w.user2, &w.base, &0i128);
 
     assert_eq!(w.vault.get_nav(), d1 + d2);
     assert_eq!(token_balance(&w.env, &w.base, &w.vault_addr), d1 + d2);
@@ -284,7 +295,7 @@ fn test_sequential_deposit_withdraw_integrity() {
     MockTokenClient::new(&w.env, &w.base).mint(&users[2], &10_000_0000000i128);
 
     for (i, (user, amount)) in users.iter().zip(amounts.iter()).enumerate() {
-        share_balances[i] = w.vault.deposit(amount, user, &0i128);
+        share_balances[i] = w.vault.deposit(amount, user, &w.base, &0i128);
     }
 
     let total_deposited: i128 = amounts.iter().sum();
@@ -316,20 +327,20 @@ fn test_sequential_deposit_withdraw_integrity() {
 /// Non-manager cannot pause the vault.
 #[test]
 #[should_panic]
-fn test_pause_by_non_manager_panics() {
+fn test_pause_by_non_admin_panics() {
     let w = setup_world();
     let rogue = Address::generate(&w.env);
-    w.vault.pause(&rogue);
+    w.vault.pause_deposits(&rogue);
 }
 
-/// Non-manager cannot unpause the vault.
+/// Non-admin cannot unpause the vault.
 #[test]
 #[should_panic]
-fn test_unpause_by_non_manager_panics() {
+fn test_unpause_by_non_admin_panics() {
     let w = setup_world();
-    w.vault.pause(&w.manager); // legitimate pause
+    w.vault.pause_deposits(&w.manager); // legitimate pause
     let rogue = Address::generate(&w.env);
-    w.vault.unpause(&rogue);
+    w.vault.unpause_deposits(&rogue);
 }
 
 /// Non-manager cannot set the deposit cap.
@@ -339,16 +350,6 @@ fn test_set_deposit_cap_by_non_manager_panics() {
     let w = setup_world();
     let rogue = Address::generate(&w.env);
     w.vault.set_deposit_cap(&rogue, &500_000_0000000i128);
-}
-
-/// Non-manager cannot add or replace the strategy list.
-#[test]
-#[should_panic]
-fn test_set_strategies_by_non_manager_panics() {
-    let w = setup_world();
-    let rogue = Address::generate(&w.env);
-    let strategies = soroban_sdk::Vec::new(&w.env);
-    w.vault.set_strategies(&rogue, &strategies);
 }
 
 /// A user with zero shares cannot withdraw.

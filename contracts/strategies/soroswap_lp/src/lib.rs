@@ -40,15 +40,15 @@ pub use error::SoroswapLpError;
 
 use soroban_sdk::{contract, contractimpl, panic_with_error, token, Address, Env, IntoVal, String, Symbol};
 
-use interfaces::{OracleAdapter, PairAdapter, RouterAdapter};
+use interfaces::{PairAdapter, RouterAdapter};
 
 /// Fixed-point precision matching the vault and oracle (7 decimal places).
 const PRICE_PRECISION: i128 = 10_000_000;
 
 use storage::{
-    get_asset_a, get_asset_b, get_lp_balance, get_lp_token, get_manager, get_name, get_oracle,
-    get_paused, get_router, get_vault, is_initialized, set_asset_a, set_asset_b, set_lp_balance,
-    set_lp_token, set_manager, set_name, set_oracle, set_paused, set_router, set_vault,
+    get_asset_a, get_asset_b, get_factory, get_lp_balance, get_lp_token, get_name,
+    get_paused, get_router, get_vault, is_initialized, set_asset_a, set_asset_b, set_factory,
+    set_lp_balance, set_lp_token, set_manager, set_name, set_paused, set_router, set_vault,
     INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
 };
 
@@ -126,213 +126,20 @@ impl SoroswapLpStrategy {
         set_name(&env, &name);
         set_paused(&env, false);
         set_lp_balance(&env, 0);
-    }
 
-    // -----------------------------------------------------------------------
-    // Core operations
-    // -----------------------------------------------------------------------
-
-    /// Provide liquidity to the Soroswap pool.
-    ///
-    /// The vault must pre-authorise both token transfers via
-    /// `authorize_as_current_contract` before calling this function.
-    ///
-    /// # Arguments
-    /// * `amount_a`  – Desired amount of `asset_a`.
-    /// * `amount_b`  – Desired amount of `asset_b`.
-    /// * `min_a`     – Minimum acceptable `asset_a` deposited (slippage guard).
-    /// * `min_b`     – Minimum acceptable `asset_b` deposited.
-    /// * `from`      – Must equal the registered vault address.
-    ///
-    /// # Returns
-    /// LP tokens minted to this strategy.
-    ///
-    /// # Errors
-    /// * [`SoroswapLpError::NotVault`]
-    /// * [`SoroswapLpError::Paused`]
-    /// * [`SoroswapLpError::InvalidAmount`]
-    pub fn deposit_liquidity(
-        env: Env,
-        amount_a: i128,
-        amount_b: i128,
-        min_a: i128,
-        min_b: i128,
-        from: Address,
-    ) -> i128 {
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-
-        if amount_a <= 0 || amount_b <= 0 {
-            panic_with_error!(&env, SoroswapLpError::InvalidAmount);
-        }
-        if get_paused(&env) {
-            panic_with_error!(&env, SoroswapLpError::Paused);
-        }
-
-        from.require_auth();
-        if from != get_vault(&env) {
-            panic_with_error!(&env, SoroswapLpError::NotVault);
-        }
-
-        let asset_a = get_asset_a(&env);
-        let asset_b = get_asset_b(&env);
-        let lp_token = get_lp_token(&env);
-        let router = get_router(&env);
-        let strategy = env.current_contract_address();
-        let deadline = env.ledger().timestamp() + 300;
-
-        // Pull both tokens from vault into strategy.
-        token::Client::new(&env, &asset_a).transfer(&from, &strategy, &amount_a);
-        token::Client::new(&env, &asset_b).transfer(&from, &strategy, &amount_b);
-
-        // Approve both tokens to the router.
-        let expiry = env.ledger().sequence() + 100;
-        token::Client::new(&env, &asset_a).approve(&strategy, &router, &amount_a, &expiry);
-        token::Client::new(&env, &asset_b).approve(&strategy, &router, &amount_b, &expiry);
-
-        // Balance before to compute LP minted.
-        let lp_before = token::Client::new(&env, &lp_token).balance(&strategy);
-
-        // Call Soroswap router.
-        let (a_used, b_used, _lp_minted) = RouterAdapter::new(&env, &router).add_liquidity(
-            asset_a.clone(),
-            asset_b.clone(),
-            amount_a,
-            amount_b,
-            min_a,
-            min_b,
-            strategy.clone(),
-            deadline,
+        // Cache factory locally: get_total_value must not call back into vault
+        // (re-entry), so we resolve vault → factory once during initialization.
+        let factory_opt: Option<Address> = env.invoke_contract(
+            &vault,
+            &Symbol::new(&env, "get_factory"),
+            ().into_val(&env),
         );
-
-        // Revoke any unspent allowance immediately — must happen before the
-        // return-dust transfers so the router cannot pull residual tokens via
-        // transfer_from during the allowance window.
-        let zero = 0i128;
-        let now = env.ledger().sequence();
-        token::Client::new(&env, &asset_a).approve(&strategy, &router, &zero, &now);
-        token::Client::new(&env, &asset_b).approve(&strategy, &router, &zero, &now);
-
-        // Validate that the router did not consume more than what was approved.
-        if a_used > amount_a || b_used > amount_b {
-            panic_with_error!(&env, SoroswapLpError::Overflow);
+        if let Some(ref factory) = factory_opt {
+            set_factory(&env, factory);
         }
-
-        // Return any unused tokens to the vault so no funds are stranded in
-        // the strategy (AMMs often consume less than the desired amounts due
-        // to pool-ratio constraints).
-        let dust_a = amount_a
-            .checked_sub(a_used)
-            .unwrap_or_else(|| panic_with_error!(&env, SoroswapLpError::Overflow));
-        let dust_b = amount_b
-            .checked_sub(b_used)
-            .unwrap_or_else(|| panic_with_error!(&env, SoroswapLpError::Overflow));
-        if dust_a > 0 {
-            token::Client::new(&env, &asset_a).transfer(&strategy, &from, &dust_a);
-        }
-        if dust_b > 0 {
-            token::Client::new(&env, &asset_b).transfer(&strategy, &from, &dust_b);
-        }
-
-        // Compute LP received.
-        let lp_after = token::Client::new(&env, &lp_token).balance(&strategy);
-
-        // Guard against a misbehaving router that burns or redirects LP tokens.
-        if lp_after < lp_before {
-            panic_with_error!(&env, SoroswapLpError::Overflow);
-        }
-        let lp_received = lp_after - lp_before;
-        if lp_received <= 0 {
-            panic_with_error!(&env, SoroswapLpError::InvalidAmount);
-        }
-
-        // Track locally with checked arithmetic.
-        let prev_lp = get_lp_balance(&env);
-        let new_lp = prev_lp
-            .checked_add(lp_received)
-            .unwrap_or_else(|| panic_with_error!(&env, SoroswapLpError::Overflow));
-        set_lp_balance(&env, new_lp);
-
-        lp_received
     }
 
-    /// Remove liquidity from the Soroswap pool.
-    ///
-    /// Underlying tokens go **directly from the DEX to `to`** (the user).
-    ///
-    /// # Arguments
-    /// * `lp_amount` – LP tokens to redeem.
-    /// * `min_a`     – Minimum `asset_a` to receive.
-    /// * `min_b`     – Minimum `asset_b` to receive.
-    /// * `from`      – Must equal the registered vault.
-    /// * `to`        – Recipient of the underlying tokens (typically the user).
-    ///
-    /// # Returns
-    /// `(amount_a, amount_b)` delivered to `to`.
-    ///
-    /// # Errors
-    /// * [`SoroswapLpError::NotVault`]
-    /// * [`SoroswapLpError::Paused`]
-    /// * [`SoroswapLpError::InvalidAmount`]
-    /// * [`SoroswapLpError::InsufficientLpBalance`]
-    pub fn withdraw(
-        env: Env,
-        lp_amount: i128,
-        min_a: i128,
-        min_b: i128,
-        from: Address,
-        to: Address,
-    ) -> (i128, i128) {
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-
-        if lp_amount <= 0 {
-            panic_with_error!(&env, SoroswapLpError::InvalidAmount);
-        }
-        if get_paused(&env) {
-            panic_with_error!(&env, SoroswapLpError::Paused);
-        }
-
-        from.require_auth();
-        if from != get_vault(&env) {
-            panic_with_error!(&env, SoroswapLpError::NotVault);
-        }
-
-        let tracked = get_lp_balance(&env);
-        if lp_amount > tracked {
-            panic_with_error!(&env, SoroswapLpError::InsufficientLpBalance);
-        }
-
-        let asset_a = get_asset_a(&env);
-        let asset_b = get_asset_b(&env);
-        let lp_token = get_lp_token(&env);
-        let router = get_router(&env);
-        let strategy = env.current_contract_address();
-        let deadline = env.ledger().timestamp() + 300;
-        let expiry = env.ledger().sequence() + 100;
-
-        // Approve LP token to router.
-        token::Client::new(&env, &lp_token).approve(&strategy, &router, &lp_amount, &expiry);
-
-        // Remove liquidity; router sends token_a + token_b directly to `to`.
-        let (amount_a, amount_b) = RouterAdapter::new(&env, &router)
-            .remove_liquidity(asset_a, asset_b, lp_amount, min_a, min_b, to, deadline);
-
-        // Revoke any residual LP-token allowance after the router call.
-        let zero = 0i128;
-        let now = env.ledger().sequence();
-        token::Client::new(&env, &lp_token).approve(&strategy, &router, &zero, &now);
-
-        let new_tracked = tracked
-            .checked_sub(lp_amount)
-            .unwrap_or_else(|| panic_with_error!(&env, SoroswapLpError::Overflow));
-        set_lp_balance(&env, new_tracked);
-
-        (amount_a, amount_b)
-    }
-
+    // -----------------------------------------------------------------------
     // -----------------------------------------------------------------------
     // Valuation
     // -----------------------------------------------------------------------
@@ -358,125 +165,13 @@ impl SoroswapLpStrategy {
 
     /// Return the base-asset value of this strategy's LP position.
     ///
-    /// ## With oracle configured (production path — dHedge V2 §3)
-    /// Uses reserve decomposition for an accurate NAV contribution:
-    /// ```text
-    /// share        = lp_balance / lp_total_supply
-    /// value_a      = reserve_a × oracle.get_price(asset_a) / PRICE_PRECISION
-    /// value_b      = reserve_b × oracle.get_price(asset_b) / PRICE_PRECISION
-    /// get_value()  = share × (value_a + value_b)
-    /// ```
-    /// This correctly accounts for impermanent loss and does **not** require an
-    /// oracle for the LP token itself — only for the underlying pair assets.
-    ///
-    /// ## Without oracle (returns 0)
-    /// Returns 0 when no oracle is configured.  This is intentionally safe:
-    /// the vault's `invest_lp` enforces that an oracle must be set on the
-    /// strategy **before** any liquidity is deposited, so a non-zero LP balance
-    /// without an oracle is not reachable through the vault's normal flow.
-    /// Returning 0 rather than raw LP units prevents NAV inflation from
-    /// non-base-asset-denominated LP share counts.
-    pub fn get_value(env: Env, _vault: Address) -> i128 {
+    /// Uses reserve decomposition with prices from the vault's AssetHandler.
+    /// Returns 0 if the vault has no AssetHandler configured.
+    pub fn get_value(env: Env, vault: Address) -> i128 {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-
-        let lp_balance = get_lp_balance(&env);
-        if lp_balance == 0 {
-            return 0;
-        }
-
-        let oracle = match get_oracle(&env) {
-            Some(o) => o,
-            // Without an oracle the LP units are not base-asset-denominated;
-            // returning them as NAV would inflate share price.
-            None => return 0,
-        };
-
-        let lp_token = get_lp_token(&env);
-        let asset_a = get_asset_a(&env);
-        let asset_b = get_asset_b(&env);
-
-        // Pool reserves and total LP supply from the Soroswap pair contract.
-        let pair = PairAdapter::new(&env, &lp_token);
-        let (reserve_0, reserve_1) = pair.get_reserves();
-        let total_lp = pair.total_supply();
-
-        if total_lp == 0 || (reserve_0 == 0 && reserve_1 == 0) {
-            // Cannot compute reserve decomposition — treat as zero NAV contribution.
-            return 0;
-        }
-
-        // Soroswap pairs order tokens by address internally (token0 < token1).
-        // get_reserves() returns (reserve_token0, reserve_token1).  We must map
-        // reserves to our asset_a / asset_b labels using the pair's token0 to
-        // avoid applying the wrong price to the wrong reserve.
-        let token0 = pair.token0();
-        let (reserve_a, reserve_b) = if token0 == asset_a {
-            (reserve_0, reserve_1)
-        } else {
-            (reserve_1, reserve_0)
-        };
-
-        // Oracle prices (PRICE_PRECISION-scaled) for each underlying asset.
-        let oracle_client = OracleAdapter::new(&env, &oracle);
-        let price_a = oracle_client.get_price(&asset_a);
-        let price_b = oracle_client.get_price(&asset_b);
-
-        // A non-positive price would zero out or negate part of the NAV
-        // calculation, producing a misleading or exploitable share price.
-        if price_a <= 0 || price_b <= 0 {
-            panic_with_error!(&env, SoroswapLpError::InvalidOraclePrice);
-        }
-
-        // Reserve decomposition:
-        //   pool_value = reserveA × priceA/PREC + reserveB × priceB/PREC
-        //   position   = lp_balance / total_lp × pool_value
-        let pool_value_a = reserve_a
-            .checked_mul(price_a)
-            .unwrap_or_else(|| panic_with_error!(&env, SoroswapLpError::Overflow))
-            / PRICE_PRECISION;
-        let pool_value_b = reserve_b
-            .checked_mul(price_b)
-            .unwrap_or_else(|| panic_with_error!(&env, SoroswapLpError::Overflow))
-            / PRICE_PRECISION;
-        let pool_value = pool_value_a
-            .checked_add(pool_value_b)
-            .unwrap_or_else(|| panic_with_error!(&env, SoroswapLpError::Overflow));
-
-        // Use multiply-before-divide to preserve precision.
-        pool_value
-            .checked_mul(lp_balance)
-            .unwrap_or_else(|| panic_with_error!(&env, SoroswapLpError::Overflow))
-            / total_lp
-    }
-
-    // -----------------------------------------------------------------------
-    // Oracle configuration
-    // -----------------------------------------------------------------------
-
-    /// Set the oracle used for reserve-decomposition NAV.
-    ///
-    /// **Vault manager only** — authorized via `vault.get_manager()` on-chain.
-    ///
-    /// Once set, `get_value()` will call `oracle.get_price(asset_a)` and
-    /// `oracle.get_price(asset_b)` and compute NAV from pool reserves rather
-    /// than returning raw LP token units.
-    pub fn set_oracle(env: Env, caller: Address, oracle: Address) {
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-        caller.require_auth();
-        let vault = get_vault(&env);
-        let vault_manager: Address = env.invoke_contract(
-            &vault,
-            &Symbol::new(&env, "get_manager"),
-            ().into_val(&env),
-        );
-        if caller != vault_manager {
-            panic_with_error!(&env, SoroswapLpError::NotManager);
-        }
-        set_oracle(&env, &oracle);
+        Self::compute_lp_value(&env, &vault)
     }
 
     // -----------------------------------------------------------------------
@@ -531,12 +226,312 @@ impl SoroswapLpStrategy {
         get_paused(&env)
     }
 
-    /// Return `true` when an internal oracle is configured.
-    pub fn has_oracle(env: Env) -> bool {
+    // -----------------------------------------------------------------------
+    // Multi-asset guard interface v2
+    // -----------------------------------------------------------------------
+
+    /// Return the total base-asset value of all LP positions for `vault`.
+    ///
+    /// Uses reserve decomposition with prices from the vault's AssetHandler.
+    pub fn get_total_value(env: Env, vault: Address) -> i128 {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-        get_oracle(&env).is_some()
+        if vault != get_vault(&env) {
+            return 0;
+        }
+        Self::compute_lp_value(&env, &vault)
+    }
+
+    /// Withdraw `numerator/denominator` fraction of LP position and send the
+    /// underlying tokens (token_a + token_b) directly to `to`.
+    ///
+    /// Calls `remove_liquidity(…, to=to)` so tokens go directly to the user.
+    ///
+    /// # Errors
+    /// * [`SoroswapLpError::NotVault`] if `vault` ≠ registered vault.
+    pub fn withdraw_fraction(
+        env: Env,
+        vault: Address,
+        numerator: i128,
+        denominator: i128,
+        to: Address,
+    ) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        vault.require_auth();
+        if vault != get_vault(&env) {
+            panic_with_error!(&env, SoroswapLpError::NotVault);
+        }
+        if numerator <= 0 || denominator <= 0 {
+            panic_with_error!(&env, SoroswapLpError::InvalidAmount);
+        }
+
+        let tracked = get_lp_balance(&env);
+        if tracked == 0 {
+            return;
+        }
+
+        let lp_amount = tracked * numerator / denominator;
+        if lp_amount == 0 {
+            return;
+        }
+
+        let asset_a = get_asset_a(&env);
+        let asset_b = get_asset_b(&env);
+        let lp_token = get_lp_token(&env);
+        let router = get_router(&env);
+        let strategy = env.current_contract_address();
+        let deadline = env.ledger().timestamp() + 300;
+        let expiry = env.ledger().sequence() + 100;
+
+        token::Client::new(&env, &lp_token).approve(&strategy, &router, &lp_amount, &expiry);
+        RouterAdapter::new(&env, &router).remove_liquidity(
+            asset_a, asset_b, lp_amount, 0, 0, to, deadline,
+        );
+        let now = env.ledger().sequence();
+        token::Client::new(&env, &lp_token).approve(&strategy, &router, &0i128, &now);
+
+        let new_tracked = tracked
+            .checked_sub(lp_amount)
+            .unwrap_or_else(|| panic_with_error!(&env, SoroswapLpError::Overflow));
+        set_lp_balance(&env, new_tracked);
+    }
+
+    /// Return `true` if this strategy has a non-zero LP position for `vault`
+    /// that involves `asset` (either token_a or token_b).
+    pub fn asset_in_use(env: Env, vault: Address, asset: Address) -> bool {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        if vault != get_vault(&env) {
+            return false;
+        }
+        if get_lp_balance(&env) == 0 {
+            return false;
+        }
+        asset == get_asset_a(&env) || asset == get_asset_b(&env)
+    }
+
+    // -----------------------------------------------------------------------
+    // Trader-callable functions (dispatched via vault.execute_op)
+    //
+    // The vault injects its own address as the first argument.  Callers
+    // cannot substitute a different source address, so funds only flow
+    // from the registered vault.
+    //
+    // Production note: `add_liquidity` and `swap` use `transfer_from` which
+    // requires vault to have pre-approved this strategy for each token.
+    // In tests `mock_all_auths()` bypasses the approval check.
+    // -----------------------------------------------------------------------
+
+    /// Add liquidity to Soroswap on behalf of `vault`.
+    ///
+    /// Called via `vault.execute_op(caller, strategy, "add_liquidity",
+    ///   [amount_a, amount_b, min_a, min_b])`.
+    pub fn add_liquidity(
+        env: Env,
+        vault: Address,
+        amount_a: i128,
+        amount_b: i128,
+        min_a: i128,
+        min_b: i128,
+    ) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        if amount_a <= 0 || amount_b <= 0 {
+            panic_with_error!(&env, SoroswapLpError::InvalidAmount);
+        }
+        if get_paused(&env) {
+            panic_with_error!(&env, SoroswapLpError::Paused);
+        }
+        if vault != get_vault(&env) {
+            panic_with_error!(&env, SoroswapLpError::NotVault);
+        }
+
+        let asset_a = get_asset_a(&env);
+        let asset_b = get_asset_b(&env);
+        let lp_token = get_lp_token(&env);
+        let router = get_router(&env);
+        let strategy = env.current_contract_address();
+        let deadline = env.ledger().timestamp() + 300;
+        let expiry = env.ledger().sequence() + 100;
+
+        // Pull both tokens from vault into strategy.
+        token::Client::new(&env, &asset_a).transfer_from(
+            &strategy, &vault, &strategy, &amount_a,
+        );
+        token::Client::new(&env, &asset_b).transfer_from(
+            &strategy, &vault, &strategy, &amount_b,
+        );
+
+        // Approve both tokens to the router.
+        token::Client::new(&env, &asset_a).approve(&strategy, &router, &amount_a, &expiry);
+        token::Client::new(&env, &asset_b).approve(&strategy, &router, &amount_b, &expiry);
+
+        let lp_before = token::Client::new(&env, &lp_token).balance(&strategy);
+
+        let (a_used, b_used, _lp) = RouterAdapter::new(&env, &router).add_liquidity(
+            asset_a.clone(),
+            asset_b.clone(),
+            amount_a,
+            amount_b,
+            min_a,
+            min_b,
+            strategy.clone(),
+            deadline,
+        );
+
+        // Revoke residual allowances.
+        let now = env.ledger().sequence();
+        token::Client::new(&env, &asset_a).approve(&strategy, &router, &0i128, &now);
+        token::Client::new(&env, &asset_b).approve(&strategy, &router, &0i128, &now);
+
+        if a_used > amount_a || b_used > amount_b {
+            panic_with_error!(&env, SoroswapLpError::Overflow);
+        }
+
+        // Return dust back to vault.
+        let dust_a = amount_a - a_used;
+        let dust_b = amount_b - b_used;
+        if dust_a > 0 {
+            token::Client::new(&env, &asset_a).transfer(&strategy, &vault, &dust_a);
+        }
+        if dust_b > 0 {
+            token::Client::new(&env, &asset_b).transfer(&strategy, &vault, &dust_b);
+        }
+
+        let lp_after = token::Client::new(&env, &lp_token).balance(&strategy);
+        if lp_after < lp_before {
+            panic_with_error!(&env, SoroswapLpError::Overflow);
+        }
+        let lp_received = lp_after - lp_before;
+        if lp_received <= 0 {
+            panic_with_error!(&env, SoroswapLpError::InvalidAmount);
+        }
+
+        let new_lp = get_lp_balance(&env)
+            .checked_add(lp_received)
+            .unwrap_or_else(|| panic_with_error!(&env, SoroswapLpError::Overflow));
+        set_lp_balance(&env, new_lp);
+    }
+
+    /// Remove `lp_amount` of liquidity from Soroswap and send tokens to `vault`.
+    ///
+    /// Called via `vault.execute_op(caller, strategy, "remove_liquidity",
+    ///   [lp_amount, min_a, min_b])`.
+    pub fn remove_liquidity(
+        env: Env,
+        vault: Address,
+        lp_amount: i128,
+        min_a: i128,
+        min_b: i128,
+    ) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        if lp_amount <= 0 {
+            panic_with_error!(&env, SoroswapLpError::InvalidAmount);
+        }
+        if get_paused(&env) {
+            panic_with_error!(&env, SoroswapLpError::Paused);
+        }
+        if vault != get_vault(&env) {
+            panic_with_error!(&env, SoroswapLpError::NotVault);
+        }
+
+        let tracked = get_lp_balance(&env);
+        if lp_amount > tracked {
+            panic_with_error!(&env, SoroswapLpError::InsufficientLpBalance);
+        }
+
+        let asset_a = get_asset_a(&env);
+        let asset_b = get_asset_b(&env);
+        let lp_token = get_lp_token(&env);
+        let router = get_router(&env);
+        let strategy = env.current_contract_address();
+        let deadline = env.ledger().timestamp() + 300;
+        let expiry = env.ledger().sequence() + 100;
+
+        token::Client::new(&env, &lp_token).approve(&strategy, &router, &lp_amount, &expiry);
+
+        // Underlying tokens go directly to vault.
+        RouterAdapter::new(&env, &router).remove_liquidity(
+            asset_a, asset_b, lp_amount, min_a, min_b, vault, deadline,
+        );
+
+        let now = env.ledger().sequence();
+        token::Client::new(&env, &lp_token).approve(&strategy, &router, &0i128, &now);
+
+        let new_tracked = tracked
+            .checked_sub(lp_amount)
+            .unwrap_or_else(|| panic_with_error!(&env, SoroswapLpError::Overflow));
+        set_lp_balance(&env, new_tracked);
+    }
+
+    /// Swap `amount_in` of `from_asset` for `to_asset` via Soroswap router.
+    ///
+    /// Both `from_asset` and `to_asset` must be in the vault's PortfolioAssets.
+    /// Output tokens go directly to `vault`.
+    ///
+    /// Called via `vault.execute_op(caller, strategy, "swap",
+    ///   [from_asset, to_asset, amount_in, min_out])`.
+    pub fn swap(
+        env: Env,
+        vault: Address,
+        from_asset: Address,
+        to_asset: Address,
+        amount_in: i128,
+        min_out: i128,
+    ) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        if amount_in <= 0 {
+            panic_with_error!(&env, SoroswapLpError::InvalidAmount);
+        }
+        if get_paused(&env) {
+            panic_with_error!(&env, SoroswapLpError::Paused);
+        }
+        if vault != get_vault(&env) {
+            panic_with_error!(&env, SoroswapLpError::NotVault);
+        }
+
+        let router = get_router(&env);
+        let strategy = env.current_contract_address();
+        let expiry = env.ledger().sequence() + 100;
+        let deadline = env.ledger().timestamp() + 300;
+
+        // Pull from_asset from vault into strategy.
+        token::Client::new(&env, &from_asset).transfer_from(
+            &strategy, &vault, &strategy, &amount_in,
+        );
+
+        // Approve from_asset to router.
+        token::Client::new(&env, &from_asset).approve(&strategy, &router, &amount_in, &expiry);
+
+        // Build path: [from_asset, to_asset].
+        let path = soroban_sdk::vec![&env, from_asset.clone(), to_asset];
+
+        // Swap; router sends to_asset directly to vault.
+        RouterAdapter::new(&env, &router).swap_exact_tokens_for_tokens(
+            amount_in,
+            min_out,
+            path,
+            vault,
+            deadline,
+        );
+
+        // Revoke residual allowance.
+        let now = env.ledger().sequence();
+        token::Client::new(&env, &from_asset).approve(&strategy, &router, &0i128, &now);
     }
 
     // -----------------------------------------------------------------------
@@ -581,6 +576,70 @@ impl SoroswapLpStrategy {
             panic_with_error!(&env, SoroswapLpError::NotManager);
         }
         set_paused(&env, false);
+    }
+
+    // -----------------------------------------------------------------------
+    // Internal helpers
+    // -----------------------------------------------------------------------
+
+    fn compute_lp_value(env: &Env, vault: &Address) -> i128 {
+        let lp_balance = get_lp_balance(env);
+        if lp_balance == 0 {
+            return 0;
+        }
+
+        // Get AssetHandler from factory (cached locally to avoid vault re-entry).
+        let factory_opt = get_factory(env);
+        let asset_handler_opt: Option<Address> = factory_opt.and_then(|factory| {
+            env.invoke_contract(
+                &factory,
+                &Symbol::new(env, "get_asset_handler"),
+                ().into_val(env),
+            )
+        });
+        let asset_handler = match asset_handler_opt {
+            Some(ah) => ah,
+            None => return 0,
+        };
+
+        let lp_token = get_lp_token(env);
+        let asset_a = get_asset_a(env);
+        let asset_b = get_asset_b(env);
+
+        let pair = PairAdapter::new(env, &lp_token);
+        let (reserve_0, reserve_1) = pair.get_reserves();
+        let total_lp = pair.total_supply();
+
+        if total_lp == 0 || (reserve_0 == 0 && reserve_1 == 0) {
+            return 0;
+        }
+
+        // Map reserves to asset_a/asset_b using token0 ordering.
+        let token0 = pair.token0();
+        let (reserve_a, reserve_b) = if token0 == asset_a {
+            (reserve_0, reserve_1)
+        } else {
+            (reserve_1, reserve_0)
+        };
+
+        let price_a: i128 = env.invoke_contract(
+            &asset_handler,
+            &Symbol::new(env, "get_price"),
+            (asset_a,).into_val(env),
+        );
+        let price_b: i128 = env.invoke_contract(
+            &asset_handler,
+            &Symbol::new(env, "get_price"),
+            (asset_b,).into_val(env),
+        );
+        if price_a <= 0 || price_b <= 0 {
+            return 0;
+        }
+
+        let pool_value_a = reserve_a.saturating_mul(price_a) / PRICE_PRECISION;
+        let pool_value_b = reserve_b.saturating_mul(price_b) / PRICE_PRECISION;
+        let pool_value = pool_value_a.saturating_add(pool_value_b);
+        lp_balance.saturating_mul(pool_value) / total_lp
     }
 }
 

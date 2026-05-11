@@ -1,14 +1,10 @@
-//! Integration tests: Vault ↔ SoroswapLpStrategy ↔ MockSoroswapRouter
-//!
-//! Verifies LP deposit/withdraw through the real SoroswapLpStrategy,
-//! with vault NAV tracking and multi-user share accounting.
+//! Integration tests: Vault ↔ Soroswap LP strategy (execute_op API)
 
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, vec, Address, Env, String};
-
-use share_token::{ShareTokenContract, ShareTokenContractClient};
 use soroswap_lp_strategy::{SoroswapLpStrategy, SoroswapLpStrategyClient};
+use share_token::ShareTokenContract;
+use soroban_sdk::{testutils::Address as _, Address, Env, IntoVal, String, Symbol, Val, Vec};
 use vault::{Vault, VaultClient, VaultParams};
 
 use crate::common::{
@@ -16,124 +12,130 @@ use crate::common::{
 };
 
 // ---------------------------------------------------------------------------
-// Setup
+// World fixture
 // ---------------------------------------------------------------------------
 
-struct World {
+struct SoroswapWorld {
     env: Env,
     vault: VaultClient<'static>,
     vault_addr: Address,
     strategy: SoroswapLpStrategyClient<'static>,
-    _strategy_addr: Address,
-    _base: Address, // token_a (base deposit asset)
-    token_b: Address,
-    _lp_token: Address,
+    strategy_addr: Address,
+    asset_a: Address,
+    asset_b: Address,
+    lp_token: Address,
     manager: Address,
-    _trader: Address,
+    trader: Address,
     user: Address,
-    _user2: Address,
 }
 
-fn setup() -> World {
+fn setup_soroswap() -> SoroswapWorld {
     let env = Env::default();
-    // mock_all_auths_allowing_non_root_auth is required instead of mock_all_auths
-    // because the SoroswapLp strategy's initialize() makes a cross-contract call
-    // back into the vault to retrieve the manager address.  mock_all_auths rejects
-    // auth originating from a non-root (non-first) contract in the call stack, which
-    // would cause that internal call to fail.  The allowing_non_root_auth variant
-    // approves auth at every depth, faithfully modelling what the real network does.
-    //
-    // LIMITATION: Because this blanket mock auto-approves every auth call, these
-    // tests do not verify that individual `require_auth` calls are actually present
-    // in the production code.  If a `require_auth` were accidentally removed from a
-    // function, the tests here would still pass.  Auth enforcement is verified by:
-    //   (a) unit tests in each contract crate that call functions without mock_all_auths
-    //       and expect panics for unauthorized callers; and
-    //   (b) `test_deposit_liquidity_rejects_non_vault_caller` below, which tests
-    //       real auth rejection outside the mock_all_auths scope.
     env.mock_all_auths_allowing_non_root_auth();
 
     let manager = Address::generate(&env);
     let trader = Address::generate(&env);
     let user = Address::generate(&env);
-    let user2 = Address::generate(&env);
 
-    let token_a = env.register(MockToken, ());
-    let token_b = env.register(MockToken, ());
+    // Two underlying assets and an LP token (all MockToken).
+    let asset_a = env.register(MockToken, ());
+    MockTokenClient::new(&env, &asset_a).initialize(&manager);
+
+    let asset_b = env.register(MockToken, ());
+    MockTokenClient::new(&env, &asset_b).initialize(&manager);
+
     let lp_token = env.register(MockToken, ());
-
-    MockTokenClient::new(&env, &token_a).initialize(&manager);
-    MockTokenClient::new(&env, &token_b).initialize(&manager);
     MockTokenClient::new(&env, &lp_token).initialize(&manager);
 
-    let router_id = env.register(MockSoroswapRouter, ());
-    MockSoroswapRouterClient::new(&env, &router_id).router_init(&lp_token);
-
-    // Share token: deployed atomically with manager as admin; vault constructor will take admin.
+    // Use asset_a as vault base (simplest setup — no oracle needed for basic ops).
     let share_id = env.register(
         ShareTokenContract,
         (
             manager.clone(),
-            String::from_str(&env, "VS"),
-            String::from_str(&env, "VS"),
+            String::from_str(&env, "SS Vault Share"),
+            String::from_str(&env, "SVS"),
             7u32,
         ),
     );
-    let strat_id = env.register(SoroswapLpStrategy, ());
 
-    // Deploy vault with constructor (atomic, front-run-proof).
     let vault_id = env.register(
         Vault,
         (VaultParams {
+            admin: manager.clone(),
             manager: manager.clone(),
+            manager_name: None,
             trader: trader.clone(),
-            base_asset: token_a.clone(),
+            base_asset: asset_a.clone(),
             share_token: share_id.clone(),
             share_token_admin: manager.clone(),
+            treasury: manager.clone(),
             entry_fee_bps: 0,
             exit_fee_bps: 0,
             mgmt_fee_bps: 0,
             perf_fee_bps: 0,
+            factory: None,
+            is_private: false,
         },),
     );
     let vault = VaultClient::new(&env, &vault_id);
 
-    // Soroswap LP strategy.
-    let strategy = SoroswapLpStrategyClient::new(&env, &strat_id);
-    strategy.initialize(
+    // MockSoroswapRouter — mints LP tokens on add_liquidity, mints assets on remove.
+    let router_id = env.register(MockSoroswapRouter, ());
+    MockSoroswapRouterClient::new(&env, &router_id).router_init(&lp_token);
+
+    // SoroswapLpStrategy.
+    let strategy_id = env.register(SoroswapLpStrategy, ());
+    SoroswapLpStrategyClient::new(&env, &strategy_id).initialize(
         &vault_id,
-        &token_a,
-        &token_b,
+        &asset_a,
+        &asset_b,
         &lp_token,
         &router_id,
         &manager,
-        &String::from_str(&env, "Soroswap LP"),
+        &String::from_str(&env, "Soroswap USDC-XLM"),
     );
 
-    vault.set_strategies(&manager, &vec![&env, strat_id.clone()]);
+    // Whitelist asset_a (base) in portfolio.  asset_b is not whitelisted here
+    // because these tests pre-fund the vault via mint, not deposit; only asset_a
+    // needs to appear in NAV for the TVL check.  asset_b and LP positions require
+    // an oracle for accurate NAV — we disable the TVL guard instead.
+    vault.add_portfolio_asset(&manager, &asset_a);
 
-    // Fund vault and users.
-    MockTokenClient::new(&env, &token_a).mint(&vault_id, &10_000_0000000i128);
-    MockTokenClient::new(&env, &token_b).mint(&vault_id, &10_000_0000000i128);
-    MockTokenClient::new(&env, &token_a).mint(&user, &100_000_0000000i128);
-    MockTokenClient::new(&env, &token_a).mint(&user2, &100_000_0000000i128);
+    vault.add_active_guard(&manager, &strategy_id);
+    let ops: Vec<Symbol> = soroban_sdk::vec![
+        &env,
+        Symbol::new(&env, "add_liquidity"),
+        Symbol::new(&env, "remove_liquidity"),
+        Symbol::new(&env, "swap"),
+    ];
+    vault.set_authorized_ops(&manager, &strategy_id, &ops);
+
+    // Disable TVL guard: LP positions require an oracle for get_total_value,
+    // which is not configured in these dispatch-focused tests.
+    vault.set_max_loss_bps(&manager, &0u32);
+
+    // Fund the vault with both underlying assets.
+    MockTokenClient::new(&env, &asset_a).mint(&vault_id, &50_000_0000000i128);
+    MockTokenClient::new(&env, &asset_b).mint(&vault_id, &50_000_0000000i128);
+    // Fund user with asset_a for deposits.
+    MockTokenClient::new(&env, &asset_a).mint(&user, &10_000_0000000i128);
 
     let vault: VaultClient<'static> = unsafe { core::mem::transmute(vault) };
-    let strategy: SoroswapLpStrategyClient<'static> = unsafe { core::mem::transmute(strategy) };
+    let strategy: SoroswapLpStrategyClient<'static> =
+        unsafe { core::mem::transmute(SoroswapLpStrategyClient::new(&env, &strategy_id)) };
 
-    World {
+    SoroswapWorld {
         env,
         vault,
         vault_addr: vault_id,
         strategy,
-        _strategy_addr: strat_id,
-        _base: token_a,
-        token_b,
-        _lp_token: lp_token,
+        strategy_addr: strategy_id,
+        asset_a,
+        asset_b,
+        lp_token,
         manager,
-        _trader: trader,
+        trader,
         user,
-        _user2: user2,
     }
 }
 
@@ -141,113 +143,214 @@ fn setup() -> World {
 // Tests
 // ---------------------------------------------------------------------------
 
-/// deposit_liquidity via strategy: LP tokens credited to strategy, NAV unchanged.
+/// add_liquidity via execute_op: vault tokens → strategy → router → LP tokens
+/// minted to strategy.
 #[test]
-fn test_deposit_lp_strategy_tracks_lp() {
-    let w = setup();
+fn test_soroswap_add_liquidity_via_execute_op() {
+    let w = setup_soroswap();
+    let amount_a = 1_000_0000000i128;
+    let amount_b = 1_000_0000000i128;
 
-    let lp =
-        w.strategy
-            .deposit_liquidity(&500_0000000i128, &500_0000000i128, &0, &0, &w.vault_addr);
-    assert!(lp > 0);
-    assert_eq!(w.strategy.get_lp_balance(), lp);
-    // Without an oracle, get_value returns 0 (LP tokens are not base-asset-denominated).
-    assert_eq!(w.strategy.get_value(&w.vault_addr), 0);
-}
-
-/// Partial withdraw from LP strategy sends underlying tokens to user.
-#[test]
-fn test_withdraw_lp_sends_to_user() {
-    let w = setup();
-    let _user_b_before = token_balance(&w.env, &w.token_b, &w.user);
-
-    let lp = w.strategy.deposit_liquidity(
-        &1_000_0000000i128,
-        &1_000_0000000i128,
-        &0,
-        &0,
+    // strategy.add_liquidity calls transfer_from(strategy, vault, strategy) for both assets.
+    MockTokenClient::new(&w.env, &w.asset_a).approve(
         &w.vault_addr,
+        &w.strategy_addr,
+        &amount_a,
+        &1000u32,
     );
-    let (a, b) = w.strategy.withdraw(&lp, &0, &0, &w.vault_addr, &w.user);
-
-    // MockSoroswapRouter returns half/half.
-    assert!(a > 0 || b > 0);
-    assert_eq!(w.strategy.get_lp_balance(), 0);
-}
-
-/// Full Vault → Strategy → Router → withdraw back lifecycle.
-#[test]
-fn test_full_soroswap_lp_lifecycle() {
-    let w = setup();
-
-    // User deposits base token into vault.
-    let deposit = 2_000_0000000i128;
-    let _vault_shares = w.vault.deposit(&deposit, &w.user, &0i128);
-
-    // Manager invests vault's base tokens AND token_b into LP.
-    // (In production the vault would need token_b too; here we pre-funded vault.)
-    let lp = w.strategy.deposit_liquidity(
-        &1_000_0000000i128,
-        &1_000_0000000i128,
-        &0,
-        &0,
+    MockTokenClient::new(&w.env, &w.asset_b).approve(
         &w.vault_addr,
+        &w.strategy_addr,
+        &amount_b,
+        &1000u32,
     );
-    assert_eq!(w.strategy.get_lp_balance(), lp);
 
-    // Strategy is paused and unpaused.
-    w.strategy.pause(&w.manager);
-    assert!(w.strategy.is_paused());
-    w.strategy.unpause(&w.manager);
-    assert!(!w.strategy.is_paused());
+    let args: Vec<Val> = soroban_sdk::vec![
+        &w.env,
+        amount_a.into_val(&w.env),
+        amount_b.into_val(&w.env),
+        0i128.into_val(&w.env), // min_a
+        0i128.into_val(&w.env), // min_b
+    ];
+    w.vault.execute_op(
+        &w.trader,
+        &w.strategy_addr,
+        &Symbol::new(&w.env, "add_liquidity"),
+        &args,
+    );
 
-    // Withdraw from LP strategy to user.
-    let half = lp / 2;
-    w.strategy.withdraw(&half, &0, &0, &w.vault_addr, &w.user);
-    assert_eq!(w.strategy.get_lp_balance(), lp - half);
+    // MockRouter mints min(amount_a, amount_b) LP tokens to strategy.
+    let lp_minted = amount_a.min(amount_b);
+    assert_eq!(token_balance(&w.env, &w.lp_token, &w.strategy_addr), lp_minted);
 
-    w.strategy
-        .withdraw(&(lp - half), &0, &0, &w.vault_addr, &w.user);
+    // Strategy's tracked LP balance matches.
+    assert_eq!(w.strategy.get_lp_balance(), lp_minted);
+
+    // Vault lost both assets.
+    let vault_a_after = token_balance(&w.env, &w.asset_a, &w.vault_addr);
+    let vault_b_after = token_balance(&w.env, &w.asset_b, &w.vault_addr);
+    assert_eq!(vault_a_after, 50_000_0000000i128 - amount_a);
+    assert_eq!(vault_b_after, 50_000_0000000i128 - amount_b);
+}
+
+/// remove_liquidity via execute_op: LP tokens burned at router → underlying
+/// tokens minted directly to vault.
+#[test]
+fn test_soroswap_remove_liquidity_via_execute_op() {
+    let w = setup_soroswap();
+    let amount_a = 2_000_0000000i128;
+    let amount_b = 2_000_0000000i128;
+
+    // Add liquidity first.
+    MockTokenClient::new(&w.env, &w.asset_a).approve(
+        &w.vault_addr,
+        &w.strategy_addr,
+        &amount_a,
+        &1000u32,
+    );
+    MockTokenClient::new(&w.env, &w.asset_b).approve(
+        &w.vault_addr,
+        &w.strategy_addr,
+        &amount_b,
+        &1000u32,
+    );
+    let add_args: Vec<Val> = soroban_sdk::vec![
+        &w.env,
+        amount_a.into_val(&w.env),
+        amount_b.into_val(&w.env),
+        0i128.into_val(&w.env),
+        0i128.into_val(&w.env),
+    ];
+    w.vault.execute_op(
+        &w.trader,
+        &w.strategy_addr,
+        &Symbol::new(&w.env, "add_liquidity"),
+        &add_args,
+    );
+
+    let lp_minted = amount_a.min(amount_b);
+    let vault_a_before = token_balance(&w.env, &w.asset_a, &w.vault_addr);
+    let vault_b_before = token_balance(&w.env, &w.asset_b, &w.vault_addr);
+
+    // Remove all LP tokens.
+    let remove_args: Vec<Val> = soroban_sdk::vec![
+        &w.env,
+        lp_minted.into_val(&w.env),
+        0i128.into_val(&w.env), // min_a
+        0i128.into_val(&w.env), // min_b
+    ];
+    w.vault.execute_op(
+        &w.trader,
+        &w.strategy_addr,
+        &Symbol::new(&w.env, "remove_liquidity"),
+        &remove_args,
+    );
+
+    // MockRouter's remove_liquidity mints half each of asset_a/asset_b to vault.
+    let expected_each = lp_minted / 2;
+    assert_eq!(
+        token_balance(&w.env, &w.asset_a, &w.vault_addr),
+        vault_a_before + expected_each
+    );
+    assert_eq!(
+        token_balance(&w.env, &w.asset_b, &w.vault_addr),
+        vault_b_before + expected_each
+    );
+
+    // Strategy's tracked LP balance is zero (internal accounting).
     assert_eq!(w.strategy.get_lp_balance(), 0);
+    // Note: the mock router does not burn LP token on-chain (it lacks caller identity);
+    // real Soroswap uses an allowance-based pull from the strategy to the pair.
+    // The tracked balance above is the authoritative measure for NAV.
 }
 
-/// Multiple LP deposits accumulate correctly.
+/// swap via execute_op: vault's from_asset → strategy → router → to_asset
+/// minted directly to vault.
 #[test]
-fn test_multiple_lp_deposits() {
-    let w = setup();
+fn test_soroswap_swap_via_execute_op() {
+    let w = setup_soroswap();
+    let amount_in = 500_0000000i128;
 
-    let lp1 =
-        w.strategy
-            .deposit_liquidity(&200_0000000i128, &200_0000000i128, &0, &0, &w.vault_addr);
-    let lp2 =
-        w.strategy
-            .deposit_liquidity(&300_0000000i128, &300_0000000i128, &0, &0, &w.vault_addr);
-    assert_eq!(w.strategy.get_lp_balance(), lp1 + lp2);
+    let vault_a_before = token_balance(&w.env, &w.asset_a, &w.vault_addr);
+    let vault_b_before = token_balance(&w.env, &w.asset_b, &w.vault_addr);
+
+    // strategy.swap calls transfer_from(strategy, vault, strategy, amount_in) on asset_a.
+    MockTokenClient::new(&w.env, &w.asset_a).approve(
+        &w.vault_addr,
+        &w.strategy_addr,
+        &amount_in,
+        &1000u32,
+    );
+
+    let args: Vec<Val> = soroban_sdk::vec![
+        &w.env,
+        w.asset_a.clone().into_val(&w.env), // from_asset
+        w.asset_b.clone().into_val(&w.env), // to_asset
+        amount_in.into_val(&w.env),
+        0i128.into_val(&w.env), // min_out
+    ];
+    w.vault.execute_op(
+        &w.trader,
+        &w.strategy_addr,
+        &Symbol::new(&w.env, "swap"),
+        &args,
+    );
+
+    // MockRouter's 1:1 swap: vault loses asset_a, gains asset_b.
+    assert_eq!(
+        token_balance(&w.env, &w.asset_a, &w.vault_addr),
+        vault_a_before - amount_in
+    );
+    // MockRouter mints amount_out = amount_in of asset_b to vault.
+    assert_eq!(
+        token_balance(&w.env, &w.asset_b, &w.vault_addr),
+        vault_b_before + amount_in
+    );
 }
 
-/// Paused strategy rejects LP deposits.
+/// get_total_value returns 0 when no oracle is configured (early exit).
 #[test]
-#[should_panic]
-fn test_paused_strategy_deposit_panics() {
-    let w = setup();
-    w.strategy.pause(&w.manager);
-    w.strategy
-        .deposit_liquidity(&100_0000000i128, &100_0000000i128, &0, &0, &w.vault_addr);
+fn test_soroswap_get_total_value_without_oracle_returns_zero() {
+    let w = setup_soroswap();
+    // No oracle set → strategy returns 0 rather than panicking.
+    assert_eq!(w.strategy.get_total_value(&w.vault_addr), 0);
 }
 
-/// A caller that is not the registered vault is rejected by deposit_liquidity.
-///
-/// This test exercises the `from != get_vault()` guard in `deposit_liquidity`.
-/// Even though the environment uses `mock_all_auths_allowing_non_root_auth`
-/// (which auto-approves the `from.require_auth()` call), the subsequent
-/// vault-identity check must still reject any address that is not the vault.
-/// This proves the guard is present and enforced independently of auth mocking.
+/// asset_in_use returns true after add_liquidity for both underlying assets.
 #[test]
-#[should_panic]
-fn test_deposit_liquidity_rejects_non_vault_caller() {
-    let w = setup();
-    let rogue = Address::generate(&w.env);
-    // rogue is not the vault — must panic with NotVault regardless of auth.
-    w.strategy
-        .deposit_liquidity(&100_0000000i128, &100_0000000i128, &0, &0, &rogue);
+fn test_soroswap_asset_in_use_after_add_liquidity() {
+    let w = setup_soroswap();
+    let amount = 1_000_0000000i128;
+
+    assert!(!w.strategy.asset_in_use(&w.vault_addr, &w.asset_a));
+    assert!(!w.strategy.asset_in_use(&w.vault_addr, &w.asset_b));
+
+    MockTokenClient::new(&w.env, &w.asset_a).approve(
+        &w.vault_addr,
+        &w.strategy_addr,
+        &amount,
+        &1000u32,
+    );
+    MockTokenClient::new(&w.env, &w.asset_b).approve(
+        &w.vault_addr,
+        &w.strategy_addr,
+        &amount,
+        &1000u32,
+    );
+    let args: Vec<Val> = soroban_sdk::vec![
+        &w.env,
+        amount.into_val(&w.env),
+        amount.into_val(&w.env),
+        0i128.into_val(&w.env),
+        0i128.into_val(&w.env),
+    ];
+    w.vault.execute_op(
+        &w.trader,
+        &w.strategy_addr,
+        &Symbol::new(&w.env, "add_liquidity"),
+        &args,
+    );
+
+    assert!(w.strategy.asset_in_use(&w.vault_addr, &w.asset_a));
+    assert!(w.strategy.asset_in_use(&w.vault_addr, &w.asset_b));
 }

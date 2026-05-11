@@ -1,4 +1,5 @@
 //! PhoenixLpStrategy storage layout.
+#![allow(dead_code)]
 //!
 //! All state is kept in **instance storage** so its TTL is tied to the contract
 //! instance itself.
@@ -68,8 +69,9 @@ pub enum DataKey {
     /// Incremented on `deposit_liquidity`, decremented on `withdraw`.
     TotalShares,
 
-    /// Optional oracle contract used to price underlying assets for NAV.
-    Oracle,
+    /// Factory address cached during initialize so get_total_value can reach
+    /// AssetHandler without calling back into the vault (re-entry prevention).
+    Factory,
 }
 
 // ---------------------------------------------------------------------------
@@ -120,15 +122,15 @@ macro_rules! addr_get {
     };
 }
 
-// Optional address helpers (for Oracle)
-pub fn set_oracle(env: &Env, v: &Address) {
+// Factory address helpers
+pub fn set_factory(env: &Env, v: &Address) {
     bump(env);
-    env.storage().instance().set(&DataKey::Oracle, v);
+    env.storage().instance().set(&DataKey::Factory, v);
 }
 
-pub fn get_oracle(env: &Env) -> Option<Address> {
+pub fn get_factory(env: &Env) -> Option<Address> {
     bump(env);
-    env.storage().instance().get(&DataKey::Oracle)
+    env.storage().instance().get(&DataKey::Factory)
 }
 
 // ---------------------------------------------------------------------------

@@ -111,4 +111,55 @@ pub enum VaultError {
     /// The deposit returned fewer shares than `min_shares_out`, or the
     /// withdrawal returned fewer base tokens than `min_base_out`.
     SlippageTooHigh = 29,
+
+    // -----------------------------------------------------------------------
+    // Multi-asset v2 errors (30+)
+    // -----------------------------------------------------------------------
+
+    /// The asset is not in the factory's global authorized asset list.
+    AssetNotAuthorized = 30,
+
+    /// The asset is not in the vault's PortfolioAssets list.
+    AssetNotInPortfolio = 31,
+
+    /// The asset already exists in the portfolio or deposit asset list.
+    AssetAlreadyPresent = 32,
+
+    /// Cannot remove an asset from PortfolioAssets while its token balance > 0.
+    AssetHasBalance = 33,
+
+    /// Cannot remove an asset from PortfolioAssets while a guard has an active
+    /// position involving this asset.
+    AssetInUseByGuard = 34,
+
+    /// Cannot remove a guard from ActiveGuards while it has a non-zero total
+    /// position value for this vault.
+    GuardHasActivePosition = 35,
+
+    /// The guard is not in the factory's authorized guard list.
+    GuardNotAuthorized = 36,
+
+    /// The guard is already registered as an active guard for this vault.
+    GuardAlreadyActive = 37,
+
+    /// The seed deposit has already been executed; it can only run once.
+    SeedAlreadyDeposited = 38,
+
+    /// The vault has no factory reference set; required for asset validation.
+    FactoryNotSet = 39,
+
+    /// An oracle is required to price a non-base deposit or portfolio asset.
+    OracleRequired = 40,
+
+    /// The maximum number of active guards (MAX_GUARDS) has been reached.
+    TooManyGuards = 41,
+
+    /// The maximum number of portfolio assets (MAX_PORTFOLIO_ASSETS) has been reached.
+    TooManyAssets = 42,
+
+    /// Manager operations (execute_op) are currently paused by admin.
+    OperationsPaused = 43,
+
+    /// The caller is not the registered admin address.
+    NotAdmin = 44,
 }

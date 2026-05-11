@@ -1,114 +1,125 @@
-//! Integration tests: Vault ↔ BlendStrategy ↔ MockBlendPool
-//!
-//! Verifies the full invest/unwind lifecycle using the real BlendStrategy
-//! contract and a simplified mock of the Blend pool.
+//! Integration tests: Vault ↔ Blend strategy (execute_op API)
 
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, vec, Address, Env, String};
-
 use blend_strategy::{BlendStrategy, BlendStrategyClient};
 use share_token::{ShareTokenContract, ShareTokenContractClient};
+use soroban_sdk::{testutils::Address as _, Address, Env, IntoVal, String, Symbol, Val, Vec};
 use vault::{Vault, VaultClient, VaultParams};
 
-use crate::common::{
-    token_balance, MockBlendPool, MockBlendPoolClient, MockToken, MockTokenClient,
-};
+use crate::common::{token_balance, MockBlendPool, MockBlendPoolClient, MockToken, MockTokenClient};
 
 // ---------------------------------------------------------------------------
-// Setup
+// World fixture
 // ---------------------------------------------------------------------------
 
-struct World {
+struct BlendWorld {
     env: Env,
     vault: VaultClient<'static>,
     vault_addr: Address,
     strategy: BlendStrategyClient<'static>,
     strategy_addr: Address,
+    blend_pool: MockBlendPoolClient<'static>,
+    share_token_addr: Address,
     base: Address,
-    _blend_pool: Address,
     manager: Address,
-    _trader: Address,
+    trader: Address,
     user: Address,
 }
 
-fn setup() -> World {
+fn setup_blend() -> BlendWorld {
     let env = Env::default();
-    // Allow non-root auth so vault can authorize token sub-calls made by the strategy.
     env.mock_all_auths_allowing_non_root_auth();
 
     let manager = Address::generate(&env);
     let trader = Address::generate(&env);
     let user = Address::generate(&env);
 
-    // Base token (e.g. USDC).
+    // Base asset (USDC mock).
     let base = env.register(MockToken, ());
     MockTokenClient::new(&env, &base).initialize(&manager);
 
-    // Share token: deployed atomically with manager as admin; vault constructor will take admin.
+    // Share token for the vault.
     let share_id = env.register(
         ShareTokenContract,
         (
             manager.clone(),
-            String::from_str(&env, "VS"),
-            String::from_str(&env, "VS"),
+            String::from_str(&env, "Blend Vault Share"),
+            String::from_str(&env, "BVS"),
             7u32,
         ),
     );
 
-    // Blend pool mock.
-    let blend_pool = env.register(MockBlendPool, ());
-    MockBlendPoolClient::new(&env, &blend_pool).blend_init(&base);
-
-    // Real BlendStrategy.
-    let strat_id = env.register(BlendStrategy, ());
-    let strategy = BlendStrategyClient::new(&env, &strat_id);
-
-    // Deploy vault with constructor (atomic, front-run-proof).
+    // Deploy vault.
     let vault_id = env.register(
         Vault,
         (VaultParams {
+            admin: manager.clone(),
             manager: manager.clone(),
+            manager_name: None,
             trader: trader.clone(),
             base_asset: base.clone(),
             share_token: share_id.clone(),
             share_token_admin: manager.clone(),
+            treasury: manager.clone(),
             entry_fee_bps: 0,
             exit_fee_bps: 0,
             mgmt_fee_bps: 0,
             perf_fee_bps: 0,
+            factory: None,
+            is_private: false,
         },),
     );
     let vault = VaultClient::new(&env, &vault_id);
 
-    // Initialize Blend strategy.
-    strategy.initialize(
+    // Deploy MockBlendPool.
+    let pool_id = env.register(MockBlendPool, ());
+    MockBlendPoolClient::new(&env, &pool_id).blend_init(&base);
+
+    // Deploy BlendStrategy.
+    let strategy_id = env.register(BlendStrategy, ());
+    BlendStrategyClient::new(&env, &strategy_id).initialize(
         &vault_id,
         &base,
-        &blend_pool,
+        &pool_id,
         &manager,
         &String::from_str(&env, "Blend USDC"),
     );
 
-    // Whitelist strategy.
-    vault.set_strategies(&manager, &vec![&env, strat_id.clone()]);
+    // Whitelist base in portfolio and as a deposit asset so vault NAV includes
+    // idle cash.  Guards must also be registered so their positions count.
+    vault.add_portfolio_asset(&manager, &base);
+    vault.add_deposit_asset(&manager, &base);
 
-    // Fund user with base tokens.
-    MockTokenClient::new(&env, &base).mint(&user, &100_000_0000000i128);
+    // Register strategy as active guard and authorize named ops.
+    vault.add_active_guard(&manager, &strategy_id);
+    let ops: Vec<Symbol> = soroban_sdk::vec![
+        &env,
+        Symbol::new(&env, "supply"),
+        Symbol::new(&env, "withdraw_from_lending"),
+    ];
+    vault.set_authorized_ops(&manager, &strategy_id, &ops);
+
+    // Fund user.
+    MockTokenClient::new(&env, &base).mint(&user, &10_000_0000000i128);
 
     let vault: VaultClient<'static> = unsafe { core::mem::transmute(vault) };
-    let strategy: BlendStrategyClient<'static> = unsafe { core::mem::transmute(strategy) };
+    let strategy: BlendStrategyClient<'static> =
+        unsafe { core::mem::transmute(BlendStrategyClient::new(&env, &strategy_id)) };
+    let blend_pool: MockBlendPoolClient<'static> =
+        unsafe { core::mem::transmute(MockBlendPoolClient::new(&env, &pool_id)) };
 
-    World {
+    BlendWorld {
         env,
         vault,
         vault_addr: vault_id,
         strategy,
-        strategy_addr: strat_id,
+        strategy_addr: strategy_id,
+        blend_pool,
+        share_token_addr: share_id,
         base,
-        _blend_pool: blend_pool,
         manager,
-        _trader: trader,
+        trader,
         user,
     }
 }
@@ -117,115 +128,188 @@ fn setup() -> World {
 // Tests
 // ---------------------------------------------------------------------------
 
-/// Vault deposits, manager invests into Blend, NAV stays constant.
+/// supply via execute_op: tokens move from vault → strategy → Blend pool.
 #[test]
-fn test_invest_blend_nav_constant() {
-    let w = setup();
+fn test_blend_supply_via_execute_op() {
+    let w = setup_blend();
     let deposit = 1_000_0000000i128;
-    let invest = 600_0000000i128;
+    let supply_amount = 500_0000000i128;
 
-    w.vault.deposit(&deposit, &w.user, &0i128);
-    assert_eq!(w.vault.get_nav(), deposit);
+    w.vault.deposit(&deposit, &w.user, &w.base, &0i128);
+    assert_eq!(token_balance(&w.env, &w.base, &w.vault_addr), deposit);
 
-    w.vault.invest(&w.manager, &w.strategy_addr, &invest);
-
-    // Vault base balance reduced by invest amount.
-    assert_eq!(
-        token_balance(&w.env, &w.base, &w.vault_addr),
-        deposit - invest
+    // strategy.supply calls transfer_from(strategy, vault, strategy, amount)
+    // → vault must pre-approve strategy as spender.
+    MockTokenClient::new(&w.env, &w.base).approve(
+        &w.vault_addr,
+        &w.strategy_addr,
+        &supply_amount,
+        &1000u32,
     );
-    // Strategy position grows.
-    assert_eq!(w.strategy.get_value(&w.vault_addr), invest);
-    // NAV = vault_balance + strategy_value = unchanged.
-    assert_eq!(w.vault.get_nav(), deposit);
-}
 
-/// Unwind returns tokens from Blend strategy back to vault.
-#[test]
-fn test_unwind_blend_returns_to_vault() {
-    let w = setup();
-    let deposit = 1_000_0000000i128;
-    let invest = 400_0000000i128;
-
-    w.vault.deposit(&deposit, &w.user, &0i128);
-    w.vault.invest(&w.manager, &w.strategy_addr, &invest);
-
-    let vault_before = token_balance(&w.env, &w.base, &w.vault_addr);
-    w.vault.unwind(&w.manager, &w.strategy_addr, &invest);
-
-    // Tokens returned to vault.
-    assert_eq!(
-        token_balance(&w.env, &w.base, &w.vault_addr),
-        vault_before + invest
-    );
-    // Strategy position zeroed.
-    assert_eq!(w.strategy.get_value(&w.vault_addr), 0);
-    // NAV unchanged.
-    assert_eq!(w.vault.get_nav(), deposit);
-}
-
-/// Full lifecycle: deposit → invest → unwind → withdraw.
-#[test]
-fn test_full_blend_lifecycle() {
-    let w = setup();
-    let deposit = 2_000_0000000i128;
-    let invest = 1_500_0000000i128;
-    let partial = 500_0000000i128;
-
-    // Deposit.
-    let shares = w.vault.deposit(&deposit, &w.user, &0i128);
-    assert_eq!(w.vault.get_nav(), deposit);
-
-    // Invest most of it.
-    w.vault.invest(&w.manager, &w.strategy_addr, &invest);
-    assert_eq!(w.vault.get_nav(), deposit); // NAV constant
-
-    // Partial unwind.
-    w.vault.unwind(&w.manager, &w.strategy_addr, &partial);
-    assert_eq!(w.strategy.get_value(&w.vault_addr), invest - partial);
-
-    // Unwind rest.
+    let args: Vec<Val> = soroban_sdk::vec![&w.env, supply_amount.into_val(&w.env)];
     w.vault
-        .unwind(&w.manager, &w.strategy_addr, &(invest - partial));
-    assert_eq!(w.strategy.get_value(&w.vault_addr), 0);
+        .execute_op(&w.trader, &w.strategy_addr, &Symbol::new(&w.env, "supply"), &args);
 
-    // User withdraws all shares — receives full deposit back.
-    let user_before = token_balance(&w.env, &w.base, &w.user);
-    let returned = w.vault.withdraw(&shares, &w.user, &w.user, &0i128);
-    assert_eq!(returned, deposit);
+    // Blend pool records strategy's position.
+    assert_eq!(w.blend_pool.get_supply(&w.strategy_addr), supply_amount);
+    // Vault's idle balance reduced by the supplied amount.
     assert_eq!(
-        token_balance(&w.env, &w.base, &w.user),
-        user_before + deposit
+        token_balance(&w.env, &w.base, &w.vault_addr),
+        deposit - supply_amount
     );
+    // Strategy holds no base asset (it all went to Blend).
+    assert_eq!(token_balance(&w.env, &w.base, &w.strategy_addr), 0);
 }
 
-/// Multiple invest/unwind rounds don't corrupt NAV tracking.
+/// withdraw_from_lending via execute_op: Blend sends tokens directly to vault.
 #[test]
-fn test_multiple_invest_unwind_rounds() {
-    let w = setup();
-    let deposit = 3_000_0000000i128;
-    w.vault.deposit(&deposit, &w.user, &0i128);
+fn test_blend_withdraw_from_lending_via_execute_op() {
+    let w = setup_blend();
+    let deposit = 1_000_0000000i128;
+    let supply_amount = 500_0000000i128;
 
-    for _ in 0..3u32 {
-        w.vault
-            .invest(&w.manager, &w.strategy_addr, &1_000_0000000i128);
-        assert_eq!(w.vault.get_nav(), deposit);
-        w.vault
-            .unwind(&w.manager, &w.strategy_addr, &1_000_0000000i128);
-        assert_eq!(w.vault.get_nav(), deposit);
-    }
+    w.vault.deposit(&deposit, &w.user, &w.base, &0i128);
+    MockTokenClient::new(&w.env, &w.base).approve(
+        &w.vault_addr,
+        &w.strategy_addr,
+        &supply_amount,
+        &1000u32,
+    );
+    let supply_args: Vec<Val> = soroban_sdk::vec![&w.env, supply_amount.into_val(&w.env)];
+    w.vault.execute_op(
+        &w.trader,
+        &w.strategy_addr,
+        &Symbol::new(&w.env, "supply"),
+        &supply_args,
+    );
 
-    // All value back in vault.
+    assert_eq!(w.blend_pool.get_supply(&w.strategy_addr), supply_amount);
+
+    let withdraw_args: Vec<Val> = soroban_sdk::vec![&w.env, supply_amount.into_val(&w.env)];
+    w.vault.execute_op(
+        &w.trader,
+        &w.strategy_addr,
+        &Symbol::new(&w.env, "withdraw_from_lending"),
+        &withdraw_args,
+    );
+
+    // Blend position is cleared.
+    assert_eq!(w.blend_pool.get_supply(&w.strategy_addr), 0);
+    // Tokens returned directly from Blend to vault (MockBlendPool mints on withdraw).
     assert_eq!(token_balance(&w.env, &w.base, &w.vault_addr), deposit);
 }
 
-/// Strategy is paused — vault cannot invest into it.
+/// get_total_value returns the live Blend position for the correct vault.
+#[test]
+fn test_blend_get_total_value_reflects_position() {
+    let w = setup_blend();
+    let deposit = 1_000_0000000i128;
+    let supply_amount = 700_0000000i128;
+
+    // No position yet → 0.
+    assert_eq!(w.strategy.get_total_value(&w.vault_addr), 0);
+
+    w.vault.deposit(&deposit, &w.user, &w.base, &0i128);
+    MockTokenClient::new(&w.env, &w.base).approve(
+        &w.vault_addr,
+        &w.strategy_addr,
+        &supply_amount,
+        &1000u32,
+    );
+    let args: Vec<Val> = soroban_sdk::vec![&w.env, supply_amount.into_val(&w.env)];
+    w.vault
+        .execute_op(&w.trader, &w.strategy_addr, &Symbol::new(&w.env, "supply"), &args);
+
+    assert_eq!(w.strategy.get_total_value(&w.vault_addr), supply_amount);
+
+    // Wrong vault address → 0.
+    let stranger = Address::generate(&w.env);
+    assert_eq!(w.strategy.get_total_value(&stranger), 0);
+}
+
+/// asset_in_use returns true for the managed asset while position is non-zero.
+#[test]
+fn test_blend_asset_in_use() {
+    let w = setup_blend();
+    let deposit = 1_000_0000000i128;
+    let supply_amount = 200_0000000i128;
+
+    assert!(!w.strategy.asset_in_use(&w.vault_addr, &w.base));
+
+    w.vault.deposit(&deposit, &w.user, &w.base, &0i128);
+    MockTokenClient::new(&w.env, &w.base).approve(
+        &w.vault_addr,
+        &w.strategy_addr,
+        &supply_amount,
+        &1000u32,
+    );
+    let args: Vec<Val> = soroban_sdk::vec![&w.env, supply_amount.into_val(&w.env)];
+    w.vault
+        .execute_op(&w.trader, &w.strategy_addr, &Symbol::new(&w.env, "supply"), &args);
+
+    assert!(w.strategy.asset_in_use(&w.vault_addr, &w.base));
+}
+
+/// Proportional withdrawal: vault.withdraw calls withdraw_fraction on the
+/// Blend strategy, which sends Blend-held tokens directly to the user.
+#[test]
+fn test_blend_proportional_withdrawal_with_active_guard() {
+    let w = setup_blend();
+    let deposit = 1_000_0000000i128;
+    let supply_amount = 500_0000000i128;
+
+    w.vault.deposit(&deposit, &w.user, &w.base, &0i128);
+
+    MockTokenClient::new(&w.env, &w.base).approve(
+        &w.vault_addr,
+        &w.strategy_addr,
+        &supply_amount,
+        &1000u32,
+    );
+    let supply_args: Vec<Val> = soroban_sdk::vec![&w.env, supply_amount.into_val(&w.env)];
+    w.vault.execute_op(
+        &w.trader,
+        &w.strategy_addr,
+        &Symbol::new(&w.env, "supply"),
+        &supply_args,
+    );
+
+    // State: vault has 500 idle, Blend has 500 for strategy.
+    let share_client = ShareTokenContractClient::new(&w.env, &w.share_token_addr);
+    let user_shares = share_client.balance(&w.user);
+    assert_eq!(user_shares, deposit); // bootstrap 1:1, no fees
+
+    let user_base_before = token_balance(&w.env, &w.base, &w.user);
+
+    // Withdraw all shares: vault sends proportional base (500) + Blend strategy
+    // sends its proportional position (500) directly to user via withdraw_fraction.
+    w.vault.withdraw(&user_shares, &w.user, &w.user, &0i128);
+
+    let user_base_after = token_balance(&w.env, &w.base, &w.user);
+    // User receives the full deposit back.
+    assert_eq!(user_base_after - user_base_before, deposit);
+    assert_eq!(share_client.balance(&w.user), 0);
+    assert_eq!(w.blend_pool.get_supply(&w.strategy_addr), 0);
+}
+
+/// execute_op rejects a function name that is not in the authorized ops list.
 #[test]
 #[should_panic]
-fn test_invest_into_paused_strategy_panics() {
-    let w = setup();
-    w.vault.deposit(&1_000_0000000i128, &w.user, &0i128);
-    w.strategy.pause(&w.manager);
+fn test_blend_execute_op_rejects_unauthorized_fn() {
+    let w = setup_blend();
+    let args: Vec<Val> = soroban_sdk::vec![&w.env, 100i128.into_val(&w.env)];
     w.vault
-        .invest(&w.manager, &w.strategy_addr, &500_0000000i128);
+        .execute_op(&w.trader, &w.strategy_addr, &Symbol::new(&w.env, "deposit"), &args);
+}
+
+/// execute_op rejects callers that are neither manager nor trader.
+#[test]
+#[should_panic]
+fn test_blend_execute_op_rejects_non_trader_caller() {
+    let w = setup_blend();
+    let stranger = Address::generate(&w.env);
+    let args: Vec<Val> = soroban_sdk::vec![&w.env, 100i128.into_val(&w.env)];
+    w.vault
+        .execute_op(&stranger, &w.strategy_addr, &Symbol::new(&w.env, "supply"), &args);
 }

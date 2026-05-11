@@ -14,3 +14,5 @@ mod test_vault_phoenix_lp;
 mod test_vault_soroswap_lp;
 #[cfg(test)]
 mod test_vault_trade;
+#[cfg(test)]
+mod test_vault_multiasset;

@@ -1,4 +1,5 @@
 //! SoroswapLpStrategy storage layout.
+#![allow(dead_code)]
 //!
 //! All state is kept in **instance storage** so its TTL is tied to the contract
 //! instance itself.  This is appropriate because the strategy's liveness is
@@ -67,18 +68,9 @@ pub enum DataKey {
     /// Cumulative LP tokens held by this strategy contract.
     /// Incremented on `deposit_liquidity` and decremented on `withdraw`.
     LpBalance,
-    /// Optional oracle contract for reserve-decomposition NAV (dHedge V2 §3).
-    ///
-    /// When set, `get_value()` prices the LP position as:
-    /// ```text
-    /// share        = lp_balance / pair.total_supply()
-    /// pool_value   = pair.get_reserves().0 × oracle.get_price(asset_a) / PRICE_PRECISION
-    ///              + pair.get_reserves().1 × oracle.get_price(asset_b) / PRICE_PRECISION
-    /// get_value()  = pool_value × share
-    /// ```
-    /// This correctly accounts for impermanent loss without requiring an LP
-    /// token oracle — only the underlying asset prices are needed.
-    Oracle,
+    /// Factory address cached during initialize so get_total_value can reach
+    /// AssetHandler without calling back into the vault (re-entry prevention).
+    Factory,
 }
 
 // ---------------------------------------------------------------------------
@@ -188,15 +180,14 @@ pub fn get_lp_balance(env: &Env) -> i128 {
 // ---------------------------------------------------------------------------
 
 /// Persist the oracle address used for reserve-decomposition NAV.
-pub fn set_oracle(env: &Env, v: &Address) {
+/// Persist the factory address (fetched from vault during initialize).
+pub fn set_factory(env: &Env, v: &Address) {
     bump(env);
-    env.storage().instance().set(&DataKey::Oracle, v);
+    env.storage().instance().set(&DataKey::Factory, v);
 }
 
-/// Return the oracle address, or `None` if not configured.
-///
-/// When `None`, `get_value()` returns the raw LP token balance as a fallback.
-pub fn get_oracle(env: &Env) -> Option<Address> {
+/// Return the factory address, or `None` if vault has no factory.
+pub fn get_factory(env: &Env) -> Option<Address> {
     bump(env);
-    env.storage().instance().get(&DataKey::Oracle)
+    env.storage().instance().get(&DataKey::Factory)
 }

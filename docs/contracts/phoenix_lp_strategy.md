@@ -4,25 +4,47 @@ Path: `contracts/strategies/phoenix_lp`
 
 ## Purpose
 
-Two-asset LP strategy adapter for Phoenix pools.
+Two-asset LP strategy adapter for Phoenix pools. Implements both the **guard interface** (called by vault internals during NAV/withdrawal) and the **trader-callable operations** (dispatched via `vault.execute_op`).
 
-## Public Methods
+## Guard Interface (called by vault)
+
+```rust
+fn get_total_value(vault: Address) -> i128
+fn withdraw_fraction(vault: Address, numerator: i128, denominator: i128, to: Address)
+fn asset_in_use(vault: Address, asset: Address) -> bool
+```
+
+## Trader-Callable Operations (via vault.execute_op)
+
+```rust
+fn add_liquidity(vault: Address, amount_a: i128, amount_b: i128, min_a: i128, min_b: i128)
+fn remove_liquidity(vault: Address, lp_amount: i128, min_a: i128, min_b: i128)
+fn swap(vault: Address, sell_a: bool, amount_in: i128, min_out: i128)
+```
+
+Phoenix uses `sell_a: bool` (direction flag) instead of explicit asset addresses for swap direction.
+
+These are dispatched by the vault after checking the function name is in `AuthorizedOps(guard)`. The vault injects its own address as the first argument.
+
+## Admin Methods
 
 - `initialize(vault, asset_a, asset_b, phoenix_pool, manager, name)`
-- `deposit_liquidity(amount_a, amount_b, min_a, min_b, from) -> i128`
-- `withdraw(share_amount, min_a, min_b, from, to) -> (i128, i128)`
-- `get_share_balance() -> i128`
-- `get_value(_vault) -> i128`
 - `set_oracle(caller, oracle)`
-- `asset_a()`, `asset_b()`, `share_token()`, `get_name()`, `is_paused()`, `has_oracle()`
-- `pause(caller)`, `unpause(caller)`
+- `pause(caller)` / `unpause(caller)`
+
+## Views
+
+- `get_share_balance() -> i128`
+- `get_value(vault) -> i128`
+- `asset_a()`, `asset_b()`, `share_token()`, `get_name()`
+- `is_paused()`, `has_oracle()`
 
 ## Access Control
 
-- Liquidity ops are vault-only (`from == vault`).
+- Trader-callable ops are vault-only (vault address injected as first arg).
 - Admin ops are manager-only.
 
 ## Notes
 
-- On initialize, strategy auto-queries pool share token address.
-- Value can use reserve decomposition when oracle is configured.
+- On initialize, strategy auto-queries the pool's share token address.
+- Value uses reserve decomposition when oracle is configured.
