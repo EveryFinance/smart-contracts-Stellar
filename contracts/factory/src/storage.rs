@@ -19,7 +19,7 @@
 //! last entry, so both insert and remove are O(1) storage writes.
 
 use crate::error::FactoryError;
-use soroban_sdk::{contracttype, panic_with_error, Address, Env};
+use soroban_sdk::{contracttype, panic_with_error, Address, Env, Vec};
 
 // ---------------------------------------------------------------------------
 // TTL constants (ledgers; ~6 s/ledger on Stellar mainnet)
@@ -74,6 +74,23 @@ pub enum DataKey {
     /// `__constructor` with their own admin address, effectively taking over
     /// the factory registry.
     Initialized,
+
+    /// Global whitelist of assets that any vault in this protocol may hold.
+    /// A vault manager may only add assets present in this list to a vault's
+    /// PortfolioAssets.  Stored in persistent storage.
+    AuthorizedAssets,
+
+    /// Global whitelist of strategy guard contracts that vaults may activate.
+    /// A vault manager may only register guards present in this list.
+    /// Stored in persistent storage.
+    AuthorizedGuards,
+
+    /// Admin-assigned manager for a registered vault.
+    /// Updated by `set_vault_manager`; read by vaults to resolve their manager.
+    VaultManager(Address),
+
+    /// AssetHandler contract — single source of truth for per-asset oracles.
+    AssetHandler,
 }
 
 // ---------------------------------------------------------------------------
@@ -136,10 +153,6 @@ pub fn get_admin(env: &Env) -> Address {
         .instance()
         .get(&DataKey::Admin)
         .unwrap_or_else(|| panic_with_error!(env, FactoryError::NotInitialized))
-}
-
-pub fn has_admin(env: &Env) -> bool {
-    env.storage().instance().has(&DataKey::Admin)
 }
 
 pub fn set_pending_admin(env: &Env, v: &Address) {
@@ -247,4 +260,88 @@ pub fn remove_registered(env: &Env, vault: &Address) {
     env.storage()
         .persistent()
         .remove(&DataKey::IsRegistered(vault.clone()));
+}
+
+// ---------------------------------------------------------------------------
+// Authorized assets (persistent storage)
+// ---------------------------------------------------------------------------
+
+pub fn get_authorized_assets(env: &Env) -> Vec<Address> {
+    let key = DataKey::AuthorizedAssets;
+    if env.storage().persistent().has(&key) {
+        bump_persistent(env, &key);
+        env.storage().persistent().get(&key).unwrap()
+    } else {
+        Vec::new(env)
+    }
+}
+
+pub fn set_authorized_assets(env: &Env, assets: &Vec<Address>) {
+    let key = DataKey::AuthorizedAssets;
+    env.storage().persistent().set(&key, assets);
+    bump_persistent(env, &key);
+}
+
+pub fn is_authorized_asset(env: &Env, asset: &Address) -> bool {
+    get_authorized_assets(env).contains(asset.clone())
+}
+
+// ---------------------------------------------------------------------------
+// Authorized guards (persistent storage)
+// ---------------------------------------------------------------------------
+
+pub fn get_authorized_guards(env: &Env) -> Vec<Address> {
+    let key = DataKey::AuthorizedGuards;
+    if env.storage().persistent().has(&key) {
+        bump_persistent(env, &key);
+        env.storage().persistent().get(&key).unwrap()
+    } else {
+        Vec::new(env)
+    }
+}
+
+pub fn set_authorized_guards(env: &Env, guards: &Vec<Address>) {
+    let key = DataKey::AuthorizedGuards;
+    env.storage().persistent().set(&key, guards);
+    bump_persistent(env, &key);
+}
+
+pub fn is_authorized_guard(env: &Env, guard: &Address) -> bool {
+    get_authorized_guards(env).contains(guard.clone())
+}
+
+// ---------------------------------------------------------------------------
+// Vault manager (persistent storage)
+// ---------------------------------------------------------------------------
+
+pub fn get_vault_manager(env: &Env, vault: &Address) -> Option<Address> {
+    let key = DataKey::VaultManager(vault.clone());
+    if env.storage().persistent().has(&key) {
+        bump_persistent(env, &key);
+        env.storage().persistent().get(&key)
+    } else {
+        None
+    }
+}
+
+pub fn set_vault_manager(env: &Env, vault: &Address, manager: &Address) {
+    let key = DataKey::VaultManager(vault.clone());
+    env.storage().persistent().set(&key, manager);
+    bump_persistent(env, &key);
+}
+
+// ---------------------------------------------------------------------------
+// AssetHandler reference (instance storage)
+// ---------------------------------------------------------------------------
+
+pub fn set_asset_handler(env: &Env, asset_handler: &Address) {
+    bump_instance(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::AssetHandler, asset_handler);
+}
+
+pub fn get_asset_handler(env: &Env) -> Option<Address> {
+    bump_instance(env);
+    env.storage().instance().get(&DataKey::AssetHandler)
 }

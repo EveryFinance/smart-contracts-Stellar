@@ -19,6 +19,4 @@ oracle               = { path = "../oracle",                   features = ["test
 blend-strategy       = { path = "../strategies/blend",         features = ["testutils"] }
 soroswap-lp-strategy = { path = "../strategies/soroswap_lp",  features = ["testutils"] }
 phoenix-lp-strategy  = { path = "../strategies/phoenix_lp",   features = ["testutils"] }
-soroswap-trade-guard = { path = "../trade_guards/soroswap",   features = ["testutils"] }
-phoenix-trade-guard  = { path = "../trade_guards/phoenix",    features = ["testutils"] }
 factory              = { path = "../factory",                  features = ["testutils"] }

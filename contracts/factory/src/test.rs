@@ -11,6 +11,7 @@ use crate::{Factory, FactoryClient};
 #[contracttype]
 enum VKey {
     Manager,
+    SeedDeposited,
 }
 #[contract]
 pub struct MockVault;
@@ -21,6 +22,105 @@ impl MockVault {
     }
     pub fn get_manager(env: Env) -> Address {
         env.storage().instance().get(&VKey::Manager).unwrap()
+    }
+    pub fn set_manager(env: Env, new_manager: Address) {
+        env.storage().instance().set(&VKey::Manager, &new_manager);
+    }
+    pub fn seed_deposit(env: Env, _amount: i128) {
+        if env
+            .storage()
+            .instance()
+            .get::<VKey, bool>(&VKey::SeedDeposited)
+            .unwrap_or(false)
+        {
+            panic!("already seeded");
+        }
+        env.storage()
+            .instance()
+            .set(&VKey::SeedDeposited, &true);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MockToken — minimal SEP-41 stub for create_vault tests
+// ---------------------------------------------------------------------------
+
+#[contracttype]
+enum TKey {
+    Balance(Address),
+    Allowance(Address, Address),
+    TotalSupply,
+}
+#[contract]
+pub struct MockToken;
+#[contractimpl]
+impl MockToken {
+    pub fn mint(env: Env, to: Address, amount: i128) {
+        let b: i128 = env
+            .storage()
+            .persistent()
+            .get(&TKey::Balance(to.clone()))
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&TKey::Balance(to.clone()), &(b + amount));
+        let s: i128 = env
+            .storage()
+            .persistent()
+            .get(&TKey::TotalSupply)
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&TKey::TotalSupply, &(s + amount));
+    }
+    pub fn balance(env: Env, id: Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&TKey::Balance(id))
+            .unwrap_or(0)
+    }
+    pub fn approve(env: Env, from: Address, spender: Address, amount: i128, _expiry: u32) {
+        env.storage()
+            .persistent()
+            .set(&TKey::Allowance(from, spender), &amount);
+    }
+    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+        let fb: i128 = env
+            .storage()
+            .persistent()
+            .get(&TKey::Balance(from.clone()))
+            .unwrap_or(0);
+        assert!(fb >= amount, "insufficient balance");
+        env.storage()
+            .persistent()
+            .set(&TKey::Balance(from), &(fb - amount));
+        let tb: i128 = env
+            .storage()
+            .persistent()
+            .get(&TKey::Balance(to.clone()))
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&TKey::Balance(to), &(tb + amount));
+    }
+    pub fn transfer_from(env: Env, _spender: Address, from: Address, to: Address, amount: i128) {
+        let fb: i128 = env
+            .storage()
+            .persistent()
+            .get(&TKey::Balance(from.clone()))
+            .unwrap_or(0);
+        assert!(fb >= amount, "insufficient balance");
+        env.storage()
+            .persistent()
+            .set(&TKey::Balance(from), &(fb - amount));
+        let tb: i128 = env
+            .storage()
+            .persistent()
+            .get(&TKey::Balance(to.clone()))
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&TKey::Balance(to), &(tb + amount));
     }
 }
 
@@ -35,7 +135,7 @@ fn setup() -> T {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let fid = env.register(Factory, (admin.clone(),));
+    let fid = env.register(Factory, (admin.clone(), Option::<Address>::None));
     let factory = FactoryClient::new(&env, &fid);
 
     let factory: FactoryClient<'static> = unsafe { core::mem::transmute(factory) };
@@ -434,4 +534,327 @@ fn test_verify_and_register_uninitialized_vault_panics() {
     let vid = t.env.register(MockVault, ());
     // No initialize call → get_manager() unwrap panics.
     t.factory.verify_and_register_vault(&t.admin, &vid);
+}
+
+// ---------------------------------------------------------------------------
+// AuthorizedAssets management
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_add_authorized_asset() {
+    let t = setup();
+    let asset = Address::generate(&t.env);
+    assert!(!t.factory.is_authorized_asset(&asset));
+
+    t.factory.add_authorized_asset(&t.admin, &asset);
+
+    assert!(t.factory.is_authorized_asset(&asset));
+    let list = t.factory.get_authorized_assets();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list.get(0).unwrap(), asset);
+}
+
+#[test]
+fn test_add_multiple_authorized_assets() {
+    let t = setup();
+    let a1 = Address::generate(&t.env);
+    let a2 = Address::generate(&t.env);
+    let a3 = Address::generate(&t.env);
+    t.factory.add_authorized_asset(&t.admin, &a1);
+    t.factory.add_authorized_asset(&t.admin, &a2);
+    t.factory.add_authorized_asset(&t.admin, &a3);
+
+    let list = t.factory.get_authorized_assets();
+    assert_eq!(list.len(), 3);
+    assert!(t.factory.is_authorized_asset(&a1));
+    assert!(t.factory.is_authorized_asset(&a2));
+    assert!(t.factory.is_authorized_asset(&a3));
+}
+
+#[test]
+#[should_panic]
+fn test_add_authorized_asset_not_admin_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    let asset = Address::generate(&t.env);
+    t.factory.add_authorized_asset(&rogue, &asset);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #9)")]
+fn test_add_authorized_asset_duplicate_panics() {
+    let t = setup();
+    let asset = Address::generate(&t.env);
+    t.factory.add_authorized_asset(&t.admin, &asset);
+    t.factory.add_authorized_asset(&t.admin, &asset);
+}
+
+#[test]
+fn test_remove_authorized_asset() {
+    let t = setup();
+    let a1 = Address::generate(&t.env);
+    let a2 = Address::generate(&t.env);
+    t.factory.add_authorized_asset(&t.admin, &a1);
+    t.factory.add_authorized_asset(&t.admin, &a2);
+
+    t.factory.remove_authorized_asset(&t.admin, &a1);
+
+    assert!(!t.factory.is_authorized_asset(&a1));
+    assert!(t.factory.is_authorized_asset(&a2));
+    let list = t.factory.get_authorized_assets();
+    assert_eq!(list.len(), 1);
+}
+
+#[test]
+#[should_panic]
+fn test_remove_authorized_asset_not_admin_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    let asset = Address::generate(&t.env);
+    t.factory.add_authorized_asset(&t.admin, &asset);
+    t.factory.remove_authorized_asset(&rogue, &asset);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_remove_unauthorized_asset_panics() {
+    let t = setup();
+    let asset = Address::generate(&t.env);
+    t.factory.remove_authorized_asset(&t.admin, &asset);
+}
+
+#[test]
+fn test_get_authorized_assets_empty_initially() {
+    let t = setup();
+    let list = t.factory.get_authorized_assets();
+    assert_eq!(list.len(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// AuthorizedGuards management
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_add_authorized_guard() {
+    let t = setup();
+    let guard = Address::generate(&t.env);
+    assert!(!t.factory.is_authorized_guard(&guard));
+
+    t.factory.add_authorized_guard(&t.admin, &guard);
+
+    assert!(t.factory.is_authorized_guard(&guard));
+    let list = t.factory.get_authorized_guards();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list.get(0).unwrap(), guard);
+}
+
+#[test]
+fn test_add_multiple_authorized_guards() {
+    let t = setup();
+    let g1 = Address::generate(&t.env);
+    let g2 = Address::generate(&t.env);
+    t.factory.add_authorized_guard(&t.admin, &g1);
+    t.factory.add_authorized_guard(&t.admin, &g2);
+
+    let list = t.factory.get_authorized_guards();
+    assert_eq!(list.len(), 2);
+    assert!(t.factory.is_authorized_guard(&g1));
+    assert!(t.factory.is_authorized_guard(&g2));
+}
+
+#[test]
+#[should_panic]
+fn test_add_authorized_guard_not_admin_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    let guard = Address::generate(&t.env);
+    t.factory.add_authorized_guard(&rogue, &guard);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #11)")]
+fn test_add_authorized_guard_duplicate_panics() {
+    let t = setup();
+    let guard = Address::generate(&t.env);
+    t.factory.add_authorized_guard(&t.admin, &guard);
+    t.factory.add_authorized_guard(&t.admin, &guard);
+}
+
+#[test]
+fn test_remove_authorized_guard() {
+    let t = setup();
+    let g1 = Address::generate(&t.env);
+    let g2 = Address::generate(&t.env);
+    t.factory.add_authorized_guard(&t.admin, &g1);
+    t.factory.add_authorized_guard(&t.admin, &g2);
+
+    t.factory.remove_authorized_guard(&t.admin, &g1);
+
+    assert!(!t.factory.is_authorized_guard(&g1));
+    assert!(t.factory.is_authorized_guard(&g2));
+    let list = t.factory.get_authorized_guards();
+    assert_eq!(list.len(), 1);
+}
+
+#[test]
+#[should_panic]
+fn test_remove_authorized_guard_not_admin_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    let guard = Address::generate(&t.env);
+    t.factory.add_authorized_guard(&t.admin, &guard);
+    t.factory.remove_authorized_guard(&rogue, &guard);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_remove_unauthorized_guard_panics() {
+    let t = setup();
+    let guard = Address::generate(&t.env);
+    t.factory.remove_authorized_guard(&t.admin, &guard);
+}
+
+#[test]
+fn test_get_authorized_guards_empty_initially() {
+    let t = setup();
+    let list = t.factory.get_authorized_guards();
+    assert_eq!(list.len(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// set_vault_manager
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_set_vault_manager_updates_factory_and_vault() {
+    let t = setup();
+    let manager = Address::generate(&t.env);
+    let new_manager = Address::generate(&t.env);
+    let vault = deploy_mock_vault(&t.env, &manager);
+    t.factory.register_vault(&t.admin, &vault, &manager);
+
+    t.factory.set_vault_manager(&t.admin, &vault, &new_manager);
+
+    assert_eq!(t.factory.get_vault_manager(&vault), new_manager);
+    // The vault's own manager should have been updated via cross-contract call.
+    assert_eq!(
+        MockVaultClient::new(&t.env, &vault).get_manager(),
+        new_manager
+    );
+}
+
+#[test]
+#[should_panic]
+fn test_set_vault_manager_not_admin_panics() {
+    let t = setup();
+    let manager = Address::generate(&t.env);
+    let vault = deploy_mock_vault(&t.env, &manager);
+    t.factory.register_vault(&t.admin, &vault, &manager);
+    let rogue = Address::generate(&t.env);
+    let new_manager = Address::generate(&t.env);
+    t.factory.set_vault_manager(&rogue, &vault, &new_manager);
+}
+
+#[test]
+#[should_panic]
+fn test_set_vault_manager_unregistered_vault_panics() {
+    let t = setup();
+    let vault = Address::generate(&t.env);
+    let new_manager = Address::generate(&t.env);
+    t.factory.set_vault_manager(&t.admin, &vault, &new_manager);
+}
+
+#[test]
+#[should_panic]
+fn test_get_vault_manager_unregistered_panics() {
+    let t = setup();
+    let vault = Address::generate(&t.env);
+    t.factory.get_vault_manager(&vault);
+}
+
+// ---------------------------------------------------------------------------
+// create_vault (seed deposit)
+// ---------------------------------------------------------------------------
+
+fn deploy_full_mock_vault(env: &Env, manager: &Address) -> Address {
+    let vid = env.register(MockVault, ());
+    MockVaultClient::new(env, &vid).initialize(manager);
+    vid
+}
+
+fn deploy_mock_token(env: &Env) -> Address {
+    env.register(MockToken, ())
+}
+
+#[test]
+fn test_create_vault_registers_and_seeds() {
+    let t = setup();
+    let manager = Address::generate(&t.env);
+    let vault = deploy_full_mock_vault(&t.env, &manager);
+    let token = deploy_mock_token(&t.env);
+
+    // Mint tokens to admin so it can fund the seed deposit.
+    MockTokenClient::new(&t.env, &token).mint(&t.admin, &1_000i128);
+
+    t.factory
+        .create_vault(&t.admin, &vault, &manager, &token, &100i128);
+
+    assert!(t.factory.is_registered(&vault));
+    assert_eq!(t.factory.get_vault_count(), 1);
+    assert_eq!(t.factory.get_vault_manager(&vault), manager);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #13)")]
+fn test_create_vault_zero_seed_panics() {
+    let t = setup();
+    let manager = Address::generate(&t.env);
+    let vault = deploy_full_mock_vault(&t.env, &manager);
+    let token = deploy_mock_token(&t.env);
+
+    t.factory
+        .create_vault(&t.admin, &vault, &manager, &token, &0i128);
+}
+
+#[test]
+#[should_panic]
+fn test_create_vault_not_admin_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    let manager = Address::generate(&t.env);
+    let vault = deploy_full_mock_vault(&t.env, &manager);
+    let token = deploy_mock_token(&t.env);
+
+    t.factory
+        .create_vault(&rogue, &vault, &manager, &token, &100i128);
+}
+
+#[test]
+#[should_panic]
+fn test_create_vault_manager_mismatch_panics() {
+    let t = setup();
+    let manager = Address::generate(&t.env);
+    let wrong_manager = Address::generate(&t.env);
+    let vault = deploy_full_mock_vault(&t.env, &manager);
+    let token = deploy_mock_token(&t.env);
+    MockTokenClient::new(&t.env, &token).mint(&t.admin, &1_000i128);
+
+    t.factory
+        .create_vault(&t.admin, &vault, &wrong_manager, &token, &100i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #5)")]
+fn test_create_vault_already_registered_panics() {
+    let t = setup();
+    let manager = Address::generate(&t.env);
+    let vault = deploy_full_mock_vault(&t.env, &manager);
+    let token = deploy_mock_token(&t.env);
+    MockTokenClient::new(&t.env, &token).mint(&t.admin, &1_000i128);
+
+    t.factory
+        .create_vault(&t.admin, &vault, &manager, &token, &100i128);
+    // Second call on same vault should fail with VaultAlreadyRegistered.
+    t.factory
+        .create_vault(&t.admin, &vault, &manager, &token, &100i128);
 }

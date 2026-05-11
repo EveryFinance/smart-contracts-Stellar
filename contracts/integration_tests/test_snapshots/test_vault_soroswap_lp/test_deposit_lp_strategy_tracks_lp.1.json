@@ -78,6 +78,12 @@
                     },
                     {
                       "key": {
+                        "symbol": "factory"
+                      },
+                      "val": "void"
+                    },
+                    {
+                      "key": {
                         "symbol": "manager"
                       },
                       "val": {
@@ -180,6 +186,12 @@
                       "val": {
                         "u32": 0
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "factory"
+                      },
+                      "val": "void"
                     },
                     {
                       "key": {

@@ -29,18 +29,24 @@ mod storage;
 
 pub use error::FactoryError;
 
-use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, IntoVal, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, panic_with_error, token, Address, Env, IntoVal, Symbol, Vec};
 
 use storage::{
-    clear_pending_admin, get_admin, get_is_registered, get_pending_admin, get_vault_by_index,
-    get_vault_count, get_vault_position, is_factory_initialized, remove_registered,
-    remove_vault_by_index, remove_vault_position, set_admin, set_factory_initialized,
-    set_pending_admin, set_registered, set_vault_by_index, set_vault_count, set_vault_position,
-    DataKey, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT,
-    PERSISTENT_LIFETIME_THRESHOLD,
+    clear_pending_admin, get_admin, get_asset_handler, get_authorized_assets, get_authorized_guards,
+    get_is_registered, get_pending_admin, get_vault_by_index, get_vault_count, get_vault_manager,
+    get_vault_position, is_authorized_asset, is_authorized_guard, is_factory_initialized,
+    remove_registered, remove_vault_by_index, remove_vault_position,
+    set_admin, set_asset_handler, set_authorized_assets, set_authorized_guards,
+    set_factory_initialized, set_pending_admin, set_registered, set_vault_by_index,
+    set_vault_count, set_vault_manager, set_vault_position, DataKey, INSTANCE_BUMP_AMOUNT,
+    INSTANCE_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT, PERSISTENT_LIFETIME_THRESHOLD,
 };
 
-use events::{admin_changed_event, vault_registered_event, vault_removed_event};
+use events::{
+    admin_changed_event, asset_authorized_event, asset_deauthorized_event, guard_authorized_event,
+    guard_deauthorized_event, vault_created_event, vault_manager_set_event, vault_registered_event,
+    vault_removed_event,
+};
 
 // ---------------------------------------------------------------------------
 // Contract
@@ -63,11 +69,11 @@ impl Factory {
 
     /// Initialize the factory. Runs atomically at deployment via `CreateContract`.
     ///
-    /// Uses a **persistent** storage flag in addition to instance storage so
-    /// that expiry of the instance entry cannot be exploited by an attacker to
-    /// re-run initialization and replace the admin.
-    pub fn __constructor(env: Env, admin: Address) {
-        // Check the persistent flag first — it survives instance TTL expiry.
+    /// # Arguments
+    /// * `admin`         – Registry admin address.
+    /// * `asset_handler` – The AssetHandler contract that holds per-asset oracles.
+    ///                     Pass `None` to initialize without a handler (can be set later).
+    pub fn __constructor(env: Env, admin: Address, asset_handler: Option<Address>) {
         if is_factory_initialized(&env) {
             panic_with_error!(&env, FactoryError::AlreadyInitialized);
         }
@@ -78,9 +84,30 @@ impl Factory {
 
         set_admin(&env, &admin);
         set_vault_count(&env, 0);
-        // Write the persistent initialization flag last so it only exists if
-        // all prior writes succeed.
+        if let Some(ref ah) = asset_handler {
+            set_asset_handler(&env, ah);
+        }
         set_factory_initialized(&env);
+    }
+
+    /// Set or update the AssetHandler reference. Admin only.
+    pub fn set_asset_handler(env: Env, caller: Address, asset_handler: Address) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        caller.require_auth();
+        if caller != get_admin(&env) {
+            panic_with_error!(&env, FactoryError::NotAdmin);
+        }
+        set_asset_handler(&env, &asset_handler);
+    }
+
+    /// Return the AssetHandler contract address.
+    pub fn get_asset_handler(env: Env) -> Option<Address> {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        get_asset_handler(&env)
     }
 
     // -----------------------------------------------------------------------
@@ -302,6 +329,281 @@ impl Factory {
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         get_is_registered(&env, &vault)
+    }
+
+    /// Return the admin-assigned manager for a registered vault.
+    ///
+    /// # Errors
+    /// * [`FactoryError::VaultManagerNotFound`] if the vault is not tracked.
+    pub fn get_vault_manager(env: Env, vault: Address) -> Address {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        get_vault_manager(&env, &vault)
+            .unwrap_or_else(|| panic_with_error!(&env, FactoryError::VaultManagerNotFound))
+    }
+
+    /// Return the full list of protocol-authorized assets.
+    pub fn get_authorized_assets(env: Env) -> Vec<Address> {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        get_authorized_assets(&env)
+    }
+
+    /// Return `true` if `asset` is in the protocol-authorized asset list.
+    pub fn is_authorized_asset(env: Env, asset: Address) -> bool {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        is_authorized_asset(&env, &asset)
+    }
+
+    /// Return the full list of protocol-authorized guard contracts.
+    pub fn get_authorized_guards(env: Env) -> Vec<Address> {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        get_authorized_guards(&env)
+    }
+
+    /// Return `true` if `guard` is in the protocol-authorized guard list.
+    pub fn is_authorized_guard(env: Env, guard: Address) -> bool {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        is_authorized_guard(&env, &guard)
+    }
+
+    // -----------------------------------------------------------------------
+    // Asset whitelist management (admin only)
+    // -----------------------------------------------------------------------
+
+    /// Add an asset to the protocol-wide authorized asset list.
+    ///
+    /// The asset must already be registered in the AssetHandler (with its price
+    /// oracle) before it can be authorized here. The AssetHandler is the single
+    /// source of truth for per-asset oracles.
+    ///
+    /// # Errors
+    /// * [`FactoryError::NotAdmin`]
+    /// * [`FactoryError::AssetAlreadyAuthorized`]
+    /// * [`FactoryError::AssetHandlerNotSet`] if no AssetHandler is configured
+    /// * Panics if asset is not registered in AssetHandler
+    pub fn add_authorized_asset(env: Env, caller: Address, asset: Address) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        caller.require_auth();
+        if caller != get_admin(&env) {
+            panic_with_error!(&env, FactoryError::NotAdmin);
+        }
+        if is_authorized_asset(&env, &asset) {
+            panic_with_error!(&env, FactoryError::AssetAlreadyAuthorized);
+        }
+
+        // Validate that the asset has an oracle registered in AssetHandler.
+        if let Some(ah) = get_asset_handler(&env) {
+            let is_reg: bool = env.invoke_contract(
+                &ah,
+                &Symbol::new(&env, "is_registered"),
+                (asset.clone(),).into_val(&env),
+            );
+            if !is_reg {
+                panic_with_error!(&env, FactoryError::AssetNotInAssetHandler);
+            }
+        }
+        // If no AssetHandler set, allow freely (factory may be used without one).
+
+        let mut assets = get_authorized_assets(&env);
+        assets.push_back(asset.clone());
+        set_authorized_assets(&env, &assets);
+        asset_authorized_event(&env, &asset);
+    }
+
+    /// Remove an asset from the protocol-wide authorized asset list.
+    ///
+    /// # Errors
+    /// * [`FactoryError::NotAdmin`]
+    /// * [`FactoryError::AssetNotAuthorized`]
+    pub fn remove_authorized_asset(env: Env, caller: Address, asset: Address) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        caller.require_auth();
+        if caller != get_admin(&env) {
+            panic_with_error!(&env, FactoryError::NotAdmin);
+        }
+        if !is_authorized_asset(&env, &asset) {
+            panic_with_error!(&env, FactoryError::AssetNotAuthorized);
+        }
+        let assets = get_authorized_assets(&env);
+        let mut updated: Vec<Address> = Vec::new(&env);
+        for a in assets.iter() {
+            if a != asset {
+                updated.push_back(a);
+            }
+        }
+        set_authorized_assets(&env, &updated);
+        asset_deauthorized_event(&env, &asset);
+    }
+
+    // -----------------------------------------------------------------------
+    // Guard whitelist management (admin only)
+    // -----------------------------------------------------------------------
+
+    /// Add a strategy guard contract to the protocol-wide authorized guard list.
+    ///
+    /// # Errors
+    /// * [`FactoryError::NotAdmin`]
+    /// * [`FactoryError::GuardAlreadyAuthorized`]
+    pub fn add_authorized_guard(env: Env, caller: Address, guard: Address) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        caller.require_auth();
+        if caller != get_admin(&env) {
+            panic_with_error!(&env, FactoryError::NotAdmin);
+        }
+        if is_authorized_guard(&env, &guard) {
+            panic_with_error!(&env, FactoryError::GuardAlreadyAuthorized);
+        }
+        let mut guards = get_authorized_guards(&env);
+        guards.push_back(guard.clone());
+        set_authorized_guards(&env, &guards);
+        guard_authorized_event(&env, &guard);
+    }
+
+    /// Remove a strategy guard contract from the authorized guard list.
+    ///
+    /// # Errors
+    /// * [`FactoryError::NotAdmin`]
+    /// * [`FactoryError::GuardNotAuthorized`]
+    pub fn remove_authorized_guard(env: Env, caller: Address, guard: Address) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        caller.require_auth();
+        if caller != get_admin(&env) {
+            panic_with_error!(&env, FactoryError::NotAdmin);
+        }
+        if !is_authorized_guard(&env, &guard) {
+            panic_with_error!(&env, FactoryError::GuardNotAuthorized);
+        }
+        let guards = get_authorized_guards(&env);
+        let mut updated: Vec<Address> = Vec::new(&env);
+        for g in guards.iter() {
+            if g != guard {
+                updated.push_back(g);
+            }
+        }
+        set_authorized_guards(&env, &updated);
+        guard_deauthorized_event(&env, &guard);
+    }
+
+    // -----------------------------------------------------------------------
+    // Vault manager assignment (admin only)
+    // -----------------------------------------------------------------------
+
+    /// Assign or reassign the manager for a registered vault.
+    ///
+    /// The admin is the only party that can change vault managers.  This
+    /// function updates the factory's `VaultManager` record and also calls
+    /// `vault.set_manager(new_manager)` so the vault's own state stays in sync.
+    ///
+    /// # Errors
+    /// * [`FactoryError::NotAdmin`]
+    /// * [`FactoryError::VaultNotFound`]
+    pub fn set_vault_manager(env: Env, caller: Address, vault: Address, new_manager: Address) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        caller.require_auth();
+        if caller != get_admin(&env) {
+            panic_with_error!(&env, FactoryError::NotAdmin);
+        }
+        if !get_is_registered(&env, &vault) {
+            panic_with_error!(&env, FactoryError::VaultNotFound);
+        }
+        set_vault_manager(&env, &vault, &new_manager);
+        // Propagate to the vault contract so the vault's own Manager key is updated.
+        let args = (new_manager.clone(),).into_val(&env);
+        env.invoke_contract::<()>(&vault, &Symbol::new(&env, "set_manager"), args);
+        vault_manager_set_event(&env, &vault, &new_manager);
+    }
+
+    // -----------------------------------------------------------------------
+    // Vault creation with seed deposit (admin only)
+    // -----------------------------------------------------------------------
+
+    /// Register an already-deployed vault and perform the anti-inflation seed deposit.
+    ///
+    /// The admin must:
+    /// 1. Deploy and initialize the vault externally (via `__constructor`).
+    /// 2. Approve `seed_amount` of `base_asset` from their account to this factory.
+    /// 3. Call this function.
+    ///
+    /// The factory will:
+    /// 1. Verify the vault is not already registered.
+    /// 2. Pull `seed_amount` of `base_asset` from `caller` into the vault directly.
+    /// 3. Call `vault.seed_deposit(seed_amount)` to mint seed shares to the burn address.
+    /// 4. Register the vault and record its manager.
+    ///
+    /// After this call, `total_supply > 0` which eliminates the first-depositor
+    /// inflation attack.
+    ///
+    /// # Errors
+    /// * [`FactoryError::NotAdmin`]
+    /// * [`FactoryError::VaultAlreadyRegistered`]
+    /// * [`FactoryError::InvalidSeedAmount`]
+    pub fn create_vault(
+        env: Env,
+        caller: Address,
+        vault: Address,
+        manager: Address,
+        base_asset: Address,
+        seed_amount: i128,
+    ) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        caller.require_auth();
+        if caller != get_admin(&env) {
+            panic_with_error!(&env, FactoryError::NotAdmin);
+        }
+        if seed_amount <= 0 {
+            panic_with_error!(&env, FactoryError::InvalidSeedAmount);
+        }
+        Self::assert_not_registered(&env, &vault);
+
+        // Verify manager matches vault's on-chain state.
+        let onchain_manager: Address =
+            env.invoke_contract(&vault, &Symbol::new(&env, "get_manager"), ().into_val(&env));
+        if onchain_manager != manager {
+            panic_with_error!(&env, FactoryError::ManagerMismatch);
+        }
+
+        // Transfer seed_amount of base_asset from admin into the vault.
+        token::Client::new(&env, &base_asset).transfer_from(
+            &env.current_contract_address(),
+            &caller,
+            &vault,
+            &seed_amount,
+        );
+
+        // Instruct the vault to mint seed shares to the burn address.
+        let args = (seed_amount,).into_val(&env);
+        env.invoke_contract::<()>(&vault, &Symbol::new(&env, "seed_deposit"), args);
+
+        // Register the vault.
+        let idx = get_vault_count(&env);
+        set_vault_by_index(&env, idx, &vault);
+        set_vault_position(&env, &vault, idx);
+        set_registered(&env, &vault);
+        set_vault_count(&env, idx + 1);
+        set_vault_manager(&env, &vault, &manager);
+
+        vault_created_event(&env, &vault, &manager, seed_amount);
     }
 
     /// Bump the persistent TTL for vault registry entries in index range `[start, end)`.

@@ -54,3 +54,75 @@ pub fn admin_changed_event(env: &Env, new_admin: &Address) {
         new_admin.clone(),
     );
 }
+
+/// Emitted when an asset is added to the protocol-wide authorized asset list.
+pub fn asset_authorized_event(env: &Env, asset: &Address) {
+    env.events().publish(
+        (
+            Symbol::new(env, "asset_authorized"),
+            env.current_contract_address(),
+        ),
+        asset.clone(),
+    );
+}
+
+/// Emitted when an asset is removed from the protocol-wide authorized asset list.
+pub fn asset_deauthorized_event(env: &Env, asset: &Address) {
+    env.events().publish(
+        (
+            Symbol::new(env, "asset_deauthorized"),
+            env.current_contract_address(),
+        ),
+        asset.clone(),
+    );
+}
+
+/// Emitted when a guard contract is added to the protocol-wide authorized guard list.
+pub fn guard_authorized_event(env: &Env, guard: &Address) {
+    env.events().publish(
+        (
+            Symbol::new(env, "guard_authorized"),
+            env.current_contract_address(),
+        ),
+        guard.clone(),
+    );
+}
+
+/// Emitted when a guard contract is removed from the authorized guard list.
+pub fn guard_deauthorized_event(env: &Env, guard: &Address) {
+    env.events().publish(
+        (
+            Symbol::new(env, "guard_deauthorized"),
+            env.current_contract_address(),
+        ),
+        guard.clone(),
+    );
+}
+
+/// Emitted when the factory creates and seeds a new vault.
+///
+/// # Data
+/// `(vault: Address, manager: Address, seed_amount: i128)`
+pub fn vault_created_event(env: &Env, vault: &Address, manager: &Address, seed_amount: i128) {
+    env.events().publish(
+        (
+            Symbol::new(env, "vault_created"),
+            env.current_contract_address(),
+        ),
+        (vault.clone(), manager.clone(), seed_amount),
+    );
+}
+
+/// Emitted when the admin reassigns the manager of a vault.
+///
+/// # Data
+/// `(vault: Address, new_manager: Address)`
+pub fn vault_manager_set_event(env: &Env, vault: &Address, new_manager: &Address) {
+    env.events().publish(
+        (
+            Symbol::new(env, "vault_manager_set"),
+            env.current_contract_address(),
+        ),
+        (vault.clone(), new_manager.clone()),
+    );
+}

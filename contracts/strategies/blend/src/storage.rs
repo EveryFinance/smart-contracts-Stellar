@@ -52,6 +52,10 @@ pub enum DataKey {
     /// guard, an attacker could wait for the instance to expire and re-call
     /// `initialize` with a malicious vault, effectively taking over the strategy.
     Initialized,
+    /// Factory address — queried for AssetHandler during get_total_value.
+    /// Stored locally (fetched from vault during initialize) to avoid re-entry
+    /// when vault calls get_total_value from within nav().
+    Factory,
 }
 
 // ---------------------------------------------------------------------------
@@ -196,5 +200,19 @@ pub fn get_paused(env: &Env) -> bool {
         .instance()
         .get(&DataKey::Paused)
         .unwrap_or(false)
+}
+
+// ---- factory ---------------------------------------------------------------
+
+/// Persist the factory address (optional, fetched from vault during initialize).
+pub fn set_factory(env: &Env, factory: &Address) {
+    bump(env);
+    env.storage().instance().set(&DataKey::Factory, factory);
+}
+
+/// Read the factory address (None if vault has no factory).
+pub fn get_factory(env: &Env) -> Option<Address> {
+    bump(env);
+    env.storage().instance().get(&DataKey::Factory)
 }
 

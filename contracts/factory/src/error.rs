@@ -32,4 +32,25 @@ pub enum FactoryError {
 
     /// `accept_admin` was called but no pending admin transfer is in progress.
     NoPendingAdmin = 7,
+
+    /// The asset is not in the factory's authorized asset list.
+    AssetNotAuthorized = 8,
+
+    /// The asset is already in the factory's authorized asset list.
+    AssetAlreadyAuthorized = 9,
+
+    /// The guard contract is not in the factory's authorized guard list.
+    GuardNotAuthorized = 10,
+
+    /// The guard contract is already in the factory's authorized guard list.
+    GuardAlreadyAuthorized = 11,
+
+    /// The vault manager lookup failed — vault is not tracked by this factory.
+    VaultManagerNotFound = 12,
+
+    /// Seed deposit amount must be greater than zero.
+    InvalidSeedAmount = 13,
+
+    /// Asset is not registered in the AssetHandler contract — cannot authorize it.
+    AssetNotInAssetHandler = 14,
 }

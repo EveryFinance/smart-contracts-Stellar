@@ -26,7 +26,7 @@ use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, String
 use storage::{
     get_admin, get_allowance, get_allowance_value, get_balance, get_decimals, get_name, get_symbol,
     get_total_supply, has_admin, set_admin, set_allowance, set_balance, set_decimals, set_name,
-    set_symbol, set_total_supply, AllowanceValue, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
+    set_symbol, set_total_supply, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
 };
 
 // ---------------------------------------------------------------------------

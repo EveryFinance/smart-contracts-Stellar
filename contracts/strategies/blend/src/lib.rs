@@ -39,9 +39,9 @@ use soroban_sdk::{
 };
 
 use storage::{
-    get_asset, get_manager, get_name, get_paused, get_protocol, get_vault, is_initialized,
-    set_asset, set_initialized, set_manager, set_name, set_paused, set_protocol, set_vault,
-    INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
+    get_asset, get_factory, get_manager, get_name, get_paused, get_protocol, get_vault,
+    is_initialized, set_asset, set_factory, set_initialized, set_manager, set_name,
+    set_paused, set_protocol, set_vault, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
 };
 
 // ---------------------------------------------------------------------------
@@ -52,6 +52,9 @@ use storage::{
 pub const REQUEST_SUPPLY: u32 = 2;
 /// Withdraw previously supplied tokens.
 pub const REQUEST_WITHDRAW: u32 = 3;
+
+/// Fixed-point precision matching AssetHandler (10^7).
+const PRICE_PRECISION: i128 = 10_000_000;
 
 // ---------------------------------------------------------------------------
 // Blend cross-contract client (minimal interface)
@@ -172,6 +175,19 @@ impl BlendStrategy {
         set_manager(&env, &manager);
         set_name(&env, &name);
         set_paused(&env, false);
+
+        // Cache the factory address locally so get_total_value can reach the
+        // AssetHandler without calling back into the vault (which would re-enter
+        // since the vault calls get_total_value from within nav()).
+        let factory_opt: Option<Address> = env.invoke_contract(
+            &vault,
+            &Symbol::new(&env, "get_factory"),
+            ().into_val(&env),
+        );
+        if let Some(ref factory) = factory_opt {
+            set_factory(&env, factory);
+        }
+
         // Mark as initialized in persistent storage — survives instance TTL expiry
         // and prevents re-initialization after the instance entry expires.
         set_initialized(&env);
@@ -399,6 +415,249 @@ impl BlendStrategy {
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         get_paused(&env)
+    }
+
+    // -----------------------------------------------------------------------
+    // Multi-asset guard interface v2
+    // -----------------------------------------------------------------------
+
+    /// Return the total value of all positions for `vault` in this strategy,
+    /// converted to base-asset units using the vault's AssetHandler.
+    ///
+    /// Formula: `blend_get_supply(pool, strategy) × price(lending_asset) / PRICE_PRECISION`
+    ///
+    /// If the vault has no AssetHandler configured, returns the raw token
+    /// amount (backwards compatible with oracle-less setups).
+    pub fn get_total_value(env: Env, vault: Address) -> i128 {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        // Only the registered vault has a position in this strategy instance.
+        if vault != get_vault(&env) {
+            return 0;
+        }
+        let protocol = get_protocol(&env);
+        let strategy_addr = env.current_contract_address();
+        // Raw token amount supplied to Blend (e.g. 1 BTC = 10_000_000 units).
+        let position = blend_get_supply(&env, &protocol, &strategy_addr);
+        if position == 0 {
+            return 0;
+        }
+
+        // Convert to base-asset value via factory → AssetHandler.
+        // Factory address is cached locally during initialize to avoid re-entry:
+        // vault calls get_total_value from within nav(), so calling back into
+        // vault is forbidden.
+        let factory_opt = get_factory(&env);
+        let asset_handler_opt: Option<Address> = factory_opt.and_then(|factory| {
+            env.invoke_contract(
+                &factory,
+                &Symbol::new(&env, "get_asset_handler"),
+                ().into_val(&env),
+            )
+        });
+        if let Some(asset_handler) = asset_handler_opt {
+            let lending_asset = get_asset(&env);
+            let price: i128 = env.invoke_contract(
+                &asset_handler,
+                &Symbol::new(&env, "get_price"),
+                (lending_asset,).into_val(&env),
+            );
+            position.saturating_mul(price) / PRICE_PRECISION
+        } else {
+            // No AssetHandler configured — return raw position (backwards compatible).
+            position
+        }
+    }
+
+    /// Withdraw `numerator/denominator` fraction of this vault's position
+    /// and send the proceeds directly to `to` (the withdrawing user).
+    ///
+    /// Called by the vault during proportional multi-asset withdrawal.
+    /// Requires `vault` to authorize the call.
+    ///
+    /// # Errors
+    /// * [`BlendStrategyError::NotVault`] if `vault` ≠ registered vault.
+    pub fn withdraw_fraction(
+        env: Env,
+        vault: Address,
+        numerator: i128,
+        denominator: i128,
+        to: Address,
+    ) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        vault.require_auth();
+        if vault != get_vault(&env) {
+            panic_with_error!(&env, BlendStrategyError::NotVault);
+        }
+        if numerator <= 0 || denominator <= 0 || numerator > denominator {
+            panic_with_error!(&env, BlendStrategyError::InvalidAmount);
+        }
+
+        let protocol = get_protocol(&env);
+        let strategy_addr = env.current_contract_address();
+        let position = blend_get_supply(&env, &protocol, &strategy_addr);
+        if position == 0 {
+            return;
+        }
+
+        let amount = position * numerator / denominator;
+        if amount == 0 {
+            return;
+        }
+
+        let asset = get_asset(&env);
+        let requests: Vec<BlendRequest> = soroban_sdk::vec![
+            &env,
+            BlendRequest {
+                request_type: REQUEST_WITHDRAW,
+                address: asset,
+                amount,
+            }
+        ];
+        blend_submit(&env, &protocol, &strategy_addr, &strategy_addr, &to, requests);
+    }
+
+    /// Return `true` if this strategy has an active position for `vault` that
+    /// involves `asset`.
+    ///
+    /// Used by the vault to gate `remove_portfolio_asset`: if this returns
+    /// `true`, the asset cannot be removed from the portfolio while the
+    /// strategy holds a non-zero position.
+    pub fn asset_in_use(env: Env, vault: Address, asset: Address) -> bool {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        if vault != get_vault(&env) {
+            return false;
+        }
+        if asset != get_asset(&env) {
+            return false;
+        }
+        // Asset is in use if the position is non-zero.
+        let protocol = get_protocol(&env);
+        let strategy_addr = env.current_contract_address();
+        blend_get_supply(&env, &protocol, &strategy_addr) > 0
+    }
+
+    // -----------------------------------------------------------------------
+    // Trader-callable functions (dispatched via vault.execute_op)
+    //
+    // The vault injects its own address as the first argument before calling
+    // these functions.  The caller (manager/trader) cannot substitute a
+    // different address, so funds can only flow from the registered vault.
+    //
+    // Production note: `supply` uses `transfer_from(strategy, vault, strategy)`
+    // which requires the vault to have pre-approved this strategy contract for
+    // the token amount.  In tests `mock_all_auths()` bypasses this check.
+    // -----------------------------------------------------------------------
+
+    /// Supply `amount` of the configured asset to Blend on behalf of `vault`.
+    ///
+    /// Called via `vault.execute_op(caller, strategy, "supply", [amount])`.
+    /// The vault injects itself as `vault` — the caller cannot substitute a
+    /// different source address.
+    pub fn supply(env: Env, vault: Address, amount: i128) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        if amount <= 0 {
+            panic_with_error!(&env, BlendStrategyError::InvalidAmount);
+        }
+        if get_paused(&env) {
+            panic_with_error!(&env, BlendStrategyError::Paused);
+        }
+        if vault != get_vault(&env) {
+            panic_with_error!(&env, BlendStrategyError::NotVault);
+        }
+
+        let asset = get_asset(&env);
+        let protocol = get_protocol(&env);
+        let strategy_addr = env.current_contract_address();
+
+        // Pull tokens from vault into this strategy.
+        // Requires vault to have pre-approved this strategy (or mock_all_auths in tests).
+        token::Client::new(&env, &asset).transfer_from(
+            &strategy_addr,
+            &vault,
+            &strategy_addr,
+            &amount,
+        );
+
+        // Approve to Blend and supply.
+        let expiry = env.ledger().sequence() + 100;
+        token::Client::new(&env, &asset).approve(&strategy_addr, &protocol, &amount, &expiry);
+
+        let requests: Vec<BlendRequest> = soroban_sdk::vec![
+            &env,
+            BlendRequest {
+                request_type: REQUEST_SUPPLY,
+                address: asset.clone(),
+                amount,
+            }
+        ];
+        blend_submit(
+            &env,
+            &protocol,
+            &strategy_addr,
+            &strategy_addr,
+            &strategy_addr,
+            requests,
+        );
+
+        let now = env.ledger().sequence();
+        token::Client::new(&env, &asset).approve(&strategy_addr, &protocol, &0i128, &now);
+    }
+
+    /// Withdraw `amount` from Blend and return tokens to `vault`.
+    ///
+    /// Called via `vault.execute_op(caller, strategy, "withdraw_from_lending", [amount])`.
+    pub fn withdraw_from_lending(env: Env, vault: Address, amount: i128) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        if amount <= 0 {
+            panic_with_error!(&env, BlendStrategyError::InvalidAmount);
+        }
+        if get_paused(&env) {
+            panic_with_error!(&env, BlendStrategyError::Paused);
+        }
+        if vault != get_vault(&env) {
+            panic_with_error!(&env, BlendStrategyError::NotVault);
+        }
+
+        let asset = get_asset(&env);
+        let protocol = get_protocol(&env);
+        let strategy_addr = env.current_contract_address();
+
+        let position = blend_get_supply(&env, &protocol, &strategy_addr);
+        if amount > position {
+            panic_with_error!(&env, BlendStrategyError::InsufficientPosition);
+        }
+
+        // Withdraw from Blend directly to the vault.
+        let requests: Vec<BlendRequest> = soroban_sdk::vec![
+            &env,
+            BlendRequest {
+                request_type: REQUEST_WITHDRAW,
+                address: asset.clone(),
+                amount,
+            }
+        ];
+        blend_submit(
+            &env,
+            &protocol,
+            &strategy_addr,
+            &strategy_addr,
+            &vault,
+            requests,
+        );
     }
 
     // -----------------------------------------------------------------------

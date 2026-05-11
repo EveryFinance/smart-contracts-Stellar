@@ -1,7 +1,16 @@
-//! # Oracle — Mock Price Feed for the Asset-Management Protocol
+//! # Oracle — **Development / Test Mock Only**
 //!
-//! This contract provides asset prices used by the vault to calculate the
-//! total portfolio value and per-share price.
+//! > **DO NOT deploy this contract in production.**
+//! > Prices are set manually by an admin — this is a centralized, trust-based
+//! > feed with no staleness guarantees beyond a configurable ledger-age check.
+//! > In production, point each asset's oracle address in `AssetHandler` to the
+//! > **Reflector** decentralized price network (see `AssetHandler::set_global_oracle`)
+//! > or any other on-chain price aggregator that implements the same
+//! > `get_price(asset: Address) -> i128` interface.
+//!
+//! ## Purpose
+//! Provides a controllable price feed for local tests and testnet deployments
+//! where Reflector is not available or where deterministic prices are needed.
 //!
 //! ## Precision
 //! All prices are expressed as `i128` values scaled by
@@ -11,11 +20,6 @@
 //! * `get_price(XLM) == 10_000_000`  → 1 XLM = 1.0 base unit
 //! * `get_price(USDC) == 10_000_000` → 1 USDC = 1.0 base unit
 //! * `get_price(BTC)  == 650_000_000_000` → 1 BTC = 65 000 base units
-//!
-//! ## Production upgrade path
-//! Replace the admin-controlled `set_price` with calls to the
-//! [Reflector oracle network](https://reflector.network/) or any other
-//! on-chain price aggregator while keeping the same `get_price` interface.
 
 #![no_std]
 

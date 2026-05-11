@@ -207,6 +207,9 @@ impl MockVault {
             .get(&VaultKey::Manager)
             .unwrap()
     }
+    pub fn get_factory(_env: Env) -> Option<Address> {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------
