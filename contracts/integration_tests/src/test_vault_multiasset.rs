@@ -13,7 +13,7 @@
 
 use share_token::{ShareTokenContract, ShareTokenContractClient};
 use soroban_sdk::{
-    contract, contractimpl, contracttype, testutils::Address as _, Address, Env, String, Vec,
+    contract, contractimpl, contracttype, testutils::Address as _, Address, Env, Map, String, Vec,
 };
 use vault::{Vault, VaultClient, VaultParams};
 
@@ -113,6 +113,15 @@ impl MockGuard2 {
     // Guard interface.
     pub fn get_total_value(env: Env, _vault: Address) -> i128 {
         env.storage().instance().get(&G2Key::Value).unwrap_or(0)
+    }
+    pub fn get_underlying_asset_balances(env: Env, _vault: Address) -> Map<Address, i128> {
+        let mut out = Map::new(&env);
+        let v: i128 = env.storage().instance().get(&G2Key::Value).unwrap_or(0);
+        if v > 0 {
+            let token: Address = env.storage().instance().get(&G2Key::Token).unwrap();
+            out.set(token, v);
+        }
+        out
     }
     pub fn withdraw_fraction(
         env: Env,

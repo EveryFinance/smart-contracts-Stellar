@@ -2517,94 +2517,105 @@ impl Vault {
         if portfolio.is_empty() {
             let bal = token::Client::new(env, base_asset).balance(vault);
             total = checked_add(env, total, bal);
-        } else {
-            // Resolve AssetHandler once; used for batch pricing below.
-            let asset_handler_opt = asset_handler(env);
-            let oracle_opt = get_oracle(env);
-            let tracked_assets = get_tracked_assets(env);
-
-            // Pass 1: collect non-base assets with non-zero balances.
-            // Base asset is counted directly (price = 1:1).
-            let mut non_base_assets: Vec<Address> = Vec::new(env);
-            let mut non_base_bals: Vec<i128> = Vec::new(env);
-            for asset in tracked_assets.iter() {
-                if !portfolio.contains(asset.clone()) {
-                    continue;
+            // In legacy mode, guards are still included via get_total_value
+            // (the new batch-pricing path requires a portfolio asset list).
+            let guards = get_position_guards(env);
+            for guard in guards.iter() {
+                let v: i128 = env.invoke_contract(
+                    &guard,
+                    &Symbol::new(env, "get_total_value"),
+                    (vault.clone(),).into_val(env),
+                );
+                if v < 0 {
+                    panic_with_error!(env, VaultError::InvalidAmount);
                 }
-                let bal = token::Client::new(env, &asset).balance(vault);
-                if bal == 0 {
+                total = checked_add(env, total, v);
+            }
+            return total;
+        }
+
+        // Resolve AssetHandler once (both idle and strategy assets share it).
+        let asset_handler_opt = asset_handler(env);
+        let oracle_opt = get_oracle(env);
+
+        // --- Pass 1: collect idle non-base assets (storage + token.balance) ---
+        // Base asset is 1:1, add directly.  Non-base assets go into the batch
+        // pricing list below.
+        let tracked_assets = get_tracked_assets(env);
+        // Use Map<Address, i128> to accumulate balances; handles the case
+        // where an asset appears in both idle holdings and strategy positions.
+        let mut pending: Map<Address, i128> = Map::new(env);
+
+        for asset in tracked_assets.iter() {
+            if !portfolio.contains(asset.clone()) {
+                continue;
+            }
+            let bal = token::Client::new(env, &asset).balance(vault);
+            if bal == 0 {
+                continue;
+            }
+            if asset == *base_asset {
+                total = checked_add(env, total, bal);
+            } else {
+                let prev = pending.get(asset.clone()).unwrap_or(0);
+                pending.set(asset, checked_add(env, prev, bal));
+            }
+        }
+
+        // --- Pass 2: collect strategy underlying quantities (no oracle inside strategy) ---
+        // Only guards with known non-zero positions are queried.
+        let guards = get_position_guards(env);
+        for guard in guards.iter() {
+            let underlying: Map<Address, i128> = env.invoke_contract(
+                &guard,
+                &Symbol::new(env, "get_underlying_asset_balances"),
+                (vault.clone(),).into_val(env),
+            );
+            for asset in underlying.keys().iter() {
+                let amount = underlying.get(asset.clone()).unwrap_or(0);
+                if amount <= 0 {
                     continue;
                 }
                 if asset == *base_asset {
-                    total = checked_add(env, total, bal);
+                    total = checked_add(env, total, amount);
                 } else {
-                    non_base_assets.push_back(asset);
-                    non_base_bals.push_back(bal);
-                }
-            }
-
-            // Pass 2: price non-base assets — one batch call to AssetHandler
-            // instead of one call per asset.
-            if !non_base_assets.is_empty() {
-                if let Some(ref ah) = asset_handler_opt {
-                    let prices: Map<Address, i128> = env.invoke_contract(
-                        ah,
-                        &Symbol::new(env, "get_prices"),
-                        (non_base_assets.clone(),).into_val(env),
-                    );
-                    let n = non_base_assets.len();
-                    for i in 0..n {
-                        let asset = non_base_assets.get(i).unwrap();
-                        let bal = non_base_bals.get(i).unwrap();
-                        let price = prices.get(asset).unwrap_or_else(|| {
-                            panic_with_error!(env, VaultError::InvalidOraclePrice)
-                        });
-                        if price <= 0 {
-                            panic_with_error!(env, VaultError::InvalidOraclePrice);
-                        }
-                        total = checked_add(
-                            env,
-                            total,
-                            checked_mul_div(env, bal, price, PRICE_PRECISION),
-                        );
-                    }
-                } else {
-                    // No AssetHandler — fall back to per-asset oracle pricing.
-                    let n = non_base_assets.len();
-                    for i in 0..n {
-                        let asset = non_base_assets.get(i).unwrap();
-                        let bal = non_base_bals.get(i).unwrap();
-                        total = checked_add(
-                            env,
-                            total,
-                            price_asset_to_base(
-                                env,
-                                &asset,
-                                base_asset,
-                                bal,
-                                &None,
-                                &oracle_opt,
-                            ),
-                        );
-                    }
+                    let prev = pending.get(asset.clone()).unwrap_or(0);
+                    pending.set(asset, checked_add(env, prev, amount));
                 }
             }
         }
 
-        // Only guards with known non-zero positions are queried. Active guards
-        // with no position stay available for future manager ops but do not add
-        // read/call cost to every NAV and withdrawal.
-        let guards = get_position_guards(env);
-        for guard in guards.iter() {
-            let v: i128 = env.invoke_contract(
-                &guard,
-                &Symbol::new(env, "get_total_value"),
-                (vault.clone(),).into_val(env),
+        // --- Pass 3: ONE batch price call for all non-base assets ---
+        if pending.is_empty() {
+            return total;
+        }
+        let non_base_assets: Vec<Address> = pending.keys();
+        if let Some(ref ah) = asset_handler_opt {
+            let prices: Map<Address, i128> = env.invoke_contract(
+                ah,
+                &Symbol::new(env, "get_prices"),
+                (non_base_assets,).into_val(env),
             );
-            if v < 0 {
-                panic_with_error!(env, VaultError::InvalidAmount);
+            for asset in pending.keys().iter() {
+                let bal = pending.get(asset.clone()).unwrap_or(0);
+                let price = prices
+                    .get(asset)
+                    .unwrap_or_else(|| panic_with_error!(env, VaultError::InvalidOraclePrice));
+                if price <= 0 {
+                    panic_with_error!(env, VaultError::InvalidOraclePrice);
+                }
+                total = checked_add(env, total, checked_mul_div(env, bal, price, PRICE_PRECISION));
             }
-            total = checked_add(env, total, v);
+        } else {
+            // No AssetHandler — fall back to per-asset oracle pricing.
+            for asset in pending.keys().iter() {
+                let bal = pending.get(asset.clone()).unwrap_or(0);
+                total = checked_add(
+                    env,
+                    total,
+                    price_asset_to_base(env, &asset, base_asset, bal, &None, &oracle_opt),
+                );
+            }
         }
 
         total

@@ -214,6 +214,40 @@ impl BlendStrategy {
         total
     }
 
+    /// Return underlying token balances across all active Blend lending positions.
+    ///
+    /// For each active pool: returns the lent token balance (queried from the
+    /// Blend pool). The vault uses this to batch-price all assets without
+    /// nesting factory + oracle calls inside the strategy.
+    pub fn get_underlying_asset_balances(env: Env, vault: Address) -> Map<Address, i128> {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        let mut out: Map<Address, i128> = Map::new(&env);
+        if vault != get_vault(&env) {
+            return out;
+        }
+        let active = get_active_positions(&env);
+        let strategy_addr = env.current_contract_address();
+        for pool in active.iter() {
+            let pos = match get_position(&env, &pool) {
+                Some(p) => p,
+                None => continue,
+            };
+            let balance = blend_get_supply(&env, &pool, &strategy_addr);
+            if balance == 0 {
+                continue;
+            }
+            let prev = out.get(pos.asset.clone()).unwrap_or(0);
+            out.set(
+                pos.asset,
+                prev.checked_add(balance)
+                    .unwrap_or_else(|| panic_with_error!(&env, BlendStrategyError::Overflow)),
+            );
+        }
+        out
+    }
+
     /// Return the value of all positions (alias — same as `get_total_value`).
     pub fn get_value(env: Env, vault: Address) -> i128 {
         env.storage()

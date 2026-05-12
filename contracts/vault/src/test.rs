@@ -3,7 +3,7 @@
 use soroban_sdk::{
     contract, contractimpl, contracttype,
     testutils::{Address as _, Ledger as _},
-    vec, Address, Env, IntoVal, String, Symbol, Val, Vec,
+    vec, Address, Env, IntoVal, Map, String, Symbol, Val, Vec,
 };
 
 use crate::{Vault, VaultClient, VaultParams};
@@ -1713,6 +1713,9 @@ enum GKey {
     AssetB,
     // For TVL guard tests: op_type 2 reduces TotalValue by this bps amount.
     LossBps,
+    // For get_underlying_asset_balances: optional single-asset underlying.
+    UnderlyingAsset,
+    UnderlyingAmount,
 }
 #[contract]
 pub struct MockGuard;
@@ -1733,6 +1736,25 @@ impl MockGuard {
     }
     pub fn get_total_value(env: Env, _vault: Address) -> i128 {
         env.storage().instance().get(&GKey::TotalValue).unwrap_or(0)
+    }
+    pub fn set_underlying(env: Env, asset: Address, amount: i128) {
+        env.storage().instance().set(&GKey::UnderlyingAsset, &asset);
+        env.storage().instance().set(&GKey::UnderlyingAmount, &amount);
+    }
+    pub fn get_underlying_asset_balances(env: Env, _vault: Address) -> Map<Address, i128> {
+        let mut out = Map::new(&env);
+        let asset: Option<Address> = env.storage().instance().get(&GKey::UnderlyingAsset);
+        if let Some(a) = asset {
+            let amount: i128 = env
+                .storage()
+                .instance()
+                .get(&GKey::UnderlyingAmount)
+                .unwrap_or(0);
+            if amount > 0 {
+                out.set(a, amount);
+            }
+        }
+        out
     }
     pub fn set_loss_bps(env: Env, bps: u32) {
         env.storage().instance().set(&GKey::LossBps, &bps);
@@ -2514,8 +2536,10 @@ fn test_execute_op_updates_guard_state() {
     t.vault
         .deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
 
-    // Seed guard with a position value.
+    // Seed guard with a position value (both total_value for execute_op TVL
+    // guard and underlying for get_nav batch-pricing path).
     MockGuardClient::new(&t.env, &guard_id).set_total_value(&500_0000000i128);
+    MockGuardClient::new(&t.env, &guard_id).set_underlying(&t.base, &500_0000000i128);
     // Bounded NAV does not scan every active guard until a manager operation
     // touches/synchronizes the guard into the position index.
     assert_eq!(t.vault.get_nav(), 1_000_0000000i128);

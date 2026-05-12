@@ -118,6 +118,40 @@ impl PhoenixLpStrategy {
         Self::compute_lp_value(&env)
     }
 
+    /// Return underlying token balances across all active Phoenix LP positions.
+    ///
+    /// For each active pool: computes `amount = shares * reserve / total_shares`
+    /// and sums per asset. The vault uses this to batch-price all assets
+    /// without nesting factory + oracle calls inside the strategy.
+    pub fn get_underlying_asset_balances(env: Env, vault: Address) -> Map<Address, i128> {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        let mut out: Map<Address, i128> = Map::new(&env);
+        if vault != get_vault(&env) {
+            return out;
+        }
+        let active = get_active_positions(&env);
+        for pool in active.iter() {
+            let pos = match get_position(&env, &pool) {
+                Some(p) if p.total_shares > 0 => p,
+                _ => continue,
+            };
+            let (reserve_a, reserve_b) = PhoenixPoolAdapter::new(&env, &pool).get_reserves();
+            let total_shares = Sep41TokenAdapter::new(&env, &pos.share_token).total_supply();
+            if total_shares == 0 {
+                continue;
+            }
+            let amount_a = checked_mul_div(&env, pos.total_shares, reserve_a, total_shares);
+            let amount_b = checked_mul_div(&env, pos.total_shares, reserve_b, total_shares);
+            let prev_a = out.get(pos.asset_a.clone()).unwrap_or(0);
+            let prev_b = out.get(pos.asset_b.clone()).unwrap_or(0);
+            out.set(pos.asset_a, checked_add(&env, prev_a, amount_a));
+            out.set(pos.asset_b, checked_add(&env, prev_b, amount_b));
+        }
+        out
+    }
+
     /// Alias for `get_total_value` (backwards-compatible single-vault call).
     pub fn get_value(env: Env, vault: Address) -> i128 {
         env.storage()

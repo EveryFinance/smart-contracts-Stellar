@@ -189,6 +189,50 @@ impl SoroswapLpStrategy {
         Self::compute_lp_value(&env)
     }
 
+    /// Return underlying token balances across all active LP positions.
+    ///
+    /// For each active pair the strategy holds: computes
+    /// `amount_asset = lp_balance * reserve_asset / total_lp`
+    /// and sums across all positions per asset.
+    ///
+    /// The vault uses this to price all assets in a single batch call
+    /// instead of triggering a full `get_total_value` (which nests factory +
+    /// AssetHandler + oracle calls inside the strategy).
+    pub fn get_underlying_asset_balances(env: Env, vault: Address) -> Map<Address, i128> {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        let mut out: Map<Address, i128> = Map::new(&env);
+        if vault != get_vault(&env) {
+            return out;
+        }
+        let active = get_active_positions(&env);
+        for lp_token in active.iter() {
+            let pos = match get_position(&env, &lp_token) {
+                Some(p) if p.lp_balance > 0 => p,
+                _ => continue,
+            };
+            let pair = PairAdapter::new(&env, &lp_token);
+            let (r0, r1) = pair.get_reserves();
+            let total_lp = pair.total_supply();
+            if total_lp == 0 {
+                continue;
+            }
+            let (ra, rb) = if pos.token0_is_asset_a {
+                (r0, r1)
+            } else {
+                (r1, r0)
+            };
+            let amount_a = checked_mul_div(&env, pos.lp_balance, ra, total_lp);
+            let amount_b = checked_mul_div(&env, pos.lp_balance, rb, total_lp);
+            let prev_a = out.get(pos.asset_a.clone()).unwrap_or(0);
+            let prev_b = out.get(pos.asset_b.clone()).unwrap_or(0);
+            out.set(pos.asset_a, checked_add(&env, prev_a, amount_a));
+            out.set(pos.asset_b, checked_add(&env, prev_b, amount_b));
+        }
+        out
+    }
+
     /// Proportionally withdraw `numerator/denominator` of every active LP
     /// position and send underlying tokens directly to `to`.
     pub fn withdraw_fraction(
