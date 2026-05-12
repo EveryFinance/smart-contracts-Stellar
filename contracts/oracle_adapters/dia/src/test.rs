@@ -85,6 +85,17 @@ fn setup(dia_price: i128) -> (Env, DiaAdapterClient<'static>, Address) {
     (env, client, admin)
 }
 
+#[test]
+#[should_panic(expected = "Error(Contract, #1)")]
+fn test_constructor_rejects_reinitialization() {
+    let (env, client, admin) = setup(100_000_000);
+    let dia_id = Address::generate(&env);
+
+    env.as_contract(&client.address, || {
+        DiaAdapter::__constructor(env.clone(), admin, dia_id);
+    });
+}
+
 fn xlm_key(env: &Env) -> String {
     String::from_str(env, "XLM/USD")
 }
@@ -222,6 +233,16 @@ fn test_set_asset_key_not_admin_panics() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_remove_asset_key_not_admin_panics() {
+    let (env, client, admin) = setup(100_000_000);
+    let rogue = Address::generate(&env);
+    let asset = Address::generate(&env);
+    client.set_asset_key(&admin, &asset, &xlm_key(&env));
+    client.remove_asset_key(&rogue, &asset);
+}
+
+#[test]
 fn test_multiple_assets_independent_keys() {
     let (env, client, admin) = setup(100_000_000);
     let xlm = Address::generate(&env);
@@ -260,9 +281,45 @@ fn test_accept_admin_no_pending_panics() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_accept_admin_wrong_pending_panics() {
+    let (env, client, admin) = setup(100_000_000);
+    let pending = Address::generate(&env);
+    let rogue = Address::generate(&env);
+    client.set_pending_admin(&admin, &pending);
+    client.accept_admin(&rogue);
+}
+
+#[test]
 fn test_set_dia_contract_updates_address() {
     let (env, client, admin) = setup(100_000_000);
     let new_dia = env.register(MockDia, (200_000_000i128,));
     client.set_dia_contract(&admin, &new_dia);
     assert_eq!(client.get_dia_contract(), new_dia);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_set_dia_contract_not_admin_panics() {
+    let (env, client, _) = setup(100_000_000);
+    let rogue = Address::generate(&env);
+    let new_dia = env.register(MockDia, (200_000_000i128,));
+    client.set_dia_contract(&rogue, &new_dia);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_set_max_age_secs_not_admin_panics() {
+    let (env, client, _) = setup(100_000_000);
+    let rogue = Address::generate(&env);
+    client.set_max_age_secs(&rogue, &7_200u64);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_set_pending_admin_not_admin_panics() {
+    let (env, client, _) = setup(100_000_000);
+    let rogue = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    client.set_pending_admin(&rogue, &new_admin);
 }

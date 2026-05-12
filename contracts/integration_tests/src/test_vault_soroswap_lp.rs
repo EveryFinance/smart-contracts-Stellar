@@ -442,6 +442,52 @@ fn test_soroswap_remove_liquidity_via_execute_op() {
     // The tracked balance above is the authoritative measure for NAV.
 }
 
+#[test]
+fn test_soroswap_withdraw_fraction_sends_underlyings_to_user() {
+    let w = setup_soroswap();
+    let amount_a = 2_000_0000000i128;
+    let amount_b = 2_000_0000000i128;
+
+    let add_args: Vec<Val> = soroban_sdk::vec![
+        &w.env,
+        amount_a.into_val(&w.env),
+        amount_b.into_val(&w.env),
+        0i128.into_val(&w.env),
+        0i128.into_val(&w.env),
+    ];
+    w.vault.execute_op(
+        &w.trader,
+        &w.strategy_addr,
+        &Symbol::new(&w.env, "add_liquidity"),
+        &add_args,
+    );
+
+    let user_a_before = token_balance(&w.env, &w.asset_a, &w.user);
+    let user_b_before = token_balance(&w.env, &w.asset_b, &w.user);
+
+    w.strategy
+        .withdraw_fraction(&w.vault_addr, &1i128, &2i128, &w.user);
+
+    let expected_each = (amount_a.min(amount_b) / 2) / 2;
+    assert_eq!(
+        token_balance(&w.env, &w.asset_a, &w.user),
+        user_a_before + expected_each
+    );
+    assert_eq!(
+        token_balance(&w.env, &w.asset_b, &w.user),
+        user_b_before + expected_each
+    );
+    assert_eq!(w.strategy.get_lp_balance(), amount_a.min(amount_b) / 2);
+}
+
+#[test]
+fn test_soroswap_wrong_vault_views_return_zero_or_false() {
+    let w = setup_soroswap();
+    let stranger = Address::generate(&w.env);
+    assert_eq!(w.strategy.get_total_value(&stranger), 0);
+    assert!(!w.strategy.asset_in_use(&stranger, &w.asset_a));
+}
+
 /// swap via execute_op: vault's from_asset → strategy → router → to_asset
 /// minted directly to vault.
 #[test]

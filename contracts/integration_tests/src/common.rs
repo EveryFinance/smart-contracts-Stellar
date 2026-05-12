@@ -541,6 +541,45 @@ impl MockPhoenixPool {
             .unwrap_or(0);
         (reserve_a, reserve_b)
     }
+
+    pub fn swap(
+        env: Env,
+        sender: Address,
+        recipient: Address,
+        sell_a: bool,
+        offer_amount: i128,
+        min_ask: i128,
+        _max_spread_bps: Option<i64>,
+        _deadline: Option<u64>,
+    ) {
+        sender.require_auth();
+        assert!(offer_amount > 0, "swap: zero offer_amount");
+        let token_a: Address = env
+            .storage()
+            .instance()
+            .get(&PhoenixKey::UnderlyingA)
+            .unwrap();
+        let token_b: Address = env
+            .storage()
+            .instance()
+            .get(&PhoenixKey::UnderlyingB)
+            .unwrap();
+        let (offer_token, ask_token) = if sell_a {
+            (token_a, token_b)
+        } else {
+            (token_b, token_a)
+        };
+        let amount_out = offer_amount;
+        assert!(amount_out >= min_ask, "swap: amount_out below min");
+        let pool = env.current_contract_address();
+        MockTokenClient::new(&env, &offer_token).transfer_from(
+            &pool,
+            &sender,
+            &pool,
+            &offer_amount,
+        );
+        MockTokenClient::new(&env, &ask_token).mint(&recipient, &amount_out);
+    }
 }
 
 // ---------------------------------------------------------------------------

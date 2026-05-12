@@ -422,13 +422,8 @@ impl ShareTokenContract {
         spender.require_auth();
 
         let allowance_value = get_allowance_value(&env, &from, &spender);
-        let (allowance, expiration_ledger) = allowance_value.map_or((0_i128, 0_u32), |v| {
-            if env.ledger().sequence() > v.expiration_ledger {
-                (0_i128, v.expiration_ledger)
-            } else {
-                (v.amount, v.expiration_ledger)
-            }
-        });
+        let (allowance, expiration_ledger) =
+            allowance_value.map_or((0_i128, 0_u32), |v| (v.amount, v.expiration_ledger));
         if allowance < amount {
             panic_with_error!(&env, ShareTokenError::InsufficientAllowance);
         }
@@ -470,17 +465,16 @@ impl ShareTokenContract {
     ///
     /// Reduces `total_supply` accordingly.
     ///
-    /// In the default non-transferable vault-share mode, only the admin vault can
-    /// burn shares. This keeps withdrawals, cooldown, and PnL accounting routed
-    /// through the vault. When transfers are enabled, holders may burn their own
-    /// shares directly as part of the explicitly informational accounting mode.
+    /// Only the admin vault can burn shares. This keeps redemption, cooldown, fee,
+    /// and PnL accounting routed through the vault withdrawal path even when
+    /// optional share transfers are enabled.
     ///
     /// # Arguments
     /// * `from`   – Token holder whose tokens are destroyed (must sign).
     /// * `amount` – Number of tokens to burn. Must be > 0.
     ///
     /// # Auth
-    /// Default mode: admin must authorize. Transferable mode: `from` must authorize.
+    /// Admin must authorize.
     ///
     /// # Errors
     /// * [`ShareTokenError::NegativeAmount`]      if `amount < 0`.
@@ -493,13 +487,9 @@ impl ShareTokenContract {
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         require_positive(&env, amount);
-        if get_transfers_enabled(&env) {
-            from.require_auth();
-        } else {
-            // Default vault-share mode keeps cooldown and PnL accounting accurate by
-            // allowing burns only through the vault/admin withdrawal path.
-            get_admin(&env).require_auth();
-        }
+        // Vault shares must be redeemed through vault.withdraw. Transferability
+        // only controls secondary transfers, not out-of-vault supply changes.
+        get_admin(&env).require_auth();
 
         let balance = get_balance(&env, &from);
         if balance < amount {
@@ -521,13 +511,11 @@ impl ShareTokenContract {
         events::burn_event(&env, from, amount);
     }
 
-    /// Burn `amount` tokens from `from`'s balance using a pre-approved allowance.
+    /// Disabled delegated burn entrypoint.
     ///
-    /// The spender's allowance is decremented by `amount`. Reduces
-    /// `total_supply` accordingly.
-    ///
-    /// Disabled while share transfers are disabled, because delegated burning can
-    /// otherwise break the default vault-mode PnL and cooldown assumptions.
+    /// Disabled for vault shares. Delegated out-of-vault burning can desynchronize
+    /// redemption, fee, PnL, and cooldown assumptions; shares should be redeemed
+    /// through the vault withdrawal path.
     ///
     /// # Arguments
     /// * `spender` – Authorized burner (must sign).
@@ -535,58 +523,20 @@ impl ShareTokenContract {
     /// * `amount`  – Number of tokens to burn. Must be > 0.
     ///
     /// # Auth
-    /// `spender` must authorize this call.
+    /// No delegated burn authorization is accepted.
     ///
     /// # Errors
     /// * [`ShareTokenError::NegativeAmount`]          if `amount < 0`.
     /// * [`ShareTokenError::ZeroAmount`]               if `amount == 0`.
-    /// * [`ShareTokenError::InsufficientAllowance`]   if allowance < amount.
-    /// * [`ShareTokenError::InsufficientBalance`]     if `from` balance < amount.
-    /// * [`ShareTokenError::Overflow`]                on arithmetic overflow.
+    /// * [`ShareTokenError::TransfersDisabled`] always, after amount validation.
     pub fn burn_from(env: Env, spender: Address, from: Address, amount: i128) {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         require_positive(&env, amount);
-        require_transfers_enabled(&env);
-        spender.require_auth();
-
-        let allowance_value = get_allowance_value(&env, &from, &spender);
-        let (allowance, expiration_ledger) = allowance_value.map_or((0_i128, 0_u32), |v| {
-            if env.ledger().sequence() > v.expiration_ledger {
-                (0_i128, v.expiration_ledger)
-            } else {
-                (v.amount, v.expiration_ledger)
-            }
-        });
-        if allowance < amount {
-            panic_with_error!(&env, ShareTokenError::InsufficientAllowance);
-        }
-
-        let balance = get_balance(&env, &from);
-        if balance < amount {
-            panic_with_error!(&env, ShareTokenError::InsufficientBalance);
-        }
-
-        let new_allowance = allowance
-            .checked_sub(amount)
-            .unwrap_or_else(|| panic_with_error!(&env, ShareTokenError::Overflow));
-
-        let new_balance = balance
-            .checked_sub(amount)
-            .unwrap_or_else(|| panic_with_error!(&env, ShareTokenError::Overflow));
-
-        let supply = get_total_supply(&env);
-        let new_supply = supply
-            .checked_sub(amount)
-            .unwrap_or_else(|| panic_with_error!(&env, ShareTokenError::Overflow));
-
-        set_allowance(&env, &from, &spender, new_allowance, expiration_ledger);
-        set_balance(&env, &from, new_balance);
-        set_total_supply(&env, new_supply);
-
-        events::burn_event(&env, from, amount);
+        let _ = (spender, from);
+        panic_with_error!(&env, ShareTokenError::TransfersDisabled);
     }
 
     // -----------------------------------------------------------------------

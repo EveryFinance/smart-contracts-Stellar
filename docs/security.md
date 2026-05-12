@@ -35,8 +35,8 @@ Security design assumes code-level controls plus operational governance controls
 - Shares are non-transferable by default.
 - `transfer` and `transfer_from` are blocked until transferability is explicitly
   enabled by the vault admin.
-- Delegated `burn_from` is blocked while transfers are disabled, and default-mode
-  burns are intended to occur through vault withdrawal.
+- Share burns are admin/vault-only and delegated `burn_from` is disabled, so
+  redemption stays on the vault withdrawal path.
 - Default non-transferability preserves account-based exit cooldown and accurate
   per-user PnL tracking.
 - If share transfers are enabled, cooldown is no longer a hard control and PnL

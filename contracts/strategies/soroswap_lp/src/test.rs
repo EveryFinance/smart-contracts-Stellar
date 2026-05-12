@@ -4,7 +4,10 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, testutils::Address as _, Address, Env, String,
 };
 
-use crate::{SoroswapLpStrategy, SoroswapLpStrategyClient};
+use crate::{
+    interfaces::{OracleAdapter, PairAdapter},
+    SoroswapLpStrategy, SoroswapLpStrategyClient,
+};
 
 // ---------------------------------------------------------------------------
 // MockToken (same pattern as blend tests)
@@ -125,6 +128,9 @@ impl MockToken2 {
 #[contracttype]
 enum RouterKey {
     LpToken,
+    Overuse,
+    NoMint,
+    BurnLp,
 }
 #[contract]
 pub struct MockSoroswapRouter;
@@ -133,6 +139,19 @@ impl MockSoroswapRouter {
     pub fn init(env: Env, lp_token: Address) {
         env.storage().instance().set(&RouterKey::LpToken, &lp_token);
     }
+
+    pub fn set_overuse(env: Env, enabled: bool) {
+        env.storage().instance().set(&RouterKey::Overuse, &enabled);
+    }
+
+    pub fn set_no_mint(env: Env, enabled: bool) {
+        env.storage().instance().set(&RouterKey::NoMint, &enabled);
+    }
+
+    pub fn set_burn_lp(env: Env, enabled: bool) {
+        env.storage().instance().set(&RouterKey::BurnLp, &enabled);
+    }
+
     pub fn add_liquidity(
         env: Env,
         _token_a: Address,
@@ -144,10 +163,37 @@ impl MockSoroswapRouter {
         to: Address,
         _deadline: u64,
     ) -> (i128, i128, i128) {
+        let overuse: bool = env
+            .storage()
+            .instance()
+            .get(&RouterKey::Overuse)
+            .unwrap_or(false);
+        if overuse {
+            return (amount_a + 1, amount_b, 0);
+        }
+
         let lp_minted = amount_a.min(amount_b); // simplified
         let lp: Address = env.storage().instance().get(&RouterKey::LpToken).unwrap();
-        MockToken2Client::new(&env, &lp).mint(&to, &lp_minted);
-        (amount_a, amount_b, lp_minted)
+        let lp_client = MockToken2Client::new(&env, &lp);
+        let burn_lp: bool = env
+            .storage()
+            .instance()
+            .get(&RouterKey::BurnLp)
+            .unwrap_or(false);
+        let no_mint: bool = env
+            .storage()
+            .instance()
+            .get(&RouterKey::NoMint)
+            .unwrap_or(false);
+        if burn_lp {
+            let balance = lp_client.balance(&to);
+            if balance > 0 {
+                lp_client.burn(&to, &balance);
+            }
+        } else if !no_mint {
+            lp_client.mint(&to, &lp_minted);
+        }
+        (lp_minted, lp_minted, lp_minted)
     }
     pub fn remove_liquidity(
         env: Env,
@@ -312,6 +358,38 @@ fn test_add_liquidity_tracks_lp() {
         .add_liquidity(&t.vault, &100_0000000i128, &100_0000000i128, &0, &0);
     let lp_after = t.strategy.get_lp_balance();
     assert!(lp_after > lp_before);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_add_liquidity_rejects_router_overusing_inputs() {
+    let t = setup();
+    MockSoroswapRouterClient::new(&t.env, &t.router).set_overuse(&true);
+
+    t.strategy
+        .add_liquidity(&t.vault, &100_0000000i128, &100_0000000i128, &0, &0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_add_liquidity_rejects_router_that_mints_no_lp() {
+    let t = setup();
+    MockSoroswapRouterClient::new(&t.env, &t.router).set_no_mint(&true);
+
+    t.strategy
+        .add_liquidity(&t.vault, &100_0000000i128, &100_0000000i128, &0, &0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_add_liquidity_rejects_router_that_burns_existing_lp() {
+    let t = setup();
+    t.strategy
+        .add_liquidity(&t.vault, &100_0000000i128, &100_0000000i128, &0, &0);
+    MockSoroswapRouterClient::new(&t.env, &t.router).set_burn_lp(&true);
+
+    t.strategy
+        .add_liquidity(&t.vault, &100_0000000i128, &100_0000000i128, &0, &0);
 }
 
 #[test]
@@ -857,4 +935,175 @@ fn test_get_value_zero_reserves_panics() {
     oracle2_client(&t.env, &oracle_id).set_price(&t.token_b, &PRICE_PRECISION);
     MockFactoryClient::new(&t.env, &t.factory).set_asset_handler(&oracle_id);
     t.strategy.get_value(&t.vault);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #9)")]
+fn test_get_value_non_positive_oracle_price_panics() {
+    let (t, oracle_id) = setup_with_pair_token();
+    t.strategy
+        .add_liquidity(&t.vault, &100_0000000i128, &100_0000000i128, &0, &0);
+    pair_client(&t.env, &t.lp_token).set_reserves(&100_0000000i128, &100_0000000i128);
+    oracle2_client(&t.env, &oracle_id).set_price(&t.token_a, &PRICE_PRECISION);
+    oracle2_client(&t.env, &oracle_id).set_price(&t.token_b, &0i128);
+    MockFactoryClient::new(&t.env, &t.factory).set_asset_handler(&oracle_id);
+
+    t.strategy.get_value(&t.vault);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_checked_mul_div_rejects_zero_denominator() {
+    let env = Env::default();
+    super::checked_mul_div(&env, 1, 1, 0);
+}
+
+#[test]
+fn test_oracle_adapter_get_price() {
+    let (t, oracle_id) = setup_with_pair_token();
+    oracle2_client(&t.env, &oracle_id).set_price(&t.token_a, &456i128);
+
+    assert_eq!(
+        OracleAdapter::new(&t.env, &oracle_id).get_price(&t.token_a),
+        456i128
+    );
+}
+
+#[test]
+fn test_pair_adapter_token1_passthrough() {
+    let (t, _oracle_id) = setup_with_pair_token();
+
+    assert_eq!(PairAdapter::new(&t.env, &t.lp_token).token1(), t.token_a);
+}
+
+#[test]
+fn test_get_share_balance_alias_matches_lp_balance() {
+    let t = setup();
+    t.strategy
+        .add_liquidity(&t.vault, &100_0000000i128, &100_0000000i128, &0, &0);
+    assert_eq!(t.strategy.get_share_balance(), t.strategy.get_lp_balance());
+}
+
+#[test]
+fn test_get_total_value_wrong_vault_returns_zero() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    assert_eq!(t.strategy.get_total_value(&rogue), 0i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_withdraw_fraction_not_vault_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    let to = Address::generate(&t.env);
+    t.strategy.withdraw_fraction(&rogue, &1i128, &2i128, &to);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_withdraw_fraction_invalid_fraction_panics() {
+    let t = setup();
+    let to = Address::generate(&t.env);
+    t.strategy.withdraw_fraction(&t.vault, &2i128, &1i128, &to);
+}
+
+#[test]
+fn test_withdraw_fraction_no_position_is_noop() {
+    let t = setup();
+    let to = Address::generate(&t.env);
+    t.strategy.withdraw_fraction(&t.vault, &1i128, &2i128, &to);
+    assert_eq!(t.strategy.get_lp_balance(), 0i128);
+}
+
+#[test]
+fn test_withdraw_fraction_rounds_to_zero_is_noop() {
+    let t = setup();
+    let to = Address::generate(&t.env);
+    t.strategy.add_liquidity(&t.vault, &1i128, &1i128, &0, &0);
+
+    t.strategy.withdraw_fraction(&t.vault, &1i128, &2i128, &to);
+
+    assert_eq!(t.strategy.get_lp_balance(), 1i128);
+}
+
+#[test]
+fn test_asset_in_use_edges() {
+    let t = setup();
+    let rogue_vault = Address::generate(&t.env);
+    let rogue_asset = Address::generate(&t.env);
+
+    assert!(!t.strategy.asset_in_use(&t.vault, &t.token_a));
+
+    t.strategy
+        .add_liquidity(&t.vault, &100_0000000i128, &100_0000000i128, &0, &0);
+
+    assert!(!t.strategy.asset_in_use(&rogue_vault, &t.token_a));
+    assert!(!t.strategy.asset_in_use(&t.vault, &rogue_asset));
+    assert!(t.strategy.asset_in_use(&t.vault, &t.token_a));
+    assert!(t.strategy.asset_in_use(&t.vault, &t.token_b));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_add_liquidity_negative_min_panics() {
+    let t = setup();
+    t.strategy
+        .add_liquidity(&t.vault, &100i128, &100i128, &-1, &0);
+}
+
+#[test]
+fn test_add_liquidity_returns_dust_to_vault() {
+    let t = setup();
+    let vault_a_before = MockToken2Client::new(&t.env, &t.token_a).balance(&t.vault);
+    let vault_b_before = MockToken2Client::new(&t.env, &t.token_b).balance(&t.vault);
+
+    t.strategy
+        .add_liquidity(&t.vault, &200i128, &100i128, &0, &0);
+
+    let vault_a_after = MockToken2Client::new(&t.env, &t.token_a).balance(&t.vault);
+    let vault_b_after = MockToken2Client::new(&t.env, &t.token_b).balance(&t.vault);
+    assert_eq!(vault_a_before - vault_a_after, 100i128);
+    assert_eq!(vault_b_before - vault_b_after, 100i128);
+    assert_eq!(t.strategy.get_lp_balance(), 100i128);
+}
+
+#[test]
+fn test_add_liquidity_returns_token_b_dust_to_vault() {
+    let t = setup();
+    let vault_a_before = MockToken2Client::new(&t.env, &t.token_a).balance(&t.vault);
+    let vault_b_before = MockToken2Client::new(&t.env, &t.token_b).balance(&t.vault);
+
+    t.strategy
+        .add_liquidity(&t.vault, &100i128, &200i128, &0, &0);
+
+    let vault_a_after = MockToken2Client::new(&t.env, &t.token_a).balance(&t.vault);
+    let vault_b_after = MockToken2Client::new(&t.env, &t.token_b).balance(&t.vault);
+    assert_eq!(vault_a_before - vault_a_after, 100i128);
+    assert_eq!(vault_b_before - vault_b_after, 100i128);
+    assert_eq!(t.strategy.get_lp_balance(), 100i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_remove_liquidity_negative_min_panics() {
+    let t = setup();
+    t.strategy.remove_liquidity(&t.vault, &1i128, &-1, &0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_swap_zero_amount_panics() {
+    let t = setup();
+    t.strategy
+        .swap(&t.vault, &t.token_a, &t.token_b, &0i128, &0i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_swap_not_vault_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.strategy
+        .swap(&rogue, &t.token_a, &t.token_b, &1i128, &0i128);
 }

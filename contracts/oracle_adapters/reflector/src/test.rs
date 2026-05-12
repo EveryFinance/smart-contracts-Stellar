@@ -124,6 +124,17 @@ fn setup(reflector_price: i128, decimals: u32) -> (Env, ReflectorAdapterClient<'
     (env, client, admin)
 }
 
+#[test]
+#[should_panic(expected = "Error(Contract, #1)")]
+fn test_constructor_rejects_reinitialization() {
+    let (env, client, admin) = setup(100_000_000, 8);
+    let reflector_id = Address::generate(&env);
+
+    env.as_contract(&client.address, || {
+        ReflectorAdapter::__constructor(env.clone(), admin, reflector_id);
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Initialization
 // ---------------------------------------------------------------------------
@@ -207,6 +218,14 @@ fn test_set_max_age_zero_panics() {
     client.set_max_age_secs(&admin, &0u64);
 }
 
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_set_max_age_secs_not_admin_panics() {
+    let (env, client, _) = setup(100_000_000, 8);
+    let rogue = Address::generate(&env);
+    client.set_max_age_secs(&rogue, &7_200u64);
+}
+
 // ---------------------------------------------------------------------------
 // get_price — no data (None)
 // ---------------------------------------------------------------------------
@@ -221,6 +240,13 @@ fn test_get_price_returns_zero_when_reflector_returns_none() {
     let client: ReflectorAdapterClient<'static> =
         unsafe { core::mem::transmute(ReflectorAdapterClient::new(&env, &adapter_id)) };
 
+    let asset = Address::generate(&env);
+    assert_eq!(client.get_price(&asset), 0);
+}
+
+#[test]
+fn test_get_price_returns_zero_when_reflector_price_is_negative() {
+    let (env, client, _) = setup(-100_000_000, 8);
     let asset = Address::generate(&env);
     assert_eq!(client.get_price(&asset), 0);
 }
@@ -272,6 +298,40 @@ fn test_set_reflector_updates_address_and_decimals() {
     // get_price: 1_000_000 (6 dec) → 1.0 → PRICE_PRECISION
     let asset = Address::generate(&env);
     assert_eq!(client.get_price(&asset), PRICE_PRECISION);
+}
+
+#[test]
+fn test_refresh_decimals_reloads_from_current_reflector() {
+    let (_, client, admin) = setup(100_000_000, 8);
+    client.refresh_decimals(&admin);
+    assert_eq!(client.get_decimals(), 8);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_refresh_decimals_not_admin_panics() {
+    let (env, client, _) = setup(100_000_000, 8);
+    let rogue = Address::generate(&env);
+    client.refresh_decimals(&rogue);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_set_pending_admin_not_admin_panics() {
+    let (env, client, _) = setup(100_000_000, 8);
+    let rogue = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    client.set_pending_admin(&rogue, &new_admin);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_accept_admin_wrong_pending_panics() {
+    let (env, client, admin) = setup(100_000_000, 8);
+    let pending = Address::generate(&env);
+    let rogue = Address::generate(&env);
+    client.set_pending_admin(&admin, &pending);
+    client.accept_admin(&rogue);
 }
 
 // ---------------------------------------------------------------------------

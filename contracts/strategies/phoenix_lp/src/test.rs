@@ -4,7 +4,7 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, testutils::Address as _, Address, Env, String,
 };
 
-use crate::{PhoenixLpStrategy, PhoenixLpStrategyClient};
+use crate::{interfaces::OracleAdapter, PhoenixLpStrategy, PhoenixLpStrategyClient};
 
 // ---------------------------------------------------------------------------
 // MockToken — minimal SEP-41 token for testing
@@ -132,6 +132,8 @@ enum PKey {
     UnderlyingB,
     ReserveA,
     ReserveB,
+    NoMint,
+    BurnShares,
 }
 #[contract]
 pub struct MockPhoenixPool;
@@ -164,6 +166,14 @@ impl MockPhoenixPool {
         env.storage().instance().set(&PKey::ReserveB, &b);
     }
 
+    pub fn set_no_mint(env: Env, enabled: bool) {
+        env.storage().instance().set(&PKey::NoMint, &enabled);
+    }
+
+    pub fn set_burn_shares(env: Env, enabled: bool) {
+        env.storage().instance().set(&PKey::BurnShares, &enabled);
+    }
+
     /// Phoenix provide_liquidity signature (simplified).
     ///
     /// `auto_stake` is the last bool argument; we ignore it.
@@ -183,7 +193,21 @@ impl MockPhoenixPool {
         let b = desired_b.unwrap_or(0);
         let shares = a.min(b); // simplified 1:1
         let share_token: Address = env.storage().instance().get(&PKey::ShareToken).unwrap();
-        MockTokenClient::new(&env, &share_token).mint(&depositor, &shares);
+        let share_client = MockTokenClient::new(&env, &share_token);
+        let burn_shares: bool = env
+            .storage()
+            .instance()
+            .get(&PKey::BurnShares)
+            .unwrap_or(false);
+        let no_mint: bool = env.storage().instance().get(&PKey::NoMint).unwrap_or(false);
+        if burn_shares {
+            let balance = share_client.balance(&depositor);
+            if balance > 0 {
+                share_client.burn(&depositor, &balance);
+            }
+        } else if !no_mint {
+            share_client.mint(&depositor, &shares);
+        }
         let ra: i128 = env.storage().instance().get(&PKey::ReserveA).unwrap_or(0);
         let rb: i128 = env.storage().instance().get(&PKey::ReserveB).unwrap_or(0);
         env.storage().instance().set(&PKey::ReserveA, &(ra + a));
@@ -313,7 +337,7 @@ struct T {
 
 fn setup() -> T {
     let env = Env::default();
-    env.mock_all_auths();
+    env.mock_all_auths_allowing_non_root_auth();
 
     let token_a = env.register(MockToken, ());
     let token_b = env.register(MockToken, ());
@@ -398,6 +422,28 @@ fn test_deposit_liquidity_tracks_shares() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_deposit_liquidity_rejects_pool_that_mints_no_shares() {
+    let t = setup();
+    MockPhoenixPoolClient::new(&t.env, &t.pool).set_no_mint(&true);
+
+    t.strategy
+        .deposit_liquidity(&100_0000000i128, &100_0000000i128, &0, &0, &t.vault);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_deposit_liquidity_rejects_pool_that_burns_existing_shares() {
+    let t = setup();
+    t.strategy
+        .deposit_liquidity(&100_0000000i128, &100_0000000i128, &0, &0, &t.vault);
+    MockPhoenixPoolClient::new(&t.env, &t.pool).set_burn_shares(&true);
+
+    t.strategy
+        .deposit_liquidity(&100_0000000i128, &100_0000000i128, &0, &0, &t.vault);
+}
+
+#[test]
 fn test_get_value_with_oracle_uses_reserve_decomposition() {
     let t = setup();
     let oracle = t.env.register(mock_oracle::MockOracle, ());
@@ -420,6 +466,39 @@ fn test_get_value_with_oracle_uses_reserve_decomposition() {
     // Strategy owns all shares in this mock, so get_value should be ~2_000000000.
     let v = t.strategy.get_value(&t.vault);
     assert!(v >= 1_900_000000i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #9)")]
+fn test_get_value_zero_reserves_panics() {
+    let t = setup();
+    let oracle = t.env.register(mock_oracle::MockOracle, ());
+    mock_oracle::MockOracleClient::new(&t.env, &oracle).init(&t.manager);
+
+    t.strategy
+        .deposit_liquidity(&100_0000000i128, &100_0000000i128, &0, &0, &t.vault);
+    MockPhoenixPoolClient::new(&t.env, &t.pool).set_reserves(&0i128, &0i128);
+    mock_oracle::MockOracleClient::new(&t.env, &oracle).set_price(&t.token_a, &10_000_000i128);
+    mock_oracle::MockOracleClient::new(&t.env, &oracle).set_price(&t.token_b, &10_000_000i128);
+    MockFactoryClient::new(&t.env, &t.factory).set_asset_handler(&oracle);
+
+    t.strategy.get_value(&t.vault);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #9)")]
+fn test_get_value_non_positive_oracle_price_panics() {
+    let t = setup();
+    let oracle = t.env.register(mock_oracle::MockOracle, ());
+    mock_oracle::MockOracleClient::new(&t.env, &oracle).init(&t.manager);
+
+    t.strategy
+        .deposit_liquidity(&100_0000000i128, &100_0000000i128, &0, &0, &t.vault);
+    mock_oracle::MockOracleClient::new(&t.env, &oracle).set_price(&t.token_a, &0i128);
+    mock_oracle::MockOracleClient::new(&t.env, &oracle).set_price(&t.token_b, &10_000_000i128);
+    MockFactoryClient::new(&t.env, &t.factory).set_asset_handler(&oracle);
+
+    t.strategy.get_value(&t.vault);
 }
 
 #[test]
@@ -646,4 +725,196 @@ fn test_withdraw_user_receives_both_tokens() {
     let half = shares / 2;
     assert_eq!(a, half);
     assert_eq!(b, half);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_checked_mul_div_rejects_zero_denominator() {
+    let env = Env::default();
+    super::checked_mul_div(&env, 1, 1, 0);
+}
+
+#[test]
+fn test_oracle_adapter_get_price() {
+    let t = setup();
+    let oracle = t.env.register(mock_oracle::MockOracle, ());
+    mock_oracle::MockOracleClient::new(&t.env, &oracle).init(&t.manager);
+    mock_oracle::MockOracleClient::new(&t.env, &oracle).set_price(&t.token_a, &123i128);
+
+    assert_eq!(
+        OracleAdapter::new(&t.env, &oracle).get_price(&t.token_a),
+        123i128
+    );
+}
+
+#[test]
+fn test_get_total_value_wrong_vault_returns_zero() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    assert_eq!(t.strategy.get_total_value(&rogue), 0i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_withdraw_fraction_not_vault_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.strategy
+        .withdraw_fraction(&rogue, &1i128, &2i128, &t.user);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_withdraw_fraction_invalid_fraction_panics() {
+    let t = setup();
+    t.strategy
+        .withdraw_fraction(&t.vault, &2i128, &1i128, &t.user);
+}
+
+#[test]
+fn test_withdraw_fraction_no_tracked_shares_is_noop() {
+    let t = setup();
+    t.strategy
+        .withdraw_fraction(&t.vault, &1i128, &2i128, &t.user);
+    assert_eq!(t.strategy.get_share_balance(), 0i128);
+}
+
+#[test]
+fn test_withdraw_fraction_rounds_to_zero_is_noop() {
+    let t = setup();
+    t.strategy
+        .deposit_liquidity(&1i128, &1i128, &0, &0, &t.vault);
+
+    t.strategy
+        .withdraw_fraction(&t.vault, &1i128, &2i128, &t.user);
+
+    assert_eq!(t.strategy.get_share_balance(), 1i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #7)")]
+fn test_withdraw_fraction_live_balance_below_tracked_panics() {
+    let t = setup();
+    let shares = t
+        .strategy
+        .deposit_liquidity(&10i128, &10i128, &0, &0, &t.vault);
+
+    MockTokenClient::new(&t.env, &t.share_token).burn(&t.strategy.address, &shares);
+
+    t.strategy
+        .withdraw_fraction(&t.vault, &1i128, &1i128, &t.user);
+}
+
+#[test]
+fn test_asset_in_use_edges() {
+    let t = setup();
+    let rogue_vault = Address::generate(&t.env);
+    let rogue_asset = Address::generate(&t.env);
+
+    assert!(!t.strategy.asset_in_use(&t.vault, &t.token_a));
+
+    t.strategy
+        .deposit_liquidity(&100_0000000i128, &100_0000000i128, &0, &0, &t.vault);
+
+    assert!(!t.strategy.asset_in_use(&rogue_vault, &t.token_a));
+    assert!(!t.strategy.asset_in_use(&t.vault, &rogue_asset));
+    assert!(t.strategy.asset_in_use(&t.vault, &t.token_a));
+    assert!(t.strategy.asset_in_use(&t.vault, &t.token_b));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_add_liquidity_wrapper_zero_panics() {
+    let t = setup();
+    t.strategy.add_liquidity(&t.vault, &0i128, &100i128, &0, &0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_add_liquidity_wrapper_not_vault_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.strategy.add_liquidity(&rogue, &100i128, &100i128, &0, &0);
+}
+
+#[test]
+fn test_add_liquidity_wrapper_success_returns_residuals() {
+    let t = setup();
+    let vault_a_before = MockTokenClient::new(&t.env, &t.token_a).balance(&t.vault);
+    let vault_b_before = MockTokenClient::new(&t.env, &t.token_b).balance(&t.vault);
+
+    t.strategy
+        .add_liquidity(&t.vault, &200i128, &100i128, &0, &0);
+
+    let vault_a_after = MockTokenClient::new(&t.env, &t.token_a).balance(&t.vault);
+    let vault_b_after = MockTokenClient::new(&t.env, &t.token_b).balance(&t.vault);
+    assert_eq!(vault_a_before, vault_a_after);
+    assert_eq!(vault_b_before, vault_b_after);
+    assert_eq!(t.strategy.get_share_balance(), 100i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_add_liquidity_wrapper_rejects_pool_that_mints_no_shares() {
+    let t = setup();
+    MockPhoenixPoolClient::new(&t.env, &t.pool).set_no_mint(&true);
+
+    t.strategy
+        .add_liquidity(&t.vault, &100_0000000i128, &100_0000000i128, &0, &0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_add_liquidity_wrapper_rejects_pool_that_burns_existing_shares() {
+    let t = setup();
+    t.strategy
+        .add_liquidity(&t.vault, &100_0000000i128, &100_0000000i128, &0, &0);
+    MockPhoenixPoolClient::new(&t.env, &t.pool).set_burn_shares(&true);
+
+    t.strategy
+        .add_liquidity(&t.vault, &100_0000000i128, &100_0000000i128, &0, &0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_remove_liquidity_wrapper_zero_panics() {
+    let t = setup();
+    t.strategy.remove_liquidity(&t.vault, &0i128, &0, &0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_remove_liquidity_wrapper_not_vault_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.strategy.remove_liquidity(&rogue, &1i128, &0, &0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #7)")]
+fn test_remove_liquidity_wrapper_insufficient_shares_panics() {
+    let t = setup();
+    t.strategy.remove_liquidity(&t.vault, &1i128, &0, &0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_swap_zero_amount_panics() {
+    let t = setup();
+    t.strategy.swap(&t.vault, &true, &0i128, &0i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_swap_negative_min_out_panics() {
+    let t = setup();
+    t.strategy.swap(&t.vault, &true, &1i128, &-1i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_swap_not_vault_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.strategy.swap(&rogue, &true, &1i128, &0i128);
 }

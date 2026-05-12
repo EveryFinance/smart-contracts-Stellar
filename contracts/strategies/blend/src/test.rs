@@ -120,6 +120,7 @@ impl MockToken {
 enum BlendKey {
     Supply(Address), // account → supplied balance
     Token,
+    NoTransferOnWithdraw,
 }
 
 #[contract]
@@ -130,6 +131,12 @@ impl MockBlendPool {
     /// Store the underlying token address so `submit` can transfer on withdraw.
     pub fn set_token(env: Env, token: Address) {
         env.storage().instance().set(&BlendKey::Token, &token);
+    }
+
+    pub fn set_no_transfer_on_withdraw(env: Env, enabled: bool) {
+        env.storage()
+            .instance()
+            .set(&BlendKey::NoTransferOnWithdraw, &enabled);
     }
 
     /// Mimics `blend_pool.submit(from, spender, to, requests)`.
@@ -166,6 +173,14 @@ impl MockBlendPool {
                 env.storage()
                     .persistent()
                     .set(&BlendKey::Supply(from.clone()), &(bal - req.amount));
+                let no_transfer: bool = env
+                    .storage()
+                    .instance()
+                    .get(&BlendKey::NoTransferOnWithdraw)
+                    .unwrap_or(false);
+                if no_transfer {
+                    continue;
+                }
                 let token_addr: Address = env.storage().instance().get(&BlendKey::Token).unwrap();
                 MockTokenClient::new(&env, &token_addr).transfer(
                     &env.current_contract_address(),
@@ -351,6 +366,17 @@ fn test_withdraw_reduces_position() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_withdraw_rejects_pool_that_sends_no_tokens() {
+    let t = setup();
+    t.strategy.deposit(&1_000_0000000i128, &t.vault);
+
+    MockBlendPoolClient::new(&t.env, &t.blend_pool).set_no_transfer_on_withdraw(&true);
+
+    t.strategy.withdraw(&400_0000000i128, &t.vault, &t.user);
+}
+
+#[test]
 #[should_panic]
 fn test_withdraw_more_than_position_panics() {
     let t = setup();
@@ -476,4 +502,96 @@ fn test_deposit_reduces_vault_balance() {
     t.strategy.deposit(&amount, &t.vault);
     let vault_after = MockTokenClient::new(&t.env, &t.token_id).balance(&t.vault);
     assert_eq!(vault_before - vault_after, amount);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_checked_mul_div_rejects_zero_denominator() {
+    let env = Env::default();
+    super::checked_mul_div(&env, 1, 1, 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_withdraw_fraction_not_vault_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.strategy
+        .withdraw_fraction(&rogue, &1i128, &2i128, &t.user);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_withdraw_fraction_invalid_fraction_panics() {
+    let t = setup();
+    t.strategy
+        .withdraw_fraction(&t.vault, &2i128, &1i128, &t.user);
+}
+
+#[test]
+fn test_withdraw_fraction_no_position_is_noop() {
+    let t = setup();
+    t.strategy
+        .withdraw_fraction(&t.vault, &1i128, &2i128, &t.user);
+    assert_eq!(t.strategy.get_value(&t.vault), 0i128);
+}
+
+#[test]
+fn test_withdraw_fraction_rounds_to_zero_is_noop() {
+    let t = setup();
+    t.strategy.deposit(&1i128, &t.vault);
+
+    t.strategy
+        .withdraw_fraction(&t.vault, &1i128, &2i128, &t.user);
+
+    assert_eq!(t.strategy.get_value(&t.vault), 1i128);
+}
+
+#[test]
+fn test_asset_in_use_false_for_wrong_vault_and_asset() {
+    let t = setup();
+    t.strategy.deposit(&100i128, &t.vault);
+    let rogue_vault = Address::generate(&t.env);
+    let rogue_asset = Address::generate(&t.env);
+
+    assert!(!t.strategy.asset_in_use(&rogue_vault, &t.token_id));
+    assert!(!t.strategy.asset_in_use(&t.vault, &rogue_asset));
+    assert!(t.strategy.asset_in_use(&t.vault, &t.token_id));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_supply_zero_panics() {
+    let t = setup();
+    t.strategy.supply(&t.vault, &0i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_supply_not_vault_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.strategy.supply(&rogue, &100i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_withdraw_from_lending_zero_panics() {
+    let t = setup();
+    t.strategy.withdraw_from_lending(&t.vault, &0i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_withdraw_from_lending_not_vault_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.strategy.withdraw_from_lending(&rogue, &1i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #7)")]
+fn test_withdraw_from_lending_insufficient_position_panics() {
+    let t = setup();
+    t.strategy.withdraw_from_lending(&t.vault, &1i128);
 }

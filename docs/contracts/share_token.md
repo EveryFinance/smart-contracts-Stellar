@@ -28,8 +28,8 @@ SEP-41:
 - `approve(from, spender, amount, expiration_ledger)`
 - `transfer(from, to, amount)` - reverts unless transfers are enabled
 - `transfer_from(spender, from, to, amount)` - reverts unless transfers are enabled
-- `burn(from, amount)` - admin/vault-only while transfers are disabled; holder burn is allowed only when transfers are enabled
-- `burn_from(spender, from, amount)` - reverts unless transfers are enabled
+- `burn(from, amount)` - admin/vault-only; redemption must route through vault withdrawal
+- `burn_from(spender, from, amount)` - disabled for vault shares
 
 Admin:
 - `mint(to, amount)`
@@ -47,9 +47,10 @@ than by direct operational access to the share token.
 - `set_transfers_enabled` requires current admin auth.
 - `transfer` and `transfer_from` revert with `TransfersDisabled` while
   `transfers_enabled() == false`.
-- Direct holder burns are blocked in default mode; default-mode burns should
-  happen through vault withdrawal so cooldown and PnL state stay consistent.
-- Delegated `burn_from` is blocked while transfers are disabled.
+- Direct holder burns are blocked even when transfers are enabled; share
+  redemption must happen through vault withdrawal so cooldown, fee, and PnL state
+  stay as coherent as the selected transferability mode allows.
+- Delegated `burn_from` is disabled for vault shares.
 - allowance expiration is enforced at use-time.
 - amount positivity and arithmetic overflow checks are explicit.
 

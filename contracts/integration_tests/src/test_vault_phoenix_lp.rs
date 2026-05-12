@@ -177,6 +177,7 @@ fn setup_phoenix() -> PhoenixWorld {
         &env,
         Symbol::new(&env, "add_liquidity"),
         Symbol::new(&env, "remove_liquidity"),
+        Symbol::new(&env, "swap"),
     ];
     vault.set_authorized_ops(&manager, &strategy_id, &ops);
 
@@ -329,6 +330,37 @@ fn test_phoenix_remove_liquidity_via_execute_op() {
     // Strategy holds no share tokens.
     assert_eq!(token_balance(&w.env, &w.share_token, &w.strategy_addr), 0);
     assert_eq!(w.strategy.get_share_balance(), 0);
+}
+
+#[test]
+fn test_phoenix_swap_via_execute_op() {
+    let w = setup_phoenix();
+    let amount_in = 500_0000000i128;
+
+    let vault_a_before = token_balance(&w.env, &w.asset_a, &w.vault_addr);
+    let vault_b_before = token_balance(&w.env, &w.asset_b, &w.vault_addr);
+
+    let args: Vec<Val> = soroban_sdk::vec![
+        &w.env,
+        true.into_val(&w.env),
+        amount_in.into_val(&w.env),
+        0i128.into_val(&w.env),
+    ];
+    w.vault.execute_op(
+        &w.trader,
+        &w.strategy_addr,
+        &Symbol::new(&w.env, "swap"),
+        &args,
+    );
+
+    assert_eq!(
+        token_balance(&w.env, &w.asset_a, &w.vault_addr),
+        vault_a_before - amount_in
+    );
+    assert_eq!(
+        token_balance(&w.env, &w.asset_b, &w.vault_addr),
+        vault_b_before + amount_in
+    );
 }
 
 /// asset_in_use returns true for both underlying assets after add_liquidity.

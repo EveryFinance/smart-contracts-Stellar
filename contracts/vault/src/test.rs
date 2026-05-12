@@ -1,9 +1,10 @@
 #![cfg(test)]
 
 use soroban_sdk::{
+    auth::InvokerContractAuthEntry,
     contract, contractimpl, contracttype,
     testutils::{Address as _, Ledger as _},
-    vec, Address, Env, String, Symbol, Val, Vec,
+    vec, Address, Env, IntoVal, String, Symbol, Val, Vec,
 };
 
 use crate::{Vault, VaultClient, VaultParams};
@@ -24,6 +25,7 @@ enum TKey {
     Allowance(Address, Address),
     TotalSupply,
     Admin,
+    TransfersEnabled,
 }
 #[contract]
 pub struct MockToken;
@@ -39,6 +41,19 @@ impl MockToken {
         let admin: Address = env.storage().instance().get(&TKey::Admin).unwrap();
         admin.require_auth();
         env.storage().instance().set(&TKey::Admin, &new_admin);
+    }
+    pub fn set_transfers_enabled(env: Env, enabled: bool) {
+        let admin: Address = env.storage().instance().get(&TKey::Admin).unwrap();
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&TKey::TransfersEnabled, &enabled);
+    }
+    pub fn transfers_enabled(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&TKey::TransfersEnabled)
+            .unwrap_or(false)
     }
     pub fn mint(env: Env, to: Address, amount: i128) {
         let b: i128 = env
@@ -359,6 +374,210 @@ fn advance_time(t: &T, secs: u64) {
     });
 }
 
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_push_transfer_auth_rejects_zero_amount() {
+    let env = Env::default();
+    let mut entries: Vec<InvokerContractAuthEntry> = Vec::new(&env);
+    let token = Address::generate(&env);
+    let from = Address::generate(&env);
+    let to = Address::generate(&env);
+
+    super::push_transfer_auth(&env, &mut entries, token, from, to, 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #31)")]
+fn test_assert_transfer_asset_allowed_legacy_rejects_non_base() {
+    let t = setup();
+    let rogue_asset = Address::generate(&t.env);
+
+    t.env.as_contract(&t.vault_addr, || {
+        crate::storage::set_portfolio_assets(&t.env, &Vec::new(&t.env));
+        super::assert_transfer_asset_allowed(&t.env, &rogue_asset);
+    });
+}
+
+#[test]
+fn test_assert_transfer_asset_allowed_legacy_allows_base_asset() {
+    let t = setup();
+
+    t.env.as_contract(&t.vault_addr, || {
+        crate::storage::set_portfolio_assets(&t.env, &Vec::new(&t.env));
+        super::assert_transfer_asset_allowed(&t.env, &t.base);
+    });
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #31)")]
+fn test_assert_transfer_asset_allowed_rejects_asset_outside_portfolio() {
+    let t = setup();
+    let rogue_asset = Address::generate(&t.env);
+
+    t.env.as_contract(&t.vault_addr, || {
+        super::assert_transfer_asset_allowed(&t.env, &rogue_asset);
+    });
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #30)")]
+fn test_assert_transfer_asset_allowed_rejects_factory_deauthorized_asset() {
+    let (t, factory) = setup_with_factory();
+    let mut portfolio = Vec::new(&t.env);
+    portfolio.push_back(t.base.clone());
+
+    t.env.as_contract(&t.vault_addr, || {
+        crate::storage::set_portfolio_assets(&t.env, &portfolio);
+        crate::storage::set_factory(&t.env, &factory);
+        super::assert_transfer_asset_allowed(&t.env, &t.base);
+    });
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #40)")]
+fn test_price_asset_to_base_requires_oracle_for_non_base_asset() {
+    let env = Env::default();
+    let asset = Address::generate(&env);
+    let base_asset = Address::generate(&env);
+
+    super::price_asset_to_base(&env, &asset, &base_asset, 100, &None, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #46)")]
+fn test_price_asset_to_base_rejects_non_positive_price() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let asset = Address::generate(&env);
+    let base_asset = Address::generate(&env);
+    let oracle = env.register(MockOracle, ());
+    mock_oracle_mod::MockOracleClient::new(&env, &oracle).set_price(&asset, &0i128);
+
+    super::price_asset_to_base(&env, &asset, &base_asset, 100, &None, &Some(oracle));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_checked_mul_div_rejects_zero_denominator() {
+    let env = Env::default();
+    super::checked_mul_div(&env, 1, 1, 0);
+}
+
+#[test]
+fn test_op_guard_pre_check_clears_stale_state() {
+    let t = setup();
+    t.env.ledger().with_mut(|li| li.sequence_number = 10);
+    t.env.as_contract(&t.vault_addr, || {
+        crate::storage::set_value_manipulation_guard_enabled(&t.env, true);
+        crate::storage::set_op_state(
+            &t.env,
+            &t.user,
+            &crate::storage::OperationState {
+                ledger: 9,
+                op_type: 1,
+                expected_nav_after: 123,
+            },
+        );
+
+        super::Vault::op_guard_pre_check(&t.env, &t.user, 1, 999);
+
+        assert!(crate::storage::get_op_state(&t.env, &t.user).is_none());
+    });
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #28)")]
+fn test_op_guard_pre_check_rejects_same_ledger_nav_mismatch() {
+    let t = setup();
+    t.env.ledger().with_mut(|li| li.sequence_number = 10);
+    t.env.as_contract(&t.vault_addr, || {
+        crate::storage::set_value_manipulation_guard_enabled(&t.env, true);
+        crate::storage::set_op_state(
+            &t.env,
+            &t.user,
+            &crate::storage::OperationState {
+                ledger: 10,
+                op_type: 1,
+                expected_nav_after: 123,
+            },
+        );
+
+        super::Vault::op_guard_pre_check(&t.env, &t.user, 1, 999);
+    });
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #31)")]
+fn test_deposit_multi_asset_requires_deposit_asset_membership() {
+    let t = setup();
+    let asset = Address::generate(&t.env);
+    t.vault.add_portfolio_asset(&t.manager, &asset);
+
+    t.vault.deposit(&1i128, &t.user, &asset, &0i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #31)")]
+fn test_deposit_legacy_mode_rejects_non_base_asset() {
+    let t = setup();
+    let asset = Address::generate(&t.env);
+
+    t.env.as_contract(&t.vault_addr, || {
+        crate::storage::set_portfolio_assets(&t.env, &Vec::new(&t.env));
+        crate::storage::set_deposit_assets(&t.env, &Vec::new(&t.env));
+    });
+
+    t.vault.deposit(&1i128, &t.user, &asset, &0i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #29)")]
+fn test_deposit_min_shares_out_slippage_panics() {
+    let t = setup();
+    t.vault
+        .deposit(&1_000_0000000i128, &t.user, &t.base, &1_000_0000001i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #29)")]
+fn test_withdraw_min_base_out_slippage_panics() {
+    let t = setup();
+    let amount = 1_000_0000000i128;
+    t.vault.deposit(&amount, &t.user, &t.base, &0i128);
+    t.vault
+        .withdraw(&amount, &t.user, &t.user, &(amount + 1i128));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #43)")]
+fn test_execute_op_operations_paused_panics() {
+    let t = setup();
+    let guard_id = t.env.register(MockGuard, ());
+    t.vault.add_active_guard(&t.manager, &guard_id);
+    t.vault.set_authorized_ops(
+        &t.manager,
+        &guard_id,
+        &vec![&t.env, Symbol::new(&t.env, "noop")],
+    );
+    t.vault.pause_operations(&t.manager);
+
+    t.vault.execute_op(
+        &t.manager,
+        &guard_id,
+        &Symbol::new(&t.env, "noop"),
+        &Vec::new(&t.env),
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_set_manager_rogue_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    let new_manager = Address::generate(&t.env);
+    t.vault.set_manager(&rogue, &new_manager);
+}
+
 // ---------------------------------------------------------------------------
 // Initialization tests
 // ---------------------------------------------------------------------------
@@ -372,6 +591,45 @@ fn test_initialize_stores_params() {
     assert_eq!(t.vault.get_share_token(), t.share);
     assert!(!t.vault.is_paused());
     assert!(t.vault.get_active_guards().is_empty());
+}
+
+#[test]
+fn test_initialize_stores_optional_manager_name() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+
+    let manager = Address::generate(&env);
+    let trader = Address::generate(&env);
+    let base = env.register(MockToken, ());
+    let share = env.register(MockToken, ());
+    MockTokenClient::new(&env, &base).initialize(&manager);
+    MockTokenClient::new(&env, &share).initialize(&manager);
+
+    let vault_id = env.register(
+        Vault,
+        (VaultParams {
+            admin: manager.clone(),
+            manager: manager.clone(),
+            manager_name: Some(String::from_str(&env, "Desk Alpha")),
+            trader,
+            base_asset: base,
+            share_token: share,
+            share_token_admin: manager.clone(),
+            treasury: manager,
+            entry_fee_bps: 0,
+            exit_fee_bps: 0,
+            mgmt_fee_bps: 0,
+            perf_fee_bps: 0,
+            factory: None,
+            is_private: false,
+        },),
+    );
+    let vault = VaultClient::new(&env, &vault_id);
+
+    assert_eq!(
+        vault.get_manager_name(),
+        Some(String::from_str(&env, "Desk Alpha"))
+    );
 }
 
 #[test]
@@ -595,6 +853,76 @@ fn test_pause_operations() {
     assert!(t.vault.is_ops_paused());
     t.vault.unpause_operations(&t.manager);
     assert!(!t.vault.is_ops_paused());
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #44)")]
+fn test_pause_operations_not_admin_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.vault.pause_operations(&rogue);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #44)")]
+fn test_unpause_operations_not_admin_panics() {
+    let t = setup();
+    t.vault.pause_operations(&t.manager);
+    let rogue = Address::generate(&t.env);
+    t.vault.unpause_operations(&rogue);
+}
+
+#[test]
+fn test_role_and_treasury_updates() {
+    let t = setup();
+    let new_manager = Address::generate(&t.env);
+    let new_trader = Address::generate(&t.env);
+    let new_treasury = Address::generate(&t.env);
+
+    t.vault.set_manager_name(
+        &t.manager,
+        &String::from_str(&t.env, "Updated Manager Name"),
+    );
+    assert_eq!(
+        t.vault.get_manager_name(),
+        Some(String::from_str(&t.env, "Updated Manager Name"))
+    );
+
+    t.vault.set_trader(&t.manager, &new_trader);
+    assert_eq!(t.vault.get_trader(), new_trader);
+
+    t.vault.set_treasury(&t.manager, &new_treasury);
+    assert_eq!(t.vault.get_treasury(), new_treasury);
+
+    t.vault.set_manager(&t.manager, &new_manager);
+    assert_eq!(t.vault.get_manager(), new_manager);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_set_manager_name_not_admin_or_manager_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.vault
+        .set_manager_name(&rogue, &String::from_str(&t.env, "Rogue"));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_set_treasury_not_admin_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    let new_treasury = Address::generate(&t.env);
+    t.vault.set_treasury(&rogue, &new_treasury);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_set_trader_not_manager_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    let new_trader = Address::generate(&t.env);
+    t.vault.set_trader(&rogue, &new_trader);
 }
 
 // ---------------------------------------------------------------------------
@@ -837,10 +1165,66 @@ fn test_set_exit_fee_bps_updates() {
 }
 
 #[test]
+fn test_fee_bps_direct_decreases_do_not_require_timelock() {
+    let t = setup_with_fees(100, 100, 100, 1_000);
+    t.vault.set_entry_fee_bps(&t.manager, &50u32);
+    t.vault.set_exit_fee_bps(&t.manager, &50u32);
+    t.vault.set_mgmt_fee_bps(&t.manager, &50u32);
+    t.vault.set_perf_fee_bps(&t.manager, &500u32);
+}
+
+#[test]
+fn test_management_fee_rounds_to_zero_without_minting() {
+    let t = setup_with_fees(0, 0, 1, 0);
+    t.vault.deposit(&1i128, &t.user, &t.base, &0i128);
+    advance_time(&t, 1);
+
+    let minted = t.vault.collect_pending_fees();
+
+    assert_eq!(minted, 0);
+    assert_eq!(shares(&t, &t.manager), 0);
+}
+
+#[test]
+fn test_performance_fee_rounds_to_zero_but_updates_high_water_mark() {
+    let t = setup_with_fees(0, 0, 0, 1);
+    t.vault.deposit(&1i128, &t.user, &t.base, &0i128);
+    MockTokenClient::new(&t.env, &t.base).mint(&t.vault_addr, &1i128);
+
+    let minted = t.vault.collect_pending_fees();
+
+    assert_eq!(minted, 0);
+    assert_eq!(shares(&t, &t.manager), 0);
+    assert_eq!(t.vault.collect_pending_fees(), 0);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #25)")]
 fn test_set_entry_fee_bps_increase_requires_delay() {
     let t = setup();
     t.vault.set_entry_fee_bps(&t.manager, &100u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_set_exit_fee_bps_too_high_panics() {
+    let t = setup();
+    t.vault.set_exit_fee_bps(&t.manager, &501u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_set_exit_fee_bps_not_manager_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.vault.set_exit_fee_bps(&rogue, &100u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #25)")]
+fn test_set_exit_fee_bps_increase_requires_delay() {
+    let t = setup();
+    t.vault.set_exit_fee_bps(&t.manager, &100u32);
 }
 
 #[test]
@@ -851,10 +1235,40 @@ fn test_set_mgmt_fee_bps_too_high_panics() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_set_mgmt_fee_bps_not_manager_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.vault.set_mgmt_fee_bps(&rogue, &100u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #25)")]
+fn test_set_mgmt_fee_bps_increase_requires_delay() {
+    let t = setup();
+    t.vault.set_mgmt_fee_bps(&t.manager, &100u32);
+}
+
+#[test]
 #[should_panic]
 fn test_set_perf_fee_bps_too_high_panics() {
     let t = setup();
     t.vault.set_perf_fee_bps(&t.manager, &3_001u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_set_perf_fee_bps_not_manager_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.vault.set_perf_fee_bps(&rogue, &100u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #25)")]
+fn test_set_perf_fee_bps_increase_requires_delay() {
+    let t = setup();
+    t.vault.set_perf_fee_bps(&t.manager, &100u32);
 }
 
 // ---------------------------------------------------------------------------
@@ -894,6 +1308,13 @@ fn test_set_deposit_cap_not_manager_panics() {
     let t = setup();
     let rogue = Address::generate(&t.env);
     t.vault.set_deposit_cap(&rogue, &1_000_0000000i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_set_deposit_cap_negative_panics() {
+    let t = setup();
+    t.vault.set_deposit_cap(&t.manager, &-1i128);
 }
 
 // ---------------------------------------------------------------------------
@@ -958,6 +1379,51 @@ fn test_add_remove_member_updates_allowlist() {
 }
 
 #[test]
+fn test_transferability_policy_views_follow_share_token_flag() {
+    let t = setup();
+    assert!(!t.vault.share_transfers_enabled());
+    assert!(t.vault.exit_cooldown_is_hard_control());
+    assert!(t.vault.pnl_tracking_is_accurate());
+
+    t.vault.set_share_transfers_enabled(&t.manager, &true);
+    assert!(t.vault.share_transfers_enabled());
+    assert!(!t.vault.exit_cooldown_is_hard_control());
+    assert!(!t.vault.pnl_tracking_is_accurate());
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #44)")]
+fn test_set_share_transfers_enabled_not_admin_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.vault.set_share_transfers_enabled(&rogue, &true);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #44)")]
+fn test_set_private_pool_not_admin_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.vault.set_private_pool(&rogue, &true);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #44)")]
+fn test_add_member_not_admin_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.vault.add_member(&rogue, &t.user);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #44)")]
+fn test_remove_member_not_admin_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.vault.remove_member(&rogue, &t.user);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #23)")]
 fn test_withdraw_respects_exit_cooldown() {
     let t = setup();
@@ -982,6 +1448,54 @@ fn test_withdraw_after_cooldown_succeeds() {
 }
 
 #[test]
+fn test_withdraw_with_cooldown_but_no_last_deposit_record_succeeds() {
+    let t = setup();
+    t.vault.set_exit_cooldown_secs(&t.manager, &120u64);
+    MockTokenClient::new(&t.env, &t.share).mint(&t.user, &1_000i128);
+    MockTokenClient::new(&t.env, &t.base).mint(&t.vault_addr, &1_000i128);
+
+    let returned = t.vault.withdraw(&500i128, &t.user, &t.user, &0i128);
+
+    assert_eq!(returned, 500i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #20)")]
+fn test_withdraw_legacy_mode_rejects_insufficient_idle_liquidity() {
+    let t = setup();
+    let guard_id = t.env.register(MockGuard, ());
+    MockGuardClient::new(&t.env, &guard_id).set_total_value(&1_000i128);
+    t.vault.add_active_guard(&t.manager, &guard_id);
+    t.vault.deposit(&1_000i128, &t.user, &t.base, &0i128);
+
+    t.env.as_contract(&t.vault_addr, || {
+        crate::storage::set_portfolio_assets(&t.env, &Vec::new(&t.env));
+    });
+
+    t.vault.withdraw(&1_000i128, &t.user, &t.user, &0i128);
+}
+
+#[test]
+fn test_exit_remaining_cooldown_zero_paths() {
+    let t = setup();
+    assert_eq!(t.vault.get_exit_remaining_cooldown(&t.user), 0);
+    t.vault.set_exit_cooldown_secs(&t.manager, &120u64);
+    assert_eq!(t.vault.get_exit_remaining_cooldown(&t.user), 0);
+    t.vault
+        .deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
+    advance_time(&t, 121);
+    assert_eq!(t.vault.get_exit_remaining_cooldown(&t.user), 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_set_exit_cooldown_secs_not_manager_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.vault.set_exit_cooldown_secs(&rogue, &120u64);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #25)")]
 fn test_commit_fee_increase_before_delay_panics() {
     let t = setup();
@@ -995,12 +1509,44 @@ fn test_commit_fee_increase_after_delay_applies() {
     let t = setup();
     t.vault
         .announce_fee_increase(&t.manager, &100u32, &200u32, &10u32, &100u32);
+    let pending = t.vault.get_announced_fees();
+    assert_eq!(pending.entry_fee_bps, Some(100));
+    assert_eq!(pending.exit_fee_bps, Some(200));
+    assert_eq!(pending.mgmt_fee_bps, Some(10));
+    assert_eq!(pending.perf_fee_bps, Some(100));
+    assert!(pending.activation_ts.is_some());
+
     advance_time(&t, 86_401);
     t.vault.commit_fee_increase(&t.manager);
 
     let announced = t.vault.get_announced_fees();
     assert_eq!(announced.activation_ts, None);
     assert_eq!(announced.entry_fee_bps, None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_announce_fee_increase_not_manager_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.vault
+        .announce_fee_increase(&rogue, &100u32, &0u32, &0u32, &0u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_announce_fee_increase_invalid_amount_panics() {
+    let t = setup();
+    t.vault
+        .announce_fee_increase(&t.manager, &501u32, &0u32, &0u32, &0u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_commit_fee_increase_not_manager_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.vault.commit_fee_increase(&rogue);
 }
 
 #[test]
@@ -1019,6 +1565,14 @@ fn test_renounce_fee_increase_clears_pending() {
     let announced = t.vault.get_announced_fees();
     assert_eq!(announced.activation_ts, None);
     assert_eq!(announced.entry_fee_bps, None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_renounce_fee_increase_not_manager_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.vault.renounce_fee_increase(&rogue);
 }
 
 #[test]
@@ -1045,6 +1599,36 @@ fn test_value_guard_same_ledger_nav_mismatch_panics() {
     // Same op type (deposit), same ledger, but nav_before != expected_nav_after.
     t.vault
         .deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_set_value_guard_enabled_not_manager_panics() {
+    let t = setup();
+    let rogue = Address::generate(&t.env);
+    t.vault.set_value_guard_enabled(&rogue, &true);
+}
+
+#[test]
+fn test_policy_and_admin_views() {
+    let t = setup();
+    assert!(!t.vault.is_private_pool());
+    assert_eq!(t.vault.get_exit_cooldown_secs(), 0);
+    assert!(!t.vault.is_value_guard_enabled());
+    assert_eq!(
+        t.vault.get_name(),
+        String::from_str(&t.env, "Stellar Asset Management Vault")
+    );
+    assert_eq!(t.vault.get_admin(), t.manager);
+    assert_eq!(t.vault.get_treasury(), t.manager);
+
+    t.vault.set_private_pool(&t.manager, &true);
+    t.vault.set_exit_cooldown_secs(&t.manager, &120u64);
+    t.vault.set_value_guard_enabled(&t.manager, &true);
+
+    assert!(t.vault.is_private_pool());
+    assert_eq!(t.vault.get_exit_cooldown_secs(), 120);
+    assert!(t.vault.is_value_guard_enabled());
 }
 
 // ---------------------------------------------------------------------------
@@ -1092,6 +1676,8 @@ impl MockFactory {
 enum GKey {
     TotalValue,
     AssetInUse(Address),
+    AssetA,
+    AssetB,
     // For TVL guard tests: op_type 2 reduces TotalValue by this bps amount.
     LossBps,
 }
@@ -1101,6 +1687,16 @@ pub struct MockGuard;
 impl MockGuard {
     pub fn set_total_value(env: Env, value: i128) {
         env.storage().instance().set(&GKey::TotalValue, &value);
+    }
+    pub fn set_assets(env: Env, asset_a: Address, asset_b: Address) {
+        env.storage().instance().set(&GKey::AssetA, &asset_a);
+        env.storage().instance().set(&GKey::AssetB, &asset_b);
+    }
+    pub fn asset_a(env: Env) -> Address {
+        env.storage().instance().get(&GKey::AssetA).unwrap()
+    }
+    pub fn asset_b(env: Env) -> Address {
+        env.storage().instance().get(&GKey::AssetB).unwrap()
     }
     pub fn get_total_value(env: Env, _vault: Address) -> i128 {
         env.storage().instance().get(&GKey::TotalValue).unwrap_or(0)
@@ -1163,6 +1759,50 @@ fn test_add_portfolio_asset_no_factory() {
     let list = t.vault.get_portfolio_assets();
     assert_eq!(list.len(), 2);
     assert!(list.contains(asset));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #33)")]
+fn test_remove_portfolio_asset_with_balance_panics() {
+    let t = setup();
+    t.vault.deposit(&1_000i128, &t.user, &t.base, &0i128);
+
+    t.vault.remove_portfolio_asset(&t.manager, &t.base);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #34)")]
+fn test_remove_portfolio_asset_blocked_by_active_guard_asset_use() {
+    let t = setup();
+    let asset = t.env.register(MockToken, ());
+    MockTokenClient::new(&t.env, &asset).initialize(&t.manager);
+    let guard_id = t.env.register(MockGuard, ());
+    t.vault.add_portfolio_asset(&t.manager, &asset);
+    t.vault.add_active_guard(&t.manager, &guard_id);
+    MockGuardClient::new(&t.env, &guard_id).set_asset_in_use(&asset, &true);
+
+    t.vault.remove_portfolio_asset(&t.manager, &asset);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_nav_rejects_negative_active_guard_value() {
+    let t = setup();
+    let guard_id = t.env.register(MockGuard, ());
+    MockGuardClient::new(&t.env, &guard_id).set_total_value(&-1i128);
+
+    t.vault.add_active_guard(&t.manager, &guard_id);
+
+    t.vault.get_nav();
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_remove_active_guard_not_whitelisted_panics() {
+    let t = setup();
+    let guard_id = Address::generate(&t.env);
+
+    t.vault.remove_active_guard(&t.manager, &guard_id);
 }
 
 #[test]
@@ -1281,6 +1921,34 @@ fn test_remove_portfolio_asset_also_removes_from_deposit_assets() {
     assert_eq!(t.vault.get_deposit_assets().len(), 0);
 }
 
+#[test]
+fn test_remove_portfolio_asset_preserves_other_portfolio_and_deposit_assets() {
+    let t = setup();
+    let asset = t.env.register(MockToken, ());
+    MockTokenClient::new(&t.env, &asset).initialize(&t.manager);
+
+    t.vault.add_portfolio_asset(&t.manager, &asset);
+    t.vault.add_deposit_asset(&t.manager, &asset);
+    t.vault.remove_portfolio_asset(&t.manager, &asset);
+
+    assert_eq!(t.vault.get_portfolio_assets().len(), 1);
+    assert_eq!(t.vault.get_portfolio_assets().get(0).unwrap(), t.base);
+    assert_eq!(t.vault.get_deposit_assets().len(), 1);
+    assert_eq!(t.vault.get_deposit_assets().get(0).unwrap(), t.base);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #42)")]
+fn test_add_portfolio_asset_too_many_assets_panics() {
+    let t = setup();
+    for _ in 0..19 {
+        let asset = Address::generate(&t.env);
+        t.vault.add_portfolio_asset(&t.manager, &asset);
+    }
+    let overflow_asset = Address::generate(&t.env);
+    t.vault.add_portfolio_asset(&t.manager, &overflow_asset);
+}
+
 // ---------------------------------------------------------------------------
 // Deposit asset management — add_deposit_asset / remove_deposit_asset
 // ---------------------------------------------------------------------------
@@ -1306,6 +1974,17 @@ fn test_add_deposit_asset_not_in_portfolio_panics() {
     let asset = Address::generate(&t.env);
     // Skip add_portfolio_asset.
     t.vault.add_deposit_asset(&t.manager, &asset);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_add_deposit_asset_not_manager_panics() {
+    let t = setup();
+    let asset = Address::generate(&t.env);
+    let rogue = Address::generate(&t.env);
+    t.vault.add_portfolio_asset(&t.manager, &asset);
+
+    t.vault.add_deposit_asset(&rogue, &asset);
 }
 
 #[test]
@@ -1389,6 +2068,18 @@ fn test_add_active_guard_duplicate_panics() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #41)")]
+fn test_add_active_guard_too_many_guards_panics() {
+    let t = setup();
+    for _ in 0..10 {
+        let guard_id = t.env.register(MockGuard, ());
+        t.vault.add_active_guard(&t.manager, &guard_id);
+    }
+    let overflow_guard = t.env.register(MockGuard, ());
+    t.vault.add_active_guard(&t.manager, &overflow_guard);
+}
+
+#[test]
 fn test_add_active_guard_with_factory_authorized() {
     let (t, factory_id) = setup_with_factory();
     let guard_id = t.env.register(MockGuard, ());
@@ -1442,6 +2133,21 @@ fn test_remove_active_guard_zero_position() {
     t.vault.remove_active_guard(&t.manager, &guard_id);
 
     assert_eq!(t.vault.get_active_guards().len(), 0);
+}
+
+#[test]
+fn test_remove_active_guard_preserves_other_guards() {
+    let t = setup();
+    let guard_a = t.env.register(MockGuard, ());
+    let guard_b = t.env.register(MockGuard, ());
+    t.vault.add_active_guard(&t.manager, &guard_a);
+    t.vault.add_active_guard(&t.manager, &guard_b);
+
+    t.vault.remove_active_guard(&t.manager, &guard_b);
+
+    let guards = t.vault.get_active_guards();
+    assert_eq!(guards.len(), 1);
+    assert_eq!(guards.get(0).unwrap(), guard_a);
 }
 
 #[test]
@@ -1591,6 +2297,68 @@ fn test_execute_op_noop_by_trader() {
     // Trader can also call execute_op.
     t.vault
         .execute_op(&t.trader, &guard_id, &Symbol::new(&t.env, "noop"), &no_args);
+}
+
+#[test]
+fn test_execute_op_noop_with_max_loss_disabled() {
+    let t = setup();
+    let (guard_id, _) = setup_with_execute_op(&t);
+    let no_args: Vec<Val> = Vec::new(&t.env);
+
+    t.env.as_contract(&t.vault_addr, || {
+        crate::storage::set_max_loss_bps(&t.env, 0);
+    });
+
+    t.vault.execute_op(
+        &t.manager,
+        &guard_id,
+        &Symbol::new(&t.env, "noop"),
+        &no_args,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #9)")]
+fn test_authorize_execute_op_transfers_rejects_malformed_swap_args() {
+    let env = Env::default();
+    let vault = Address::generate(&env);
+    let guard = Address::generate(&env);
+    let malformed_args: Vec<Val> = Vec::new(&env);
+
+    super::authorize_execute_op_transfers(
+        &env,
+        &vault,
+        &guard,
+        &Symbol::new(&env, "swap"),
+        &malformed_args,
+    );
+}
+
+#[test]
+fn test_authorize_execute_op_transfers_bool_swap_uses_asset_b_when_sell_a_false() {
+    let t = setup();
+    let guard = t.env.register(MockGuard, ());
+    let asset_b = t.env.register(MockToken, ());
+    MockTokenClient::new(&t.env, &asset_b).initialize(&t.manager);
+    MockGuardClient::new(&t.env, &guard).set_assets(&t.base, &asset_b);
+    t.vault.add_portfolio_asset(&t.manager, &asset_b);
+
+    let args: Vec<Val> = vec![
+        &t.env,
+        false.into_val(&t.env),
+        1i128.into_val(&t.env),
+        0i128.into_val(&t.env),
+    ];
+
+    t.env.as_contract(&t.vault_addr, || {
+        super::authorize_execute_op_transfers(
+            &t.env,
+            &t.vault_addr,
+            &guard,
+            &Symbol::new(&t.env, "swap"),
+            &args,
+        );
+    });
 }
 
 #[test]
@@ -1814,6 +2582,20 @@ fn test_seed_deposit_mints_to_burn_address() {
     );
     let burn_balance = MockTokenClient::new(&t.env, &t.share).balance(&burn_addr);
     assert_eq!(burn_balance, 1_000i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_seed_deposit_zero_amount_panics() {
+    let (t, factory_id) = setup_with_factory();
+    t.vault.seed_deposit(&factory_id, &0i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #20)")]
+fn test_seed_deposit_insufficient_liquidity_panics() {
+    let (t, factory_id) = setup_with_factory();
+    t.vault.seed_deposit(&factory_id, &1_000i128);
 }
 
 #[test]

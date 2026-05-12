@@ -2,9 +2,9 @@
 
 This runbook gives you a presentation-ready, reproducible flow for the three-vault showcase:
 
-- `Alpha` high-risk multi-asset portfolio
-- `Beta` market-risk diversified portfolio
-- `Gamma` low-risk USDC yield vault
+- `Alpha` aggressive volatile Stellar DeFi portfolio
+- `Beta` balanced Stellar market portfolio
+- `Gamma` conservative stable / yield portfolio
 
 ## Prerequisites
 

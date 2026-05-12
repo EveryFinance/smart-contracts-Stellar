@@ -76,6 +76,16 @@ fn setup() -> (Env, AssetHandlerClient<'static>, Address) {
     (env, client, admin)
 }
 
+#[test]
+#[should_panic(expected = "Error(Contract, #1)")]
+fn test_constructor_rejects_reinitialization() {
+    let (env, client, admin) = setup();
+
+    env.as_contract(&client.address, || {
+        AssetHandler::__constructor(env.clone(), admin);
+    });
+}
+
 fn make_oracle(env: &Env, price: i128) -> Address {
     env.register(MockOracle, (price,))
 }
@@ -131,6 +141,35 @@ fn test_remove_asset() {
     handler.remove_asset(&admin, &asset);
     assert!(!handler.is_registered(&asset));
     assert_eq!(handler.get_all_assets().len(), 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_remove_asset_not_admin_panics() {
+    let (env, handler, admin) = setup();
+    let rogue = Address::generate(&env);
+    let asset = Address::generate(&env);
+    handler.add_asset(&admin, &asset);
+    handler.remove_asset(&rogue, &asset);
+}
+
+#[test]
+fn test_remove_asset_preserves_others_and_clears_asset_oracle() {
+    let (env, handler, admin) = setup();
+    let asset_a = Address::generate(&env);
+    let asset_b = Address::generate(&env);
+    let oracle = make_oracle(&env, PRICE_PRECISION);
+
+    handler.add_asset(&admin, &asset_a);
+    handler.add_asset(&admin, &asset_b);
+    handler.set_asset_oracle(&admin, &asset_a, &oracle);
+    assert_eq!(handler.get_asset_oracle(&asset_a), Some(oracle));
+
+    handler.remove_asset(&admin, &asset_a);
+    assert!(!handler.is_registered(&asset_a));
+    assert!(handler.is_registered(&asset_b));
+    assert_eq!(handler.get_asset_oracle(&asset_a), None);
+    assert_eq!(handler.get_all_assets().len(), 1);
 }
 
 #[test]
@@ -323,6 +362,55 @@ fn test_set_primary_oracle_not_admin_panics() {
     handler.set_primary_oracle(&rogue, &oracle);
 }
 
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_set_fallback_oracle_not_admin_panics() {
+    let (env, handler, _admin) = setup();
+    let rogue = Address::generate(&env);
+    let oracle = make_oracle(&env, PRICE_PRECISION);
+    handler.set_fallback_oracle(&rogue, &oracle);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_set_asset_oracle_not_admin_panics() {
+    let (env, handler, admin) = setup();
+    let rogue = Address::generate(&env);
+    let asset = Address::generate(&env);
+    let oracle = make_oracle(&env, PRICE_PRECISION);
+    handler.add_asset(&admin, &asset);
+    handler.set_asset_oracle(&rogue, &asset, &oracle);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_set_asset_oracle_unregistered_asset_panics() {
+    let (env, handler, admin) = setup();
+    let asset = Address::generate(&env);
+    let oracle = make_oracle(&env, PRICE_PRECISION);
+    handler.set_asset_oracle(&admin, &asset, &oracle);
+}
+
+#[test]
+fn test_remove_asset_oracle_clears_mapping() {
+    let (env, handler, admin) = setup();
+    let asset = Address::generate(&env);
+    let oracle = make_oracle(&env, PRICE_PRECISION);
+    handler.add_asset(&admin, &asset);
+    handler.set_asset_oracle(&admin, &asset, &oracle);
+    handler.remove_asset_oracle(&admin, &asset);
+    assert_eq!(handler.get_asset_oracle(&asset), None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_remove_asset_oracle_not_admin_panics() {
+    let (env, handler, _admin) = setup();
+    let rogue = Address::generate(&env);
+    let asset = Address::generate(&env);
+    handler.remove_asset_oracle(&rogue, &asset);
+}
+
 // ---------------------------------------------------------------------------
 // Admin transfer
 // ---------------------------------------------------------------------------
@@ -342,4 +430,23 @@ fn test_accept_admin_no_pending_panics() {
     let (env, handler, _admin) = setup();
     let stranger = Address::generate(&env);
     handler.accept_admin(&stranger);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_set_pending_admin_not_admin_panics() {
+    let (env, handler, _admin) = setup();
+    let rogue = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    handler.set_pending_admin(&rogue, &new_admin);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_accept_admin_wrong_pending_panics() {
+    let (env, handler, admin) = setup();
+    let pending = Address::generate(&env);
+    let rogue = Address::generate(&env);
+    handler.set_pending_admin(&admin, &pending);
+    handler.accept_admin(&rogue);
 }

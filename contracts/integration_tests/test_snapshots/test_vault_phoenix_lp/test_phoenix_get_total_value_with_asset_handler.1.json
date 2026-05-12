@@ -468,6 +468,9 @@
                     },
                     {
                       "symbol": "remove_liquidity"
+                    },
+                    {
+                      "symbol": "swap"
                     }
                   ]
                 }
@@ -2178,6 +2181,9 @@
                             },
                             {
                               "symbol": "remove_liquidity"
+                            },
+                            {
+                              "symbol": "swap"
                             }
                           ]
                         }

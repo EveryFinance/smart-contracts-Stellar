@@ -5,7 +5,7 @@ use soroban_sdk::{
     vec, Address, Env,
 };
 
-use crate::{OracleContract, OracleContractClient, PRICE_PRECISION};
+use crate::{OracleContract, OracleContractClient, DEFAULT_MAX_AGE_LEDGERS, PRICE_PRECISION};
 
 // ---------------------------------------------------------------------------
 // Helper
@@ -28,6 +28,18 @@ fn test_initialize() {
     env.mock_all_auths();
     let (client, admin) = setup(&env);
     assert_eq!(client.get_admin(), admin);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_constructor_rejects_reinitialization() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin) = setup(&env);
+
+    env.as_contract(&client.address, || {
+        OracleContract::__constructor(env.clone(), admin);
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +223,18 @@ fn test_max_age_zero_rejected() {
     let (client, _) = setup(&env);
     // max_age_ledgers == 0 would permanently disable staleness checks; must be rejected.
     client.set_max_age_ledgers(&0u32);
+}
+
+#[test]
+fn test_get_max_age_ledgers_default_and_updated() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _) = setup(&env);
+
+    assert_eq!(client.get_max_age_ledgers(), DEFAULT_MAX_AGE_LEDGERS);
+
+    client.set_max_age_ledgers(&17u32);
+    assert_eq!(client.get_max_age_ledgers(), 17u32);
 }
 
 // ---------------------------------------------------------------------------

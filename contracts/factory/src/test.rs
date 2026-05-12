@@ -4,6 +4,30 @@ use soroban_sdk::{contract, contractimpl, contracttype, testutils::Address as _,
 
 use crate::{Factory, FactoryClient};
 
+#[contracttype]
+enum AhKey {
+    Registered(Address),
+}
+
+#[contract]
+pub struct MockAssetHandler;
+
+#[contractimpl]
+impl MockAssetHandler {
+    pub fn set_registered(env: Env, asset: Address, registered: bool) {
+        env.storage()
+            .instance()
+            .set(&AhKey::Registered(asset), &registered);
+    }
+
+    pub fn is_registered(env: Env, asset: Address) -> bool {
+        env.storage()
+            .instance()
+            .get(&AhKey::Registered(asset))
+            .unwrap_or(false)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // MockVault — minimal vault stub for verify_and_register_vault tests
 // ---------------------------------------------------------------------------
@@ -145,6 +169,36 @@ fn setup() -> T {
     }
 }
 
+#[test]
+#[should_panic(expected = "Error(Contract, #1)")]
+fn test_constructor_rejects_reinitialization() {
+    let t = setup();
+
+    t.env.as_contract(&t.factory.address, || {
+        Factory::__constructor(t.env.clone(), t.admin.clone(), Option::<Address>::None);
+    });
+}
+
+fn setup_with_asset_handler() -> (T, Address) {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let asset_handler = env.register(MockAssetHandler, ());
+    let fid = env.register(Factory, (admin.clone(), Some(asset_handler.clone())));
+    let factory = FactoryClient::new(&env, &fid);
+    let factory: FactoryClient<'static> = unsafe { core::mem::transmute(factory) };
+
+    (
+        T {
+            env,
+            factory,
+            admin,
+        },
+        asset_handler,
+    )
+}
+
 fn deploy_mock_vault(env: &Env, manager: &Address) -> Address {
     let vid = env.register(MockVault, ());
     MockVaultClient::new(env, &vid).initialize(manager);
@@ -160,6 +214,25 @@ fn test_initialize_sets_admin() {
     let t = setup();
     assert_eq!(t.factory.get_admin(), t.admin);
     assert_eq!(t.factory.get_vault_count(), 0);
+}
+
+#[test]
+fn test_constructor_and_set_asset_handler_views() {
+    let (t, asset_handler) = setup_with_asset_handler();
+    assert_eq!(t.factory.get_asset_handler(), Some(asset_handler.clone()));
+
+    let replacement = t.env.register(MockAssetHandler, ());
+    t.factory.set_asset_handler(&t.admin, &replacement);
+    assert_eq!(t.factory.get_asset_handler(), Some(replacement));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_set_asset_handler_not_admin_panics() {
+    let (t, _asset_handler) = setup_with_asset_handler();
+    let rogue = Address::generate(&t.env);
+    let replacement = t.env.register(MockAssetHandler, ());
+    t.factory.set_asset_handler(&rogue, &replacement);
 }
 
 // ---------------------------------------------------------------------------
@@ -316,6 +389,16 @@ fn test_set_pending_then_accept_admin() {
     let vault = deploy_mock_vault(&t.env, &manager);
     t.factory.register_vault(&new_admin, &vault, &manager);
     assert_eq!(t.factory.get_vault_count(), 1);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_accept_admin_wrong_pending_panics() {
+    let t = setup();
+    let pending = Address::generate(&t.env);
+    let rogue = Address::generate(&t.env);
+    t.factory.set_pending_admin(&t.admin, &pending);
+    t.factory.accept_admin(&rogue);
 }
 
 #[test]
@@ -550,6 +633,24 @@ fn test_add_authorized_asset() {
     let list = t.factory.get_authorized_assets();
     assert_eq!(list.len(), 1);
     assert_eq!(list.get(0).unwrap(), asset);
+}
+
+#[test]
+fn test_add_authorized_asset_checks_asset_handler_registration() {
+    let (t, asset_handler) = setup_with_asset_handler();
+    let asset = Address::generate(&t.env);
+    MockAssetHandlerClient::new(&t.env, &asset_handler).set_registered(&asset, &true);
+
+    t.factory.add_authorized_asset(&t.admin, &asset);
+    assert!(t.factory.is_authorized_asset(&asset));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #14)")]
+fn test_add_authorized_asset_rejects_unregistered_asset_handler_asset() {
+    let (t, _asset_handler) = setup_with_asset_handler();
+    let asset = Address::generate(&t.env);
+    t.factory.add_authorized_asset(&t.admin, &asset);
 }
 
 #[test]

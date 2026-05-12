@@ -55,6 +55,40 @@ fn test_initialize() {
     assert!(!client.transfers_enabled());
 }
 
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_constructor_rejects_reinitialization() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin) = setup(&env);
+
+    env.as_contract(&client.address, || {
+        ShareTokenContract::__constructor(
+            env.clone(),
+            admin,
+            String::from_str(&env, "Vault Share Token"),
+            String::from_str(&env, "VST"),
+            7u32,
+        );
+    });
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #1)")]
+fn test_total_supply_uninitialized_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = setup(&env);
+
+    env.as_contract(&client.address, || {
+        env.storage()
+            .instance()
+            .remove(&crate::storage::DataKey::Admin);
+    });
+
+    client.total_supply();
+}
+
 // ---------------------------------------------------------------------------
 // Mint
 // ---------------------------------------------------------------------------
@@ -240,6 +274,42 @@ fn test_transfer_from_insufficient_allowance_panics() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #4)")]
+fn test_transfer_from_sufficient_allowance_insufficient_balance_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = setup(&env);
+    client.set_transfers_enabled(&true);
+    let alice = Address::generate(&env);
+    let spender = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    client.mint(&alice, &50i128);
+    client.approve(&alice, &spender, &500i128, &999u32);
+
+    client.transfer_from(&spender, &alice, &bob, &100i128);
+}
+
+#[test]
+fn test_transfer_from_self_consumes_allowance_without_balance_change() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = setup(&env);
+    client.set_transfers_enabled(&true);
+    let alice = Address::generate(&env);
+    let spender = Address::generate(&env);
+
+    client.mint(&alice, &1_000i128);
+    client.approve(&alice, &spender, &500i128, &999u32);
+
+    client.transfer_from(&spender, &alice, &alice, &200i128);
+
+    assert_eq!(client.balance(&alice), 1_000i128);
+    assert_eq!(client.total_supply(), 1_000i128);
+    assert_eq!(client.allowance(&alice, &spender), 300i128);
+}
+
+#[test]
 fn test_approve_zero_revokes() {
     let env = Env::default();
     env.mock_all_auths();
@@ -259,7 +329,7 @@ fn test_approve_zero_revokes() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_burn_reduces_balance_and_supply() {
+fn test_admin_burn_reduces_balance_and_supply() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin) = setup(&env);
@@ -285,7 +355,8 @@ fn test_burn_insufficient_balance_panics() {
 }
 
 #[test]
-fn test_burn_from_with_allowance() {
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_burn_from_disabled_even_when_transfers_enabled_panics() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin) = setup(&env);
@@ -296,15 +367,11 @@ fn test_burn_from_with_allowance() {
     client.mint(&alice, &1_000i128);
     client.approve(&alice, &burner, &500i128, &999u32);
     client.burn_from(&burner, &alice, &400i128);
-
-    assert_eq!(client.balance(&alice), 600i128);
-    assert_eq!(client.total_supply(), 600i128);
-    assert_eq!(client.allowance(&alice, &burner), 100i128);
 }
 
 #[test]
-#[should_panic]
-fn test_burn_from_insufficient_allowance_panics() {
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_burn_from_disabled_before_allowance_checks() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin) = setup(&env);
@@ -312,9 +379,7 @@ fn test_burn_from_insufficient_allowance_panics() {
     let alice = Address::generate(&env);
     let burner = Address::generate(&env);
 
-    client.mint(&alice, &1_000i128);
-    client.approve(&alice, &burner, &100i128, &999u32);
-    client.burn_from(&burner, &alice, &200i128);
+    client.burn_from(&burner, &alice, &100i128);
 }
 
 #[test]
@@ -354,7 +419,7 @@ fn test_set_admin_transfers_mint_rights() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_total_supply_consistency_after_mixed_ops() {
+fn test_total_supply_consistency_after_transfers_and_admin_burn() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin) = setup(&env);
@@ -385,6 +450,22 @@ fn test_balance_unknown_address_returns_zero() {
 }
 
 #[test]
+fn test_stored_zero_balance_is_cleaned_up() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = setup(&env);
+    let user = Address::generate(&env);
+    let key = crate::storage::DataKey::Balance(user.clone());
+
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(&key, &0i128);
+
+        assert_eq!(crate::storage::get_balance(&env, &user), 0i128);
+        assert!(!env.storage().persistent().has(&key));
+    });
+}
+
+#[test]
 fn test_allowance_unknown_pair_returns_zero() {
     let env = Env::default();
     env.mock_all_auths();
@@ -392,6 +473,19 @@ fn test_allowance_unknown_pair_returns_zero() {
     let a = Address::generate(&env);
     let b = Address::generate(&env);
     assert_eq!(client.allowance(&a, &b), 0i128);
+}
+
+#[test]
+fn test_allowance_value_unknown_pair_returns_none() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = setup(&env);
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+
+    env.as_contract(&client.address, || {
+        assert_eq!(crate::storage::get_allowance_value(&env, &a, &b), None);
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -577,7 +671,7 @@ fn test_transfer_from_expired_allowance_panics() {
 
 #[test]
 #[should_panic]
-fn test_burn_from_expired_allowance_panics() {
+fn test_burn_from_disabled_even_with_expired_allowance_panics() {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().with_mut(|li| {

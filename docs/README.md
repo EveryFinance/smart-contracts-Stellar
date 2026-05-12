@@ -15,7 +15,10 @@ Dapp: https://www.elyx.finance/
 7. [Demo Runbook](./demo_runbook.md)
 8. [Reviewer Quickstart](./reviewer_quickstart.md)
 9. [Coverage Report](./coverage_report.md)
-10. Contract Docs
+10. [Final Smart Contract Audit Report](./final-smart-contract-audit-2026-05-12.md)
+11. [Stellar Production Portfolio Asset Study](./stellar-production-portfolio-asset-study-2026-05-12.md)
+12. [Selected Vault Production Assets](./selected-vault-production-assets.md)
+13. Contract Docs
    - [Vault](./contracts/vault.md)
    - [Share Token (SEP-41)](./contracts/share_token.md)
    - [Oracle Contracts (AssetHandler, ReflectorAdapter, DIAAdapter, Mock)](./contracts/oracle.md)

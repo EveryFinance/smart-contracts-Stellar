@@ -141,9 +141,9 @@ cost basis / realized PnL. Keeping shares non-transferable ensures the account
 that receives shares through `deposit` is the same account whose cooldown and PnL
 state is used during `withdraw`.
 
-Default mode also routes share burns through vault withdrawal. Direct delegated
-burns are blocked while transfers are disabled, preventing out-of-vault burns
-from desynchronizing share balances from vault PnL state.
+Share burns are always routed through vault withdrawal. Direct holder burns and
+delegated `burn_from` are disabled for vault shares, preventing out-of-vault
+supply changes from desynchronizing redemption, fee, cooldown, and PnL state.
 
 The vault admin may explicitly enable transfers with
 `set_share_transfers_enabled(caller, true)`. This is an opt-in mode for vaults
