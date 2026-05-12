@@ -343,6 +343,9 @@ impl PhoenixLpStrategy {
     }
 
     /// Remove `share_amount` from the Phoenix `pool` and send tokens to `vault`.
+    ///
+    /// Returns `(amount_a, amount_b)` received from the pool so the vault can
+    /// compute post-operation value without a redundant deep LP re-valuation.
     pub fn remove_liquidity(
         env: Env,
         vault: Address,
@@ -352,7 +355,7 @@ impl PhoenixLpStrategy {
         share_amount: i128,
         min_a: i128,
         min_b: i128,
-    ) {
+    ) -> (i128, i128) {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
@@ -385,7 +388,7 @@ impl PhoenixLpStrategy {
             &expiry,
         );
 
-        PhoenixPoolAdapter::new(&env, &pool).withdraw_liquidity(
+        let (amount_a, amount_b) = PhoenixPoolAdapter::new(&env, &pool).withdraw_liquidity(
             vault,
             share_amount,
             min_a,
@@ -402,6 +405,8 @@ impl PhoenixLpStrategy {
         if position.total_shares == 0 {
             remove_from_active_positions(&env, &pool);
         }
+
+        (amount_a, amount_b)
     }
 
     /// Swap within the Phoenix `pool` on behalf of `vault`.
