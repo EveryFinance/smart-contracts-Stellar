@@ -1,72 +1,61 @@
-//! PhoenixLpStrategy storage layout.
-#![allow(dead_code)]
+//! PhoenixLpStrategy storage — multi-position AMM liquidity manager.
 //!
-//! All state is kept in **instance storage** so its TTL is tied to the contract
-//! instance itself.
+//! One strategy instance manages **all** Phoenix LP positions for the owning
+//! vault, keyed by pool address.  Each pool has two assets and a share token.
 //!
-//! | Key            | Type      | Description                                      |
-//! |----------------|-----------|--------------------------------------------------|
-//! | `Vault`        | `Address` | Owning vault contract                            |
-//! | `AssetA`       | `Address` | First token in the Phoenix pair                  |
-//! | `AssetB`       | `Address` | Second token in the Phoenix pair                 |
-//! | `ShareToken`   | `Address` | Phoenix LP share token (auto-queried from pool)  |
-//! | `PhoenixPool`  | `Address` | Phoenix pool contract                            |
-//! | `Name`         | `String`  | Human-readable strategy name                     |
-//! | `TotalShares`  | `i128`    | Running total of Phoenix share tokens held       |
+//! | Key                   | Type             | Description                            |
+//! |-----------------------|------------------|----------------------------------------|
+//! | `Vault`               | `Address`        | Owning vault contract                  |
+//! | `Name`                | `String`         | Human-readable strategy name           |
+//! | `Factory`             | `Address?`       | Factory (cached from vault at init)    |
+//! | `AssetHandler`        | `Address?`       | AssetHandler (lazy-cached)             |
+//! | `Initialized`         | `bool` (persist) | One-time init guard                    |
+//! | `Position(pool)`      | `PhoenixPosition`| Per-pool position data + share balance |
+//! | `ActivePositions`     | `Vec<Address>`   | Pools with total_shares > 0            |
 
 use crate::error::PhoenixLpError;
-use soroban_sdk::{contracttype, panic_with_error, Address, Env, String};
+use soroban_sdk::{contracttype, panic_with_error, Address, Env, String, Symbol, Vec};
 
 // ---------------------------------------------------------------------------
-// TTL constants (ledgers; ~6 s/ledger on Stellar mainnet)
+// TTL constants (ledgers; ~6 s/ledger)
 // ---------------------------------------------------------------------------
 
-/// Ledgers added to the instance TTL on every entry-point call.
-/// 34 560 ledgers ≈ 2.4 days.
 pub const INSTANCE_BUMP_AMOUNT: u32 = 34_560;
-
-/// Trigger a bump when the remaining instance TTL drops below this threshold.
-/// 17 280 ledgers ≈ 1.2 days.
 pub const INSTANCE_LIFETIME_THRESHOLD: u32 = 17_280;
-/// Persistent init flag TTL: effectively permanent.
-pub const PERSISTENT_BUMP_AMOUNT: u32 = u32::MAX;
-pub const PERSISTENT_LIFETIME_THRESHOLD: u32 = u32::MAX / 2;
+
+// ---------------------------------------------------------------------------
+// Per-pool position record
+// ---------------------------------------------------------------------------
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PhoenixPosition {
+    pub asset_a: Address,
+    pub asset_b: Address,
+    /// Phoenix LP share token for this pool (auto-queried on first add_liquidity).
+    pub share_token: Address,
+    /// Locally tracked share balance (updated on every add/remove).
+    pub total_shares: i128,
+}
 
 // ---------------------------------------------------------------------------
 // Storage key enum
 // ---------------------------------------------------------------------------
 
-/// All keys stored in instance storage by the PhoenixLpStrategy.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
-    /// Address of the vault that owns this strategy deployment.
     Vault,
-    /// First token in the Phoenix liquidity pair (e.g. USDC).
-    AssetA,
-    /// Second token in the Phoenix liquidity pair (e.g. XLM).
-    AssetB,
-    /// Phoenix LP share token contract address.
-    /// Automatically queried from the pool during `initialize` via
-    /// `phoenix_pool.query_share_token_address()`.
-    ShareToken,
-    /// Phoenix pool contract used for `provide_liquidity` / `withdraw_liquidity`.
-    PhoenixPool,
-    /// Human-readable name for this strategy instance.
     Name,
-    /// Cumulative Phoenix share tokens held by this strategy contract.
-    /// Incremented on `deposit_liquidity`, decremented on `withdraw`.
-    TotalShares,
-
-    /// Factory address cached during initialize so get_total_value can reach
-    /// AssetHandler without calling back into the vault (re-entry prevention).
     Factory,
-    /// Persistent initialization flag.
+    AssetHandler,
     Initialized,
+    Position(Address), // pool_address → PhoenixPosition
+    ActivePositions,   // Vec<Address> of pools with total_shares > 0
 }
 
 // ---------------------------------------------------------------------------
-// Internal TTL helper
+// TTL helper
 // ---------------------------------------------------------------------------
 
 fn bump(env: &Env) {
@@ -79,54 +68,43 @@ fn bump(env: &Env) {
 // Initialization guard
 // ---------------------------------------------------------------------------
 
-/// Persist the initialization flag in persistent storage so instance TTL expiry
-/// cannot reopen initialization for a strategy address that still holds shares.
 pub fn set_initialized(env: &Env) {
     env.storage().persistent().set(&DataKey::Initialized, &true);
-    env.storage().persistent().extend_ttl(
-        &DataKey::Initialized,
-        PERSISTENT_LIFETIME_THRESHOLD,
-        PERSISTENT_BUMP_AMOUNT,
-    );
 }
 
-/// Return `true` when the strategy has been initialized.
 pub fn is_initialized(env: &Env) -> bool {
     env.storage().persistent().has(&DataKey::Initialized)
 }
 
 // ---------------------------------------------------------------------------
-// Address accessors — generated by macro
+// Simple accessors
 // ---------------------------------------------------------------------------
 
-macro_rules! addr_set {
-    ($fn:ident, $k:ident) => {
-        /// Persist the address in instance storage and extend the TTL.
-        pub fn $fn(env: &Env, v: &Address) {
-            bump(env);
-            env.storage().instance().set(&DataKey::$k, v);
-        }
-    };
-}
-macro_rules! addr_get {
-    ($fn:ident, $k:ident) => {
-        /// Read the address from instance storage.
-        ///
-        /// # Panics
-        /// Panics with [`PhoenixLpError::NotInitialized`] if the key is absent.
-        pub fn $fn(env: &Env) -> Address {
-            bump(env);
-            env.storage()
-                .instance()
-                .get(&DataKey::$k)
-                .unwrap_or_else(|| panic_with_error!(env, PhoenixLpError::NotInitialized))
-        }
-    };
+pub fn set_vault(env: &Env, v: &Address) {
+    env.storage().instance().set(&DataKey::Vault, v);
 }
 
-// Factory address helpers
-pub fn set_factory(env: &Env, v: &Address) {
+pub fn get_vault(env: &Env) -> Address {
     bump(env);
+    env.storage()
+        .instance()
+        .get(&DataKey::Vault)
+        .unwrap_or_else(|| panic_with_error!(env, PhoenixLpError::NotInitialized))
+}
+
+pub fn set_name(env: &Env, v: &String) {
+    env.storage().instance().set(&DataKey::Name, v);
+}
+
+pub fn get_name(env: &Env) -> String {
+    bump(env);
+    env.storage()
+        .instance()
+        .get(&DataKey::Name)
+        .unwrap_or_else(|| panic_with_error!(env, PhoenixLpError::NotInitialized))
+}
+
+pub fn set_factory(env: &Env, v: &Address) {
     env.storage().instance().set(&DataKey::Factory, v);
 }
 
@@ -135,63 +113,84 @@ pub fn get_factory(env: &Env) -> Option<Address> {
     env.storage().instance().get(&DataKey::Factory)
 }
 
-// ---------------------------------------------------------------------------
-// String accessors — generated by macro
-// ---------------------------------------------------------------------------
-
-macro_rules! str_set {
-    ($fn:ident, $k:ident) => {
-        /// Persist the string in instance storage and extend the TTL.
-        pub fn $fn(env: &Env, v: &String) {
-            bump(env);
-            env.storage().instance().set(&DataKey::$k, v);
-        }
-    };
-}
-macro_rules! str_get {
-    ($fn:ident, $k:ident) => {
-        /// Read the string from instance storage.
-        ///
-        /// # Panics
-        /// Panics with [`PhoenixLpError::NotInitialized`] if the key is absent.
-        pub fn $fn(env: &Env) -> String {
-            bump(env);
-            env.storage()
-                .instance()
-                .get(&DataKey::$k)
-                .unwrap_or_else(|| panic_with_error!(env, PhoenixLpError::NotInitialized))
-        }
-    };
+pub fn set_asset_handler(env: &Env, v: &Address) {
+    env.storage().instance().set(&DataKey::AssetHandler, v);
 }
 
-addr_set!(set_vault, Vault);
-addr_get!(get_vault, Vault);
-addr_set!(set_asset_a, AssetA);
-addr_get!(get_asset_a, AssetA);
-addr_set!(set_asset_b, AssetB);
-addr_get!(get_asset_b, AssetB);
-addr_set!(set_share_token, ShareToken);
-addr_get!(get_share_token, ShareToken);
-addr_set!(set_phoenix_pool, PhoenixPool);
-addr_get!(get_phoenix_pool, PhoenixPool);
-str_set!(set_name, Name);
-str_get!(get_name, Name);
-
-// ---------------------------------------------------------------------------
-// Total shares
-// ---------------------------------------------------------------------------
-
-/// Persist the cumulative Phoenix share token balance.
-pub fn set_total_shares(env: &Env, v: i128) {
+pub fn get_asset_handler(env: &Env) -> Option<Address> {
     bump(env);
-    env.storage().instance().set(&DataKey::TotalShares, &v);
+    env.storage().instance().get(&DataKey::AssetHandler)
 }
 
-/// Read the cumulative Phoenix share token balance (defaults to `0`).
-pub fn get_total_shares(env: &Env) -> i128 {
+/// Lazy-resolve and cache the AssetHandler address.
+pub fn get_or_cache_asset_handler(env: &Env) -> Option<Address> {
+    if let Some(ah) = get_asset_handler(env) {
+        return Some(ah);
+    }
+    if let Some(factory) = get_factory(env) {
+        let ah_opt: Option<Address> = env.invoke_contract(
+            &factory,
+            &Symbol::new(env, "get_asset_handler"),
+            soroban_sdk::vec![env].into(),
+        );
+        if let Some(ref ah) = ah_opt {
+            set_asset_handler(env, ah);
+            return Some(ah.clone());
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Per-pool position accessors
+// ---------------------------------------------------------------------------
+
+pub fn get_position(env: &Env, pool: &Address) -> Option<PhoenixPosition> {
     bump(env);
     env.storage()
         .instance()
-        .get(&DataKey::TotalShares)
-        .unwrap_or(0)
+        .get(&DataKey::Position(pool.clone()))
+}
+
+pub fn set_position(env: &Env, pool: &Address, position: &PhoenixPosition) {
+    env.storage()
+        .instance()
+        .set(&DataKey::Position(pool.clone()), position);
+}
+
+// ---------------------------------------------------------------------------
+// Active-positions index
+// ---------------------------------------------------------------------------
+
+pub fn get_active_positions(env: &Env) -> Vec<Address> {
+    bump(env);
+    env.storage()
+        .instance()
+        .get(&DataKey::ActivePositions)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn set_active_positions(env: &Env, positions: &Vec<Address>) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ActivePositions, positions);
+}
+
+pub fn add_to_active_positions(env: &Env, pool: &Address) {
+    let mut active = get_active_positions(env);
+    if !active.contains(pool.clone()) {
+        active.push_back(pool.clone());
+        set_active_positions(env, &active);
+    }
+}
+
+pub fn remove_from_active_positions(env: &Env, pool: &Address) {
+    let active = get_active_positions(env);
+    let mut updated = Vec::new(env);
+    for item in active.iter() {
+        if item != *pool {
+            updated.push_back(item);
+        }
+    }
+    set_active_positions(env, &updated);
 }

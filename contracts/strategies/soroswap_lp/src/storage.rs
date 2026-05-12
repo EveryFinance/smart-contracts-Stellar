@@ -1,71 +1,75 @@
-//! SoroswapLpStrategy storage layout.
-#![allow(dead_code)]
+//! SoroswapLpStrategy storage layout — multi-position design.
 //!
-//! All state is kept in **instance storage** so its TTL is tied to the contract
-//! instance itself.  This is appropriate because the strategy's liveness is
-//! coupled to the vault's liveness.
+//! One strategy instance manages **all** Soroswap LP positions for a vault,
+//! keyed by LP-token address (each Soroswap pair has a unique LP token).
 //!
-//! | Key          | Type      | Description                                        |
-//! |--------------|-----------|----------------------------------------------------|
-//! | `Vault`      | `Address` | Owning vault contract                              |
-//! | `AssetA`     | `Address` | First token in the Soroswap pair                   |
-//! | `AssetB`     | `Address` | Second token in the Soroswap pair                  |
-//! | `LpToken`    | `Address` | Soroswap pair / LP token contract                  |
-//! | `Router`     | `Address` | Soroswap router contract                           |
-//! | `Name`       | `String`  | Human-readable strategy name                       |
-//! | `LpBalance`  | `i128`    | Running total of LP tokens held by this strategy   |
+//! | Key                    | Type            | Description                              |
+//! |------------------------|-----------------|------------------------------------------|
+//! | `Vault`                | `Address`       | Owning vault contract                    |
+//! | `Router`               | `Address`       | Soroswap router contract                 |
+//! | `Name`                 | `String`        | Human-readable strategy name             |
+//! | `Factory`              | `Address?`      | Factory address (cached from vault)      |
+//! | `AssetHandler`         | `Address?`      | AssetHandler (lazy-cached from factory)  |
+//! | `Initialized`          | `bool` (persist)| One-time init guard                      |
+//! | `Position(lp_token)`   | `LpPosition`    | Per-pair position data + LP balance      |
+//! | `ActivePositions`      | `Vec<Address>`  | LP tokens with lp_balance > 0            |
 
 use crate::error::SoroswapLpError;
-use soroban_sdk::{contracttype, panic_with_error, Address, Env, String};
+use soroban_sdk::{contracttype, panic_with_error, Address, Env, String, Symbol, Vec};
 
 // ---------------------------------------------------------------------------
 // TTL constants (ledgers; ~6 s/ledger on Stellar mainnet)
 // ---------------------------------------------------------------------------
 
-/// Ledgers added to the instance TTL on every entry-point call.
-/// 34 560 ledgers ≈ 2.4 days.
 pub const INSTANCE_BUMP_AMOUNT: u32 = 34_560;
-
-/// Trigger a bump when the remaining instance TTL drops below this threshold.
-/// 17 280 ledgers ≈ 1.2 days.
 pub const INSTANCE_LIFETIME_THRESHOLD: u32 = 17_280;
-/// Persistent init flag TTL: effectively permanent.
-pub const PERSISTENT_BUMP_AMOUNT: u32 = u32::MAX;
-pub const PERSISTENT_LIFETIME_THRESHOLD: u32 = u32::MAX / 2;
+
+// ---------------------------------------------------------------------------
+// LP position record stored per pair
+// ---------------------------------------------------------------------------
+
+/// State for one Soroswap LP position (one pair).
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct LpPosition {
+    /// First token of the pair as passed at first add_liquidity.
+    pub asset_a: Address,
+    /// Second token of the pair as passed at first add_liquidity.
+    pub asset_b: Address,
+    /// Cumulative LP tokens held by this strategy for this pair.
+    pub lp_balance: i128,
+    /// `true` when the pair's internal token0 == asset_a.
+    /// Cached at first deposit so `pair.token0()` is called only once per pair.
+    pub token0_is_asset_a: bool,
+}
 
 // ---------------------------------------------------------------------------
 // Storage key enum
 // ---------------------------------------------------------------------------
 
-/// All keys stored in instance storage by the SoroswapLpStrategy.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
-    /// Address of the vault that owns this strategy deployment.
+    /// Owning vault.
     Vault,
-    /// First token in the Soroswap liquidity pair (e.g. USDC).
-    AssetA,
-    /// Second token in the Soroswap liquidity pair (e.g. XLM).
-    AssetB,
-    /// Soroswap pair / LP token contract address.  In Soroswap the pair
-    /// contract is also the LP token contract — they share the same address.
-    LpToken,
-    /// Soroswap router contract used to add and remove liquidity.
+    /// Soroswap router.
     Router,
-    /// Human-readable name for this strategy instance (e.g. "Soroswap USDC/XLM LP").
+    /// Human-readable name.
     Name,
-    /// Cumulative LP tokens held by this strategy contract.
-    /// Incremented on `deposit_liquidity` and decremented on `withdraw`.
-    LpBalance,
-    /// Factory address cached during initialize so get_total_value can reach
-    /// AssetHandler without calling back into the vault (re-entry prevention).
+    /// Factory (cached from vault at init to avoid re-entry).
     Factory,
-    /// Persistent initialization flag.
+    /// AssetHandler (lazy-cached from factory on first valuation).
+    AssetHandler,
+    /// Persistent init guard (survives instance TTL expiry).
     Initialized,
+    /// Per-pair LP position, keyed by LP token address.
+    Position(Address),
+    /// Ordered list of LP token addresses that have lp_balance > 0.
+    ActivePositions,
 }
 
 // ---------------------------------------------------------------------------
-// Internal TTL helper
+// TTL helper
 // ---------------------------------------------------------------------------
 
 fn bump(env: &Env) {
@@ -78,31 +82,21 @@ fn bump(env: &Env) {
 // Initialization guard
 // ---------------------------------------------------------------------------
 
-/// Persist the initialization flag in persistent storage so instance TTL expiry
-/// cannot reopen initialization for a strategy address that still holds LP.
 pub fn set_initialized(env: &Env) {
     env.storage().persistent().set(&DataKey::Initialized, &true);
-    env.storage().persistent().extend_ttl(
-        &DataKey::Initialized,
-        PERSISTENT_LIFETIME_THRESHOLD,
-        PERSISTENT_BUMP_AMOUNT,
-    );
 }
 
-/// Return `true` when the strategy has been initialized.
 pub fn is_initialized(env: &Env) -> bool {
     env.storage().persistent().has(&DataKey::Initialized)
 }
 
 // ---------------------------------------------------------------------------
-// Storage accessors — generated by macro
+// Simple accessors
 // ---------------------------------------------------------------------------
 
 macro_rules! simple_set {
     ($fn_name:ident, $key:ident, $t:ty) => {
-        /// Persist the value in instance storage and extend the TTL.
         pub fn $fn_name(env: &Env, val: &$t) {
-            bump(env);
             env.storage().instance().set(&DataKey::$key, val);
         }
     };
@@ -110,10 +104,6 @@ macro_rules! simple_set {
 
 macro_rules! simple_get {
     ($fn_name:ident, $key:ident, $t:ty) => {
-        /// Read the value from instance storage.
-        ///
-        /// # Panics
-        /// Panics with [`SoroswapLpError::NotInitialized`] if the key is absent.
         pub fn $fn_name(env: &Env) -> $t {
             bump(env);
             env.storage()
@@ -124,51 +114,110 @@ macro_rules! simple_get {
     };
 }
 
+macro_rules! simple_get_opt {
+    ($fn_name:ident, $key:ident, $t:ty) => {
+        pub fn $fn_name(env: &Env) -> Option<$t> {
+            bump(env);
+            env.storage().instance().get(&DataKey::$key)
+        }
+    };
+}
+
 simple_set!(set_vault, Vault, Address);
 simple_get!(get_vault, Vault, Address);
-simple_set!(set_asset_a, AssetA, Address);
-simple_get!(get_asset_a, AssetA, Address);
-simple_set!(set_asset_b, AssetB, Address);
-simple_get!(get_asset_b, AssetB, Address);
-simple_set!(set_lp_token, LpToken, Address);
-simple_get!(get_lp_token, LpToken, Address);
 simple_set!(set_router, Router, Address);
 simple_get!(get_router, Router, Address);
 simple_set!(set_name, Name, String);
 simple_get!(get_name, Name, String);
+simple_set!(set_factory, Factory, Address);
+simple_get_opt!(get_factory, Factory, Address);
 
-// ---------------------------------------------------------------------------
-// LP balance
-// ---------------------------------------------------------------------------
-
-/// Persist the cumulative LP token balance.
-pub fn set_lp_balance(env: &Env, v: i128) {
-    bump(env);
-    env.storage().instance().set(&DataKey::LpBalance, &v);
+pub fn set_asset_handler(env: &Env, v: &Address) {
+    env.storage().instance().set(&DataKey::AssetHandler, v);
 }
 
-/// Read the cumulative LP token balance (defaults to `0` before any deposits).
-pub fn get_lp_balance(env: &Env) -> i128 {
+pub fn get_asset_handler(env: &Env) -> Option<Address> {
+    bump(env);
+    env.storage().instance().get(&DataKey::AssetHandler)
+}
+
+/// Lazy-resolve and cache the AssetHandler address.
+/// On first call (cache empty): queries factory.get_asset_handler() and stores it.
+/// Subsequent calls: reads directly from instance storage (no cross-contract call).
+pub fn get_or_cache_asset_handler(env: &Env) -> Option<Address> {
+    if let Some(ah) = get_asset_handler(env) {
+        return Some(ah);
+    }
+    if let Some(factory) = get_factory(env) {
+        let ah_opt: Option<Address> = env.invoke_contract(
+            &factory,
+            &Symbol::new(env, "get_asset_handler"),
+            soroban_sdk::vec![env].into(),
+        );
+        if let Some(ref ah) = ah_opt {
+            set_asset_handler(env, ah);
+            return Some(ah.clone());
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Per-pair position accessors
+// ---------------------------------------------------------------------------
+
+/// Return the position for `lp_token`, or `None` if not yet created.
+pub fn get_position(env: &Env, lp_token: &Address) -> Option<LpPosition> {
     bump(env);
     env.storage()
         .instance()
-        .get(&DataKey::LpBalance)
-        .unwrap_or(0)
+        .get(&DataKey::Position(lp_token.clone()))
+}
+
+/// Persist (create or update) the position for `lp_token`.
+pub fn set_position(env: &Env, lp_token: &Address, position: &LpPosition) {
+    env.storage()
+        .instance()
+        .set(&DataKey::Position(lp_token.clone()), position);
 }
 
 // ---------------------------------------------------------------------------
-// Oracle (reserve-decomposition NAV)
+// Active-positions index
 // ---------------------------------------------------------------------------
 
-/// Persist the oracle address used for reserve-decomposition NAV.
-/// Persist the factory address (fetched from vault during initialize).
-pub fn set_factory(env: &Env, v: &Address) {
+/// Return the list of LP token addresses that have a non-zero balance.
+pub fn get_active_positions(env: &Env) -> Vec<Address> {
     bump(env);
-    env.storage().instance().set(&DataKey::Factory, v);
+    env.storage()
+        .instance()
+        .get(&DataKey::ActivePositions)
+        .unwrap_or_else(|| Vec::new(env))
 }
 
-/// Return the factory address, or `None` if vault has no factory.
-pub fn get_factory(env: &Env) -> Option<Address> {
-    bump(env);
-    env.storage().instance().get(&DataKey::Factory)
+/// Overwrite the active-positions list.
+pub fn set_active_positions(env: &Env, positions: &Vec<Address>) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ActivePositions, positions);
+}
+
+/// Add `lp_token` to the active list if not already present.
+pub fn add_to_active_positions(env: &Env, lp_token: &Address) {
+    let mut active = get_active_positions(env);
+    if !active.contains(lp_token.clone()) {
+        active.push_back(lp_token.clone());
+        set_active_positions(env, &active);
+    }
+}
+
+/// Remove `lp_token` from the active list (called when balance reaches zero).
+pub fn remove_from_active_positions(env: &Env, lp_token: &Address) {
+    let active = get_active_positions(env);
+    let mut updated = Vec::new(env);
+    for item in active.iter() {
+        if item != *lp_token {
+            updated.push_back(item);
+        }
+    }
+    set_active_positions(env, &updated);
 }

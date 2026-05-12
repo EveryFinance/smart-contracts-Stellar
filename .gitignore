@@ -12,6 +12,8 @@ target/
 # Local deployment outputs
 deployments/*.env
 !deployments/vault_alpha_beta_gamma.latest.env
+!deployments/testnet-protocol-environment.latest.env
+!deployments/testnet-protocol-environment-*.env
 
 # AI/tooling traces
 .codex
@@ -22,7 +24,14 @@ chat_exports/
 
 # Reports and local artifacts not for public repo
 docs/reports/
+!docs/reports/
+docs/reports/*
+!docs/reports/testnet-protocol-environment-*.adoc
+docs/reports/testnet-protocol-environment-20260512-061333.adoc
 AUDIT_REPORT_POST_REMEDIATION_2026-04-16.md
+
+# Historical partial testnet run kept locally for debugging.
+deployments/testnet-protocol-environment-20260512-061333.env
 
 # OS/editor
 .DS_Store

@@ -12,6 +12,9 @@ members = [
     "contracts/strategies/phoenix_lp",
 "contracts/integration_tests",
     "contracts/mock_blend_pool",
+    "contracts/mock_asset",
+    "contracts/mock_soroswap_router",
+    "contracts/mock_phoenix_pool",
 ]
 resolver = "2"
 

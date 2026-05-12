@@ -1,0 +1,240 @@
+= Stellar Testnet Protocol Environment
+:toc:
+:sectnums:
+
+This runbook deploys the complete protocol testing stack on Stellar testnet:
+public-mint mock assets, protocol contracts, Alpha/Beta/Gamma vaults, mock
+lending and DEX integrations, initial prices, transaction tracking, and an
+`.adoc` report with before/after NAV, share price, user balances, and portfolio
+composition.
+
+== Scope
+
+The deployment script is:
+
+[source,bash]
+----
+./scripts/deploy_testnet_protocol_environment.sh
+----
+
+It creates:
+
+* Mock assets: `USDC`, `XLM`, `BTC`, `PYUSD`, `EURC`, `AQUA`, `USTRY`.
+* Core contracts: `AssetHandler`, `Oracle`, `Factory`.
+* Three vaults: `Alpha`, `Beta`, `Gamma`.
+* Three active strategies per vault:
+  ** Blend-style USDC lending through `mock-blend-pool`.
+  ** Soroswap-style swap/add-liquidity/remove-liquidity through `mock-soroswap-router`.
+  ** Phoenix-style swap/add-liquidity/remove-liquidity through `mock-phoenix-pool`.
+
+The mock assets are intentionally public-mint testnet assets. Any test user can
+call `mint(to, amount)` on mock USDC.
+
+== Vault Design
+
+[cols="1,1,1",options="header"]
+|===
+| Vault | Portfolio assets | Purpose
+
+| Alpha
+| `USDC`, `XLM`, `BTC`
+| Aggressive volatile-asset vault.
+
+| Beta with RWA
+| `USDC`, `XLM`, `PYUSD`, `EURC`, `AQUA`, `USTRY`
+| Balanced Stellar DeFi ecosystem vault with optional RWA exposure.
+
+| Gamma with RWA
+| `USDC`, `USTRY`
+| Conservative vault focused on stable/RWA exposure.
+|===
+
+For every vault:
+
+* Deposit asset: `USDC` only.
+* Entry fee: `0%`.
+* Withdraw fee: `0%`.
+* Management fee: `2%`.
+* Performance fee: `10%`.
+* Share transferability: disabled.
+* Cooldown: `60 seconds`.
+
+== Constructor Authorization Note
+
+The vault constructor does not call `require_auth()` on the initial manager or
+trader addresses. This is intentional for Stellar testnet deployment
+compatibility: Soroban `CreateContract` rejects that constructor-time account
+authorization path with `Error(Auth, InvalidAction)`.
+
+The constructor remains one-shot and stores the configured `admin`, `manager`,
+`trader`, and `treasury` addresses. After deployment, all role-sensitive vault
+operations still require the configured role authorization, including manager
+configuration, portfolio asset management, cooldown changes, fee changes, and
+strategy execution.
+
+The vault constructor also requires the share token admin to already be the
+deterministic vault address. The deployment script precomputes each vault
+contract ID, moves the share-token admin to that future vault address, and then
+deploys the vault with the same salt. The constructor only verifies this state;
+it does not attempt a nested `share_token.set_admin(...)` call. This preserves
+the non-transferable share-token design while avoiding nested constructor
+authorization.
+
+== Testnet Budget Note
+
+The first full environment run showed that user withdrawals and manager
+`execute_op` calls could exceed Stellar testnet simulation budget when a vault
+had many configured portfolio assets and many active strategy guards. The root
+cause was full portfolio/guard scanning in hot paths.
+
+The vault now uses bounded NAV indexes:
+
+* `TrackedAssets` contains only portfolio assets with a non-zero idle vault
+  balance.
+* `PositionGuards` contains only active guards with a non-zero strategy value.
+* `deposit`, `withdraw`, `seed_deposit`, and `execute_op` update these indexes
+  automatically for the assets/strategy touched by the transaction.
+* `sync_asset_balance(asset)` is permissionless and lets a keeper include or
+  remove an externally changed idle asset balance.
+* `sync_guard_position(guard)` is permissionless and lets a keeper include or
+  remove externally changed strategy value, for example accrued lending yield.
+
+`execute_op` also measures only the local value surface touched by the manager
+operation while keeping the NAV-loss guard active. This preserves the loss
+check without requiring every transaction to query every asset and every guard.
+
+Legacy single-asset vaults count idle base asset balance once and do not double
+count the bounded tracked-asset index.
+
+== Initial Prices
+
+Prices are set in the mock oracle with `PRICE_PRECISION = 1e7`.
+
+The script includes environment-overridable defaults:
+
+[source,bash]
+----
+PRICE_USDC=10000000
+PRICE_XLM=1700000
+PRICE_BTC=816844300000
+PRICE_PYUSD=10000000
+PRICE_EURC=10800000
+PRICE_AQUA=4500
+PRICE_USTRY=10300000
+----
+
+Before a formal demo run, refresh these values from the chosen market data
+source and export them before running the script.
+
+== Run
+
+Use a funded Stellar testnet key alias as the source account. By default the
+script uses `deployer` for admin, manager, trader, and treasury.
+
+[source,bash]
+----
+export SOURCE_ACCOUNT=deployer
+export MANAGER_ACCOUNT=deployer
+export TRADER_ACCOUNT=deployer
+export ADMIN_ACCOUNT=deployer
+export TREASURY_ACCOUNT=deployer
+
+./scripts/deploy_testnet_protocol_environment.sh
+----
+
+The script writes:
+
+* `deployments/testnet-protocol-environment-<timestamp>.env`
+* `deployments/testnet-protocol-environment.latest.env`
+* `docs/reports/testnet-protocol-environment-<timestamp>.adoc`
+
+== Transaction Flow Covered
+
+The generated report records these phases for each vault.
+
+=== Phase 1: User Transactions Before Manager Actions
+
+* User deposit.
+* Wait for the configured cooldown.
+* User withdrawal.
+* NAV before and after each user action.
+* Share token price before and after each user action.
+* User balances before and after each action.
+* Idle portfolio composition before and after each action.
+* Strategy values before and after each action.
+
+=== Phase 2: Manager Transactions
+
+* Mock DEX swap.
+* Lending supply.
+* Lending withdrawal.
+* Mock LP add liquidity.
+* Mock LP remove liquidity.
+* Mock Phoenix swap.
+* Mock lending yield injection.
+* Updated NAV, share token price, and portfolio/strategy composition.
+
+=== Phase 3: User Transactions After Manager Actions
+
+* New user deposit after strategy changes.
+* Wait for cooldown.
+* New user withdrawal after strategy changes.
+* NAV/share-price evolution and user balance impact.
+
+== Common Commands
+
+Source the latest deployment:
+
+[source,bash]
+----
+source deployments/testnet-protocol-environment.latest.env
+----
+
+Mint USDC for a user:
+
+[source,bash]
+----
+stellar contract invoke \
+  --network testnet \
+  --source-account "$SOURCE_ACCOUNT" \
+  --id "$USDC_ID" -- \
+  mint --to "<G...USER>" --amount 1000000000
+----
+
+Deposit USDC:
+
+[source,bash]
+----
+stellar contract invoke \
+  --network testnet \
+  --source-account "<user-key>" \
+  --id "$ALPHA_VAULT_ID" -- \
+  deposit \
+  --amount 1000000000 \
+  --from "<G...USER>" \
+  --asset "$USDC_ID" \
+  --min-shares-out 0
+----
+
+Withdraw shares after cooldown:
+
+[source,bash]
+----
+stellar contract invoke \
+  --network testnet \
+  --source-account "<user-key>" \
+  --id "$ALPHA_VAULT_ID" -- \
+  withdraw \
+  --share_amount "<share_amount>" \
+  --from "<G...USER>" \
+  --to "<G...USER>" \
+  --min-base-out 0
+----
+
+Verify NAV and share price:
+
+[source,bash]
+----
+stellar contract invoke --network testnet --source-account "$SOURCE_ACCOUNT" --id "$ALPHA_VAULT_ID" -- get_nav
+stellar contract invoke --network testnet --source-account "$SOURCE_ACCOUNT" --id "$ALPHA_VAULT_ID" -- get_share_price
+----

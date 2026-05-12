@@ -137,7 +137,9 @@ struct MixedWorld {
     vault_addr: Address,
     blend_strategy: Address,
     blend_pool: MockBlendPoolClient<'static>,
+    blend_pool_addr: Address,
     phoenix_strategy: Address,
+    phoenix_pool_addr: Address,
     phoenix_share: Address,
     base: Address,
     token_b: Address,
@@ -209,17 +211,19 @@ fn setup_mixed_world() -> MixedWorld {
     factory.authorize_asset(&base);
     factory.authorize_asset(&token_b);
 
+    let vault_id = Address::generate(&env);
     let vault_share = env.register(
         ShareTokenContract,
         (
-            manager.clone(),
+            vault_id.clone(),
             String::from_str(&env, "Mixed Vault Share"),
             String::from_str(&env, "MVS"),
             7u32,
         ),
     );
 
-    let vault_id = env.register(
+    env.register_at(
+        &vault_id,
         Vault,
         (VaultParams {
             admin: manager.clone(),
@@ -228,7 +232,7 @@ fn setup_mixed_world() -> MixedWorld {
             trader: trader.clone(),
             base_asset: base.clone(),
             share_token: vault_share.clone(),
-            share_token_admin: manager.clone(),
+            share_token_admin: vault_id.clone(),
             treasury: manager.clone(),
             entry_fee_bps: 0,
             exit_fee_bps: 0,
@@ -243,12 +247,8 @@ fn setup_mixed_world() -> MixedWorld {
     let blend_pool_id = env.register(MockBlendPool, ());
     MockBlendPoolClient::new(&env, &blend_pool_id).blend_init(&base);
     let blend_strategy_id = env.register(BlendStrategy, ());
-    BlendStrategyClient::new(&env, &blend_strategy_id).initialize(
-        &vault_id,
-        &base,
-        &blend_pool_id,
-        &String::from_str(&env, "Blend Base"),
-    );
+    BlendStrategyClient::new(&env, &blend_strategy_id)
+        .initialize(&vault_id, &String::from_str(&env, "Blend Base"));
 
     let phoenix_pool_id = env.register(MockPhoenixPool, ());
     MockPhoenixPoolClient::new(&env, &phoenix_pool_id).phoenix_init(
@@ -257,13 +257,8 @@ fn setup_mixed_world() -> MixedWorld {
         &token_b,
     );
     let phoenix_strategy_id = env.register(PhoenixLpStrategy, ());
-    PhoenixLpStrategyClient::new(&env, &phoenix_strategy_id).initialize(
-        &vault_id,
-        &base,
-        &token_b,
-        &phoenix_pool_id,
-        &String::from_str(&env, "Phoenix Base-B"),
-    );
+    PhoenixLpStrategyClient::new(&env, &phoenix_strategy_id)
+        .initialize(&vault_id, &String::from_str(&env, "Phoenix Base-B"));
 
     factory.authorize_guard(&blend_strategy_id);
     factory.authorize_guard(&phoenix_strategy_id);
@@ -308,7 +303,9 @@ fn setup_mixed_world() -> MixedWorld {
         vault_addr: vault_id,
         blend_strategy: blend_strategy_id,
         blend_pool,
+        blend_pool_addr: blend_pool_id,
         phoenix_strategy: phoenix_strategy_id,
+        phoenix_pool_addr: phoenix_pool_id,
         phoenix_share,
         base,
         token_b,
@@ -333,17 +330,19 @@ fn setup_fee_vault(
     let base = env.register(MockToken, ());
     MockTokenClient::new(&env, &base).initialize(&manager);
 
+    let vault_id = Address::generate(&env);
     let vault_share = env.register(
         ShareTokenContract,
         (
-            manager.clone(),
+            vault_id.clone(),
             String::from_str(&env, "Fee Vault Share"),
             String::from_str(&env, "FVS"),
             7u32,
         ),
     );
 
-    let vault_id = env.register(
+    env.register_at(
+        &vault_id,
         Vault,
         (VaultParams {
             admin: manager.clone(),
@@ -352,7 +351,7 @@ fn setup_fee_vault(
             trader: trader.clone(),
             base_asset: base.clone(),
             share_token: vault_share.clone(),
-            share_token_admin: manager.clone(),
+            share_token_admin: vault_id.clone(),
             treasury: manager.clone(),
             entry_fee_bps,
             exit_fee_bps,
@@ -403,7 +402,12 @@ fn deposit_and_withdraw_user_fraction_across_idle_lending_and_lp_positions() {
         3_000_0000000i128
     );
 
-    let supply_args: Vec<Val> = (400_0000000i128,).into_val(&w.env);
+    let supply_args: Vec<Val> = soroban_sdk::vec![
+        &w.env,
+        w.blend_pool_addr.clone().into_val(&w.env),
+        w.base.clone().into_val(&w.env),
+        400_0000000i128.into_val(&w.env),
+    ];
     w.vault.execute_op(
         &w.trader,
         &w.blend_strategy,
@@ -411,7 +415,16 @@ fn deposit_and_withdraw_user_fraction_across_idle_lending_and_lp_positions() {
         &supply_args,
     );
 
-    let lp_args: Vec<Val> = (600_0000000i128, 600_0000000i128, 0i128, 0i128).into_val(&w.env);
+    let lp_args: Vec<Val> = soroban_sdk::vec![
+        &w.env,
+        w.phoenix_pool_addr.clone().into_val(&w.env),
+        w.base.clone().into_val(&w.env),
+        w.token_b.clone().into_val(&w.env),
+        600_0000000i128.into_val(&w.env),
+        600_0000000i128.into_val(&w.env),
+        0i128.into_val(&w.env),
+        0i128.into_val(&w.env),
+    ];
     w.vault.execute_op(
         &w.trader,
         &w.phoenix_strategy,

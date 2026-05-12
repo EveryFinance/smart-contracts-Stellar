@@ -4,8 +4,8 @@
 
 use share_token::ShareTokenContract;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, testutils::Address as _, Address, Env, IntoVal, String,
-    Symbol, Val, Vec,
+    contract, contractimpl, contracttype, testutils::Address as _, Address, Env, IntoVal, Map,
+    String, Symbol, Val, Vec,
 };
 use soroswap_lp_strategy::{SoroswapLpStrategy, SoroswapLpStrategyClient};
 use vault::{Vault, VaultClient, VaultParams};
@@ -23,6 +23,14 @@ struct MockLpAssetHandler;
 impl MockLpAssetHandler {
     pub fn get_price(_env: Env, _asset: Address) -> i128 {
         PRICE_PRECISION
+    }
+
+    pub fn get_prices(env: Env, assets: Vec<Address>) -> Map<Address, i128> {
+        let mut result = Map::new(&env);
+        for asset in assets.iter() {
+            result.set(asset, PRICE_PRECISION);
+        }
+        result
     }
 }
 
@@ -251,17 +259,19 @@ fn setup_soroswap() -> SoroswapWorld {
     MockLpFactoryClient::new(&env, &factory_id).authorize_asset(&asset_b);
 
     // Use asset_a as vault base (simplest setup — no oracle needed for basic ops).
+    let vault_id = Address::generate(&env);
     let share_id = env.register(
         ShareTokenContract,
         (
-            manager.clone(),
+            vault_id.clone(),
             String::from_str(&env, "SS Vault Share"),
             String::from_str(&env, "SVS"),
             7u32,
         ),
     );
 
-    let vault_id = env.register(
+    env.register_at(
+        &vault_id,
         Vault,
         (VaultParams {
             admin: manager.clone(),
@@ -270,7 +280,7 @@ fn setup_soroswap() -> SoroswapWorld {
             trader: trader.clone(),
             base_asset: asset_a.clone(),
             share_token: share_id.clone(),
-            share_token_admin: manager.clone(),
+            share_token_admin: vault_id.clone(),
             treasury: manager.clone(),
             entry_fee_bps: 0,
             exit_fee_bps: 0,
@@ -290,9 +300,6 @@ fn setup_soroswap() -> SoroswapWorld {
     let strategy_id = env.register(SoroswapLpStrategy, ());
     SoroswapLpStrategyClient::new(&env, &strategy_id).initialize(
         &vault_id,
-        &asset_a,
-        &asset_b,
-        &lp_token,
         &router_id,
         &String::from_str(&env, "Soroswap USDC-XLM"),
     );
@@ -354,6 +361,9 @@ fn test_soroswap_add_liquidity_via_execute_op() {
 
     let args: Vec<Val> = soroban_sdk::vec![
         &w.env,
+        w.lp_token.clone().into_val(&w.env), // lp_token (pair address)
+        w.asset_a.clone().into_val(&w.env),  // asset_a
+        w.asset_b.clone().into_val(&w.env),  // asset_b
         amount_a.into_val(&w.env),
         amount_b.into_val(&w.env),
         0i128.into_val(&w.env), // min_a
@@ -374,7 +384,7 @@ fn test_soroswap_add_liquidity_via_execute_op() {
     );
 
     // Strategy's tracked LP balance matches.
-    assert_eq!(w.strategy.get_lp_balance(), lp_minted);
+    assert_eq!(w.strategy.get_lp_balance(&w.lp_token), lp_minted);
 
     // Vault lost both assets.
     let vault_a_after = token_balance(&w.env, &w.asset_a, &w.vault_addr);
@@ -394,6 +404,9 @@ fn test_soroswap_remove_liquidity_via_execute_op() {
     // Add liquidity first.
     let add_args: Vec<Val> = soroban_sdk::vec![
         &w.env,
+        w.lp_token.clone().into_val(&w.env),
+        w.asset_a.clone().into_val(&w.env),
+        w.asset_b.clone().into_val(&w.env),
         amount_a.into_val(&w.env),
         amount_b.into_val(&w.env),
         0i128.into_val(&w.env),
@@ -413,6 +426,9 @@ fn test_soroswap_remove_liquidity_via_execute_op() {
     // Remove all LP tokens.
     let remove_args: Vec<Val> = soroban_sdk::vec![
         &w.env,
+        w.lp_token.clone().into_val(&w.env),
+        w.asset_a.clone().into_val(&w.env),
+        w.asset_b.clone().into_val(&w.env),
         lp_minted.into_val(&w.env),
         0i128.into_val(&w.env), // min_a
         0i128.into_val(&w.env), // min_b
@@ -436,7 +452,7 @@ fn test_soroswap_remove_liquidity_via_execute_op() {
     );
 
     // Strategy's tracked LP balance is zero (internal accounting).
-    assert_eq!(w.strategy.get_lp_balance(), 0);
+    assert_eq!(w.strategy.get_lp_balance(&w.lp_token), 0);
     // Note: the mock router does not burn LP token on-chain (it lacks caller identity);
     // real Soroswap uses an allowance-based pull from the strategy to the pair.
     // The tracked balance above is the authoritative measure for NAV.
@@ -450,6 +466,9 @@ fn test_soroswap_withdraw_fraction_sends_underlyings_to_user() {
 
     let add_args: Vec<Val> = soroban_sdk::vec![
         &w.env,
+        w.lp_token.clone().into_val(&w.env),
+        w.asset_a.clone().into_val(&w.env),
+        w.asset_b.clone().into_val(&w.env),
         amount_a.into_val(&w.env),
         amount_b.into_val(&w.env),
         0i128.into_val(&w.env),
@@ -477,7 +496,10 @@ fn test_soroswap_withdraw_fraction_sends_underlyings_to_user() {
         token_balance(&w.env, &w.asset_b, &w.user),
         user_b_before + expected_each
     );
-    assert_eq!(w.strategy.get_lp_balance(), amount_a.min(amount_b) / 2);
+    assert_eq!(
+        w.strategy.get_lp_balance(&w.lp_token),
+        amount_a.min(amount_b) / 2
+    );
 }
 
 #[test]
@@ -525,10 +547,13 @@ fn test_soroswap_swap_via_execute_op() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #9)")]
+#[should_panic(expected = "Error(Contract, #31)")]
 fn test_soroswap_swap_rejects_non_pair_asset_via_execute_op() {
     let w = setup_soroswap();
-    let rogue_asset = Address::generate(&w.env);
+    // Use a deployed token contract that is NOT in the vault's portfolio.
+    // A raw random address has no contract instance, which fails the pre-op balance check.
+    let rogue_asset = w.env.register(MockToken, ());
+    MockTokenClient::new(&w.env, &rogue_asset).initialize(&w.manager);
     let amount_in = 500_0000000i128;
 
     let args: Vec<Val> = soroban_sdk::vec![
@@ -564,6 +589,9 @@ fn test_soroswap_asset_in_use_after_add_liquidity() {
 
     let args: Vec<Val> = soroban_sdk::vec![
         &w.env,
+        w.lp_token.clone().into_val(&w.env),
+        w.asset_a.clone().into_val(&w.env),
+        w.asset_b.clone().into_val(&w.env),
         amount.into_val(&w.env),
         amount.into_val(&w.env),
         0i128.into_val(&w.env),

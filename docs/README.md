@@ -18,7 +18,8 @@ Dapp: https://www.elyx.finance/
 10. [Final Smart Contract Audit Report](./final-smart-contract-audit-2026-05-12.md)
 11. [Stellar Production Portfolio Asset Study](./stellar-production-portfolio-asset-study-2026-05-12.md)
 12. [Selected Vault Production Assets](./selected-vault-production-assets.md)
-13. Contract Docs
+13. [Stellar Testnet Protocol Environment](./testnet_protocol_environment.adoc)
+14. Contract Docs
    - [Vault](./contracts/vault.md)
    - [Share Token (SEP-41)](./contracts/share_token.md)
    - [Oracle Contracts (AssetHandler, ReflectorAdapter, DIAAdapter, Mock)](./contracts/oracle.md)
@@ -43,7 +44,8 @@ Dapp: https://www.elyx.finance/
 
 ## Deployment References
 
-- Deployment script: `scripts/deploy_testnet.sh`
+- Full protocol testnet environment: `scripts/deploy_testnet_protocol_environment.sh`
+- Legacy single-vault deployment script: `scripts/deploy_testnet.sh`
 - Example env config: `scripts/deploy.env.example`
 - Latest deployment output is written under `deployments/` as `.env` files.
 

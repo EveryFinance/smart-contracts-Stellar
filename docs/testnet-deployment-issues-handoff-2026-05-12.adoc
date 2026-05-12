@@ -1,0 +1,614 @@
+= Testnet Deployment Issues Handoff
+:toc:
+:sectnums:
+
+Date: 2026-05-12
+
+Repository branch: `audit_fixes_Almanax`
+
+== Purpose
+
+This document is a handoff for continuing the Stellar testnet deployment and transaction validation work.
+
+The immediate objective is not to deploy every vault at once. The required flow is:
+
+. Deploy and test `Beta` first.
+. Fix every Beta transaction failure.
+. Only after Beta succeeds end-to-end, deploy and test `Alpha` and `Gamma`.
+. `Gamma` must use only the Blend lending strategy.
+
+The latest testnet run showed that many earlier problems were fixed, but two Beta blockers remain.
+
+== Important Design Constraints
+
+The following constraints must be preserved while fixing the remaining issues.
+
+* Vault withdrawals must keep the current accounting model: withdraw proportionally from all tracked idle assets and all tracked strategy positions.
+* Do not change withdraw to "idle USDC first".
+* Do not use stale cached NAV, LP value, or strategy value as authoritative accounting.
+* Prices and AMM reserves change over time, so NAV must be based on fresh values in the current transaction.
+* It is acceptable and recommended to cache/index immutable metadata and bounded quantities, for example token ordering, strategy position indexes, tracked assets, and LP balances.
+* Share tokens are non-transferable by default.
+* Cooldown is enabled as a hard control while shares are non-transferable.
+* PnL tracking is accurate only in the default non-transferable-share mode.
+* If share transferability is enabled in the future, cooldown is no longer a hard security control and PnL becomes informational/approximate.
+
+== Deployment Script
+
+The complete testnet deployment and testing script is:
+
+[source,bash]
+----
+scripts/deploy_testnet_protocol_environment.sh
+----
+
+The script:
+
+* builds release WASM artifacts,
+* deploys core protocol contracts,
+* deploys public-mint mock assets,
+* deploys AssetHandler, Oracle, Factory,
+* deploys Beta first,
+* configures fees, cooldown, share transferability, portfolio assets, and strategies,
+* executes the requested user and manager transaction phases,
+* writes an environment file under `deployments/`,
+* writes an AsciiDoc report under `docs/reports/`.
+
+The script defaults to Beta-only gating:
+
+[source,bash]
+----
+DEPLOY_ALPHA_GAMMA_AFTER_BETA="${DEPLOY_ALPHA_GAMMA_AFTER_BETA:-false}"
+----
+
+Do not set `DEPLOY_ALPHA_GAMMA_AFTER_BETA=true` until Beta succeeds without failed transactions.
+
+Recommended command for the next Beta-only run:
+
+[source,bash]
+----
+NETWORK=testnet \
+SOURCE_ACCOUNT=deployer \
+MANAGER_ACCOUNT=deployer \
+MANAGER_SIGNER=deployer \
+DEPLOY_ALPHA_GAMMA_AFTER_BETA=false \
+bash scripts/deploy_testnet_protocol_environment.sh
+----
+
+The latest run artifacts are:
+
+* Environment: `deployments/testnet-protocol-environment-20260512-174827.env`
+* Report: `docs/reports/testnet-protocol-environment-20260512-174827.adoc`
+* Tracked next-run env template for Claude Code: `scripts/claude-code-testnet-deploy.env.example`
+* Local sourceable next-run env file: `deployments/claude-code-testnet-deploy.env`
+
+== Environment Variables For The Next Deployment
+
+Before running the deployment script, source the handoff env file.
+
+For a committed/tracked template:
+
+[source,bash]
+----
+source scripts/claude-code-testnet-deploy.env.example
+bash scripts/deploy_testnet_protocol_environment.sh
+----
+
+For the local workspace copy:
+
+[source,bash]
+----
+source deployments/claude-code-testnet-deploy.env
+bash scripts/deploy_testnet_protocol_environment.sh
+----
+
+Note: `deployments/*.env` is ignored by git, so the tracked template under `scripts/` is the portable file to use across agents or commits.
+
+The saved env file contains:
+
+[cols="1,2",options="header"]
+|===
+| Variable | Purpose
+| `NETWORK` | Stellar network. Use `testnet`.
+| `SOURCE_ACCOUNT` | Stellar CLI source account paying deploy/invoke fees.
+| `MANAGER_ACCOUNT` | Vault manager role, alias or `G...` address.
+| `MANAGER_SIGNER` | Stellar CLI key alias that signs manager actions.
+| `TRADER_ACCOUNT` | Vault trader role, alias or `G...` address.
+| `TRADER_SIGNER` | Stellar CLI key alias that signs trader actions.
+| `TREASURY_ACCOUNT` | Fee recipient role, alias or `G...` address.
+| `ADMIN_ACCOUNT` | Admin role, alias or `G...` address.
+| `ADMIN_SIGNER` | Stellar CLI key alias that signs admin actions.
+| `ENTRY_FEE_BPS` | Entry fee. Requested value: `0`.
+| `EXIT_FEE_BPS` | Withdrawal fee. Requested value: `0`.
+| `MGMT_FEE_BPS` | Management fee. Requested value: `200`.
+| `PERF_FEE_BPS` | Performance fee. Requested value: `1000`.
+| `COOLDOWN_SECS` | Share withdrawal cooldown. Requested value: `60`.
+| `WAIT_FOR_COOLDOWN` | Whether script waits before withdraw tests. Use `true`.
+| `COOLDOWN_SLEEP_SECS` | Sleep used to pass the 60 second cooldown. Use `70`.
+| `DEPLOY_ALPHA_GAMMA_AFTER_BETA` | Beta gate. Keep `false` until Beta is clean.
+| `STELLAR_RETRY_ATTEMPTS` | Retry count for transient RPC errors.
+| `STELLAR_RETRY_SLEEP_SECS` | Sleep between retry attempts.
+| `USER1_KEY` | Test user 1 Stellar CLI key alias.
+| `USER2_KEY` | Test user 2 Stellar CLI key alias.
+| `USER_MINT_AMOUNT` | Mock USDC minted to each test user.
+| `MANAGER_MINT_AMOUNT` | Mock portfolio assets minted to manager.
+| `USER_DEPOSIT_AMOUNT` | Deposit amount used by scripted user flows.
+| `USER_WITHDRAW_SHARES` | Share amount used by scripted withdrawal flows.
+| `PRICE_USDC` | Initial mock USDC oracle price, 1e7 precision.
+| `PRICE_XLM` | Initial mock XLM oracle price, 1e7 precision.
+| `PRICE_BTC` | Initial mock BTC oracle price, 1e7 precision.
+| `PRICE_PYUSD` | Initial mock PYUSD oracle price, 1e7 precision.
+| `PRICE_EURC` | Initial mock EURC oracle price, 1e7 precision.
+| `PRICE_AQUA` | Initial mock AQUA oracle price, 1e7 precision.
+| `PRICE_USTRY` | Initial mock USTRY oracle price, 1e7 precision.
+|===
+
+The env file intentionally does not contain private keys. It assumes the Stellar CLI already has the required local aliases, especially `deployer`, or that equivalent aliases are substituted before running.
+
+== Latest Beta Deployment Addresses
+
+From `deployments/testnet-protocol-environment-20260512-174827.env`:
+
+[cols="1,1",options="header"]
+|===
+| Item | Address
+| USDC mock asset | `CAVJMTJM2OWFFT7TOUXSFZLJUO2F2LOFIUK4Q67GLSJBHAZOXI4AMOT6`
+| XLM mock asset | `CCY7I5UMGW6ZE772LJPOWZYPWI6BUVQGHGBJ6GCCMM6NFQCNWHM26PFR`
+| USTRY mock asset | `CBSMEZTS6IOXD3MK5VXJNMTYF5J7P4JCNVPU6KG4RWFUBYI4N3QBHJVT`
+| AssetHandler | `CDXMNDKHLPHI3LMVXD4QLRL7A3ABA2TEFFNAEI4PJDU5WNWFTW4XMGLF`
+| Oracle | `CCYKJNPBELRQMZDIL22CGT44RZFRZDDGPES2VKL3JY3KG5BZTUGQ4LEH`
+| Factory | `CDKD3XZKRDI37EI6XDXTHMJPSZ2FV4RZ22UL7UTSWSX57WGOBDSQBFUH`
+| Beta vault | `CA3NT4HX65OKWX66AJQJIQSQAUZBXWLQ262AOMCM6GM44LWTH7QDYWNX`
+| Beta share token | `CDBHQBXA2VGBC5KKN65MNJCMLWA7GV4JJOTIEHGBPWUHH7OZDCDRT5KE`
+| Beta Blend strategy | `CAYNLY5DJE5R7HIH3PFPLOBUIO7KYN5PLDYMXV3V55PFSI4NTP3QVW45`
+| Beta Soroswap router/mock pair | `CAZAKRDL5JFCNXBSN4D7N4FLWRMBFKAE4SUBBD5FYFMYJFZKQ5FN6HH7`
+| Beta Soroswap LP strategy | `CBIEDJ3VS5VJIKZJVN3LC5TKPCDSR3D2TXWO4EJ2OW7JJWMMR4C4DBZX`
+| Beta Phoenix LP strategy | `CCDEFPDFDOB4WEAX7W4Y4XUP4PTC565VID35ODSWAFSFTH6YET7IHXWQ`
+|===
+
+== Latest Beta Transaction Results
+
+Latest report: `docs/reports/testnet-protocol-environment-20260512-174827.adoc`
+
+[cols="1,1,2",options="header"]
+|===
+| Phase | Action | Result
+| Phase 1 | User deposit | Success: `b19f732efd43e03be6a6d2157e4765aa133513f1e7acff53568b87fbbe27b0f6`
+| Phase 1 | User withdrawal after cooldown | Success: `b5037ad4947dd1c945b223097bda9db71d951ab78146a6fef8b0f9c0bd5bc3fa`
+| Phase 2 | Manager Soroswap swap USDC to XLM | Success: `35b8f856f6f9fa38b671a8b33daf96360036d988ae13c84fc66df89d73e05f5c`
+| Phase 2 | Manager Blend lending supply | Success: `a0969b01bdd67950ae90c4508601b5829fab214592a7f3a3b24c1534def4df28`
+| Phase 2 | Manager Blend lending withdrawal | Success: `9c71b3749ade734bc2a27bef104cbf967c21c59f63d21b4a93b1380549b4f2cd`
+| Phase 2 | Manager Soroswap add LP liquidity | Success: `c732e9c6f1b8eac41284cfa085fbb3da9718d1ffe058f60be244731340e02951`
+| Phase 2 | Manager Soroswap remove LP liquidity | Failed: `HostError: Error(Budget, ExceededLimit)`
+| Phase 2 | Manager Phoenix swap USDC to USTRY | Success: `74fb503e71cfb1771a5a208826be902022f9a76eb02e77bd88b248f8bbc4c98f`
+| Phase 2 | Manager adds mock Blend yield | Success: `1b1a1410dac10164e3c1e3dd9784c538c8e21dde9180790a5db12c417d1c2aef`
+| Phase 3 | User deposit after manager actions | Failed: `HostError: Error(Budget, ExceededLimit)`
+| Phase 3 | User withdrawal after manager actions | Skipped because Phase 3 deposit failed and user had no shares
+|===
+
+== Latest Beta State Before Remaining Failures
+
+After the successful manager actions and before the Phase 3 deposit failure:
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `801500013`
+| Share token price | `10018749`
+| Share token supply | `800000066`
+| Blend strategy value | `200000000`
+| Soroswap LP strategy value | `58500000`
+| Phoenix LP strategy value | `0`
+| Idle USDC | `400000014`
+| Idle XLM | `538235294`
+| Idle USTRY | `50000000`
+|===
+
+This proves the remaining issue is not basic deployment, role configuration, pricing initialization, or simple token auth. The issue appears when the vault has a live multi-asset state and at least one live LP strategy position.
+
+== Issues Already Fixed During Testnet Work
+
+=== Nested Vault Authorization
+
+Earlier testnet runs failed with `Error(Auth, InvalidAction)`.
+
+Root cause:
+
+* Strategy operations tried to pull tokens from the vault using nested authorization.
+* On Soroban, the vault should not rely on a strategy pulling funds from it using nested `authorize_as_current_contract` patterns.
+
+Fix already implemented:
+
+* `vault.execute_op` pre-funds the strategy with required input assets.
+* Strategies consume assets already received from the vault.
+* Strategy functions no longer pull input tokens from the vault.
+
+Main files:
+
+* `contracts/vault/src/lib.rs`
+* `contracts/strategies/soroswap_lp/src/lib.rs`
+
+=== Soroswap Mock Pricing
+
+Earlier testnet runs failed TVL guard after swap.
+
+Root cause:
+
+* The mock Soroswap router returned 1:1 output amounts.
+* The oracle priced XLM at `0.17` USDC, so a 1:1 USDC-to-XLM mock swap looked like a large value loss.
+
+Fix already implemented:
+
+* `contracts/mock_soroswap_router/src/lib.rs` now accepts `price0` and `price1`.
+* `swap_exact_tokens_for_tokens` computes price-aware output:
++
+[source,text]
+----
+amount_out = amount_in * price_in / price_out
+----
+
+Deployment script update:
+
+* `scripts/deploy_testnet_protocol_environment.sh` deploys the mock router with `--price0` and `--price1`.
+
+=== Soroswap Add Liquidity Budget
+
+Earlier Beta runs failed on manager `add_liquidity` with `Error(Budget, ExceededLimit)`.
+
+Root cause:
+
+* Add-liquidity used longer approval expiry and explicit zero-approval revoke after the router call.
+* The transaction also performed vault pre/post guard accounting.
+
+Fix already implemented:
+
+* `SoroswapLpStrategy.add_liquidity` uses same-ledger approval:
++
+[source,rust]
+----
+let expiry = env.ledger().sequence();
+----
+
+* Explicit zero-revoke was removed for add-liquidity and swap.
+* The router return `(amount_a_used, amount_b_used, lp_received)` is used by the vault to avoid an immediate deep post-operation LP revaluation when possible.
+
+Result:
+
+* In latest run, manager Soroswap add liquidity succeeded.
+
+== Remaining Issue 1: Soroswap Remove Liquidity Budget Failure
+
+Latest failure:
+
+[source,text]
+----
+Manager remove Soroswap LP liquidity:
+failed: transaction simulation failed: HostError: Error(Budget, ExceededLimit)
+----
+
+Current likely cause:
+
+* `SoroswapLpStrategy.remove_liquidity` still uses `expiry = env.ledger().sequence() + 100`.
+* It still performs an explicit zero-approval revoke after the router call.
+* Unlike `add_liquidity`, it currently returns `()` instead of returning the actual `(amount_a, amount_b)` received from the router.
+* The vault may need to do a deep post-operation strategy valuation to enforce/update value guards.
+
+Relevant file:
+
+* `contracts/strategies/soroswap_lp/src/lib.rs`
+
+Current function:
+
+[source,rust]
+----
+pub fn remove_liquidity(env: Env, vault: Address, lp_amount: i128, min_a: i128, min_b: i128)
+----
+
+Recommended fix:
+
+. Change remove-liquidity approval to same-ledger approval:
++
+[source,rust]
+----
+let expiry = env.ledger().sequence();
+----
+
+. Remove the explicit zero-approval revoke, matching the already-fixed `add_liquidity` and `swap` approach.
+. Change the strategy function to return the actual router output:
++
+[source,rust]
+----
+pub fn remove_liquidity(...) -> (i128, i128)
+----
+
+. In `vault.execute_op`, when `fn_name == "remove_liquidity"` and the returned value is `(amount_a, amount_b)`, use those returned underlying amounts plus fresh oracle prices to compute the local post-operation value impact.
+. Keep the TVL/value guard semantics. Do not bypass the guard. The optimization should reduce redundant deep valuation, not remove security checks.
+
+Important:
+
+* The returned amounts are current-transaction quantities from the router.
+* The vault must still price them with fresh oracle/AssetHandler prices.
+* This does not introduce stale accounting.
+
+== Remaining Issue 2: Phase 3 User Deposit Budget Failure
+
+Latest failure:
+
+[source,text]
+----
+Phase 3 user deposit after manager actions:
+failed: transaction simulation failed: HostError: Error(Budget, ExceededLimit)
+----
+
+Why this happens:
+
+* A deposit calls fee collection/accounting.
+* Fee collection needs current NAV.
+* Current NAV values:
+** tracked idle assets,
+** Blend position,
+** Soroswap LP position,
+** any other non-zero strategy positions.
+* The Soroswap LP valuation currently performs several nested calls:
+** strategy storage reads,
+** factory `get_asset_handler`,
+** pair `get_reserves`,
+** pair `total_supply`,
+** pair `token0`,
+** AssetHandler `get_price(asset_a)`,
+** AssetHandler `get_price(asset_b)`,
+** underlying oracle calls.
+
+This is correct logically, but too deep for Soroban when combined with the rest of the deposit transaction.
+
+Relevant files:
+
+* `contracts/vault/src/lib.rs`
+* `contracts/strategies/soroswap_lp/src/lib.rs`
+* `contracts/strategies/soroswap_lp/src/storage.rs`
+* `contracts/asset_handler/src/lib.rs`
+* `contracts/oracle/src/lib.rs`
+
+Recommended fix:
+
+. Keep NAV live and fresh.
+. Make LP valuation quantity-based and bounded.
+. Add a cheap Soroswap LP strategy method that returns current underlying quantities:
++
+[source,rust]
+----
+get_underlying_balances(vault) -> (i128, i128)
+----
+
+. The strategy should compute:
++
+[source,text]
+----
+amount_a = lp_balance * reserve_a / total_lp
+amount_b = lp_balance * reserve_b / total_lp
+----
+
+. Cache immutable token ordering at initialization to avoid calling `pair.token0()` on every valuation:
++
+[source,text]
+----
+Token0IsAssetA: bool
+----
+
+. Let the vault price the returned quantities using fresh prices from AssetHandler/Oracle.
+. Prefer batch price reads where possible.
+
+The oracle already has batch pricing:
+
+[source,rust]
+----
+oracle.get_prices(assets: Vec<Address>) -> Map<Address, i128>
+----
+
+AssetHandler currently exposes single-asset `get_price`. A useful improvement is to add an AssetHandler batch method:
+
+[source,rust]
+----
+get_prices(assets: Vec<Address>) -> Map<Address, i128>
+----
+
+This method should preserve AssetHandler semantics:
+
+* asset must be registered,
+* use asset-specific oracle if configured,
+* otherwise use primary oracle,
+* fallback oracle behavior must remain the same,
+* reject zero or invalid prices.
+
+== Why Increasing Budget Alone Is Not The Fix
+
+Manual testing with higher Stellar CLI instruction leeway was attempted and did not resolve the remaining failures.
+
+The issue is not simply that the CLI simulation needs a larger estimate. The composed call graph is too expensive:
+
+[source,text]
+----
+vault user action
+  -> fee/NAV accounting
+  -> tracked idle asset valuation
+  -> active strategy valuation
+  -> LP reserve decomposition
+  -> pair/router calls
+  -> AssetHandler calls
+  -> oracle calls
+  -> token balance/supply calls
+----
+
+On EVM, this would often be treated as a gas-cost problem. On Soroban, there are stricter per-transaction execution and resource limits. The protocol must bound the amount of work per transaction.
+
+== Comparison With dHEDGE V2 Design
+
+dHEDGE V2 avoids this class of issue because it uses an asset/guard design where each asset type has a bounded guard and the pool does not deeply execute every integration path during every user action.
+
+The Stellar version should follow the same principle:
+
+[source,text]
+----
+Vault:
+  owns NAV, fees, shares, withdrawals, and accounting policy
+
+Strategy:
+  executes protocol actions
+  exposes cheap current position quantities
+
+AssetHandler/Oracle:
+  provides fresh prices, ideally batched
+----
+
+Do not cache stale values. Cache metadata and bounded position indexes.
+
+== Recommended Implementation Order
+
+=== Step 1: Fix Soroswap Remove Liquidity
+
+Files:
+
+* `contracts/strategies/soroswap_lp/src/lib.rs`
+* `contracts/strategies/soroswap_lp/src/interfaces.rs`
+* `contracts/strategies/soroswap_lp/src/test.rs`
+* `contracts/vault/src/lib.rs`
+
+Tasks:
+
+. Change remove-liquidity approval to same-ledger approval.
+. Remove explicit zero-revoke.
+. Return `(amount_a, amount_b)` from `remove_liquidity`.
+. Update tests.
+. Update vault post-operation accounting to reuse returned quantities where safe.
+
+Expected result:
+
+* Phase 2 manager Soroswap remove LP liquidity succeeds on Beta.
+
+=== Step 2: Add Quantity-Based LP Valuation
+
+Files:
+
+* `contracts/strategies/soroswap_lp/src/lib.rs`
+* `contracts/strategies/soroswap_lp/src/storage.rs`
+* `contracts/strategies/soroswap_lp/src/test.rs`
+* possibly `contracts/vault/src/lib.rs`
+
+Tasks:
+
+. Cache LP pair token ordering during strategy initialization.
+. Add `get_underlying_balances(vault) -> (i128, i128)`.
+. Refactor `compute_lp_value` to use the same underlying-balance helper.
+. Where possible, let the vault value returned quantities with fresh prices.
+
+Expected result:
+
+* NAV remains live.
+* LP valuation becomes cheaper.
+* Phase 3 user deposit after manager actions is more likely to fit Soroban budget.
+
+=== Step 3: Add Batch Pricing If Needed
+
+Files:
+
+* `contracts/asset_handler/src/lib.rs`
+* `contracts/asset_handler/src/storage.rs`
+* `contracts/asset_handler/src/test.rs`
+* `contracts/vault/src/lib.rs`
+* strategy tests and integration tests
+
+Tasks:
+
+. Add `AssetHandler.get_prices(Vec<Address>)`.
+. Use Oracle batch pricing where the primary/fallback oracle path allows it.
+. In vault NAV, collect needed assets and price them in fewer calls where possible.
+
+Expected result:
+
+* Fewer nested calls during deposit/withdraw/NAV.
+* Better scaling when vault has many idle assets and multiple strategies.
+
+=== Step 4: Re-run Beta-Only Testnet Flow
+
+Run:
+
+[source,bash]
+----
+DEPLOY_ALPHA_GAMMA_AFTER_BETA=false \
+bash scripts/deploy_testnet_protocol_environment.sh
+----
+
+Success criteria:
+
+* No failed transactions in the generated report.
+* Phase 1 user deposit succeeds.
+* Phase 1 user withdrawal succeeds.
+* Phase 2 manager swap succeeds.
+* Phase 2 Blend supply succeeds.
+* Phase 2 Blend withdrawal succeeds.
+* Phase 2 Soroswap add liquidity succeeds.
+* Phase 2 Soroswap remove liquidity succeeds.
+* Phase 2 Phoenix swap succeeds.
+* Phase 3 user deposit succeeds.
+* Phase 3 user withdrawal succeeds.
+
+=== Step 5: Only Then Deploy Alpha and Gamma
+
+After Beta succeeds:
+
+[source,bash]
+----
+DEPLOY_ALPHA_GAMMA_AFTER_BETA=true \
+bash scripts/deploy_testnet_protocol_environment.sh
+----
+
+Expected:
+
+* Alpha deploys with Blend, Soroswap LP, and Phoenix LP.
+* Beta remains the reference successful flow.
+* Gamma deploys with Blend only.
+
+== Local Verification Commands
+
+Before any new testnet deployment, run:
+
+[source,bash]
+----
+cargo fmt
+cargo test -p vault --lib
+cargo test -p soroswap-lp-strategy --lib
+cargo test -p integration-tests --lib
+cargo build --target wasm32-unknown-unknown --release
+bash -n scripts/deploy_testnet_protocol_environment.sh
+----
+
+Previously these commands passed after the latest fixes:
+
+* `cargo fmt`
+* `cargo test -p vault --lib` with 164 tests
+* `cargo test -p soroswap-lp-strategy --lib` with 44 tests
+* `cargo test -p integration-tests --lib` with 80 tests
+* `cargo build --target wasm32-unknown-unknown --release`
+
+== Notes For Continuing Work
+
+* Do not remove the TVL/value manipulation guard to make transactions pass.
+* Do not replace fresh NAV with cached NAV.
+* Do not reduce withdrawal correctness.
+* Do not deploy Alpha/Gamma until Beta is clean.
+* If a fix changes contract interfaces, update all affected tests and generated snapshots.
+* Keep the final generated testnet report in `docs/reports/`.
+* Keep the generated environment file in `deployments/`.
+* Update `docs/testnet_protocol_environment.adoc` if the public runbook changes.
+
+== Short Diagnosis
+
+The protocol logic is moving in the right direction, but the remaining Beta failures show that the current valuation path is still too expensive for Soroban when live LP positions are present.
+
+The correct fix is a dHEDGE-style bounded accounting design:
+
+* cache/index metadata and positions,
+* expose current strategy quantities cheaply,
+* price those quantities freshly,
+* batch price reads where possible,
+* preserve proportional withdrawals and live NAV.

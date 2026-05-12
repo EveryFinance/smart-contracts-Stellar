@@ -177,11 +177,13 @@ fn setup() -> World {
     MockFactory2Client::new(&env, &factory_id).authorize_asset(&base);
     MockFactory2Client::new(&env, &factory_id).authorize_asset(&token_b);
 
+    let vault_id = Address::generate(&env);
+
     // Share token.
     let share_id = env.register(
         ShareTokenContract,
         (
-            manager.clone(),
+            vault_id.clone(),
             String::from_str(&env, "Vault Share"),
             String::from_str(&env, "VS"),
             7u32,
@@ -190,7 +192,8 @@ fn setup() -> World {
     let share = ShareTokenContractClient::new(&env, &share_id);
 
     // Vault.
-    let vault_id = env.register(
+    env.register_at(
+        &vault_id,
         Vault,
         (VaultParams {
             admin: manager.clone(),
@@ -199,7 +202,7 @@ fn setup() -> World {
             trader: trader.clone(),
             base_asset: base.clone(),
             share_token: share_id.clone(),
-            share_token_admin: manager.clone(),
+            share_token_admin: vault_id.clone(),
             treasury: manager.clone(),
             entry_fee_bps: 0,
             exit_fee_bps: 0,
@@ -319,6 +322,7 @@ fn test_nav_includes_active_guard_value() {
     // Transfer base from vault to guard to simulate investment.
     MockTokenClient::new(&w.env, &w.base).transfer(&w.vault_addr, &guard_id, &guard_value);
     MockGuard2Client::new(&w.env, &guard_id).add_position(&guard_value);
+    w.vault.sync_guard_position(&guard_id);
     // Vault now holds (deposit - guard_value) base + guard_value in guard.
     let vault_cash = token_balance(&w.env, &w.base, &w.vault_addr);
     assert_eq!(vault_cash, deposit - guard_value);
@@ -401,6 +405,7 @@ fn test_proportional_withdrawal_includes_guard() {
     let guard_position = 600_0000000i128;
     MockTokenClient::new(&w.env, &w.base).transfer(&w.vault_addr, &guard_id, &guard_position);
     MockGuard2Client::new(&w.env, &guard_id).add_position(&guard_position);
+    w.vault.sync_guard_position(&guard_id);
 
     // User withdraws all shares.
     let user_shares = w.share.balance(&w.user);

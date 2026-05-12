@@ -36,7 +36,7 @@ mod storage;
 pub use error::AssetHandlerError;
 
 use soroban_sdk::{
-    contract, contractimpl, panic_with_error, Address, Env, IntoVal, Symbol, Val, Vec,
+    contract, contractimpl, panic_with_error, Address, Env, IntoVal, Map, Symbol, Val, Vec,
 };
 
 use storage::{
@@ -63,9 +63,6 @@ impl AssetHandler {
             panic_with_error!(&env, AssetHandlerError::AlreadyInitialized);
         }
         admin.require_auth();
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         set_admin(&env, &admin);
         set_initialized(&env);
     }
@@ -241,6 +238,22 @@ impl AssetHandler {
             panic_with_error!(&env, AssetHandlerError::PriceNotAvailable);
         }
         price
+    }
+
+    /// Batch price lookup — returns a `Map<asset, price>` for every requested asset.
+    ///
+    /// Each asset goes through the same three-tier resolution as `get_price`.
+    /// Panics if any asset is unregistered or has no available price.
+    pub fn get_prices(env: Env, assets: Vec<Address>) -> Map<Address, i128> {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        let mut result = Map::new(&env);
+        for asset in assets.iter() {
+            let price = Self::get_price(env.clone(), asset.clone());
+            result.set(asset, price);
+        }
+        result
     }
 
     // -----------------------------------------------------------------------

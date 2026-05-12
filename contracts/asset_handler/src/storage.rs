@@ -61,9 +61,6 @@ pub fn is_initialized(env: &Env) -> bool {
 
 pub fn set_initialized(env: &Env) {
     env.storage().persistent().set(&DataKey::Initialized, &true);
-    env.storage()
-        .persistent()
-        .extend_ttl(&DataKey::Initialized, u32::MAX / 2, u32::MAX);
 }
 
 // ---------------------------------------------------------------------------
@@ -72,7 +69,6 @@ pub fn set_initialized(env: &Env) {
 
 pub fn set_admin(env: &Env, admin: &Address) {
     env.storage().persistent().set(&DataKey::Admin, admin);
-    bump_persistent(env, &DataKey::Admin);
 }
 
 pub fn get_admin(env: &Env) -> Address {

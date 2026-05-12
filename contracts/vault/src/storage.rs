@@ -25,6 +25,8 @@
 //! | `PortfolioAssets`      | `Vec<Address>` | All assets tracked in NAV                      |
 //! | `DepositAssets`        | `Vec<Address>` | Assets users may deposit                       |
 //! | `ActiveGuards`         | `Vec<Address>` | Active strategy/guard contracts                |
+//! | `TrackedAssets`        | `Vec<Address>` | Portfolio assets with non-zero idle balances   |
+//! | `PositionGuards`       | `Vec<Address>` | Active guards with non-zero strategy value     |
 //! | `AuthorizedOps(guard)` | `Vec<Symbol>`  | Permitted function names per guard             |
 //! | `Factory`              | `Address`      | Factory for whitelist validation               |
 
@@ -182,6 +184,16 @@ pub enum DataKey {
     /// Each guard exposes get_total_value / withdraw_fraction / asset_in_use.
     /// Replaces the old flat Strategies list for multi-asset vaults.
     ActiveGuards,
+
+    /// Ordered list of portfolio assets that currently have a non-zero idle
+    /// vault balance. NAV uses this bounded index instead of scanning every
+    /// configured portfolio asset on every user operation.
+    TrackedAssets,
+
+    /// Ordered list of active guards that currently have a non-zero strategy
+    /// position. NAV/withdrawal use this bounded index instead of calling every
+    /// active guard, including zero-position guards.
+    PositionGuards,
 
     /// Permitted operation types for a given guard contract.
     /// E.g., a DEX guard may be restricted to [Swap] only, disallowing
@@ -742,6 +754,36 @@ pub fn get_active_guards(env: &Env) -> Vec<Address> {
 pub fn set_active_guards(env: &Env, v: &Vec<Address>) {
     bump(env);
     env.storage().instance().set(&DataKey::ActiveGuards, v);
+}
+
+// ---------------------------------------------------------------------------
+// Bounded NAV indexes (instance storage)
+// ---------------------------------------------------------------------------
+
+pub fn get_tracked_assets(env: &Env) -> Vec<Address> {
+    bump(env);
+    env.storage()
+        .instance()
+        .get(&DataKey::TrackedAssets)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn set_tracked_assets(env: &Env, v: &Vec<Address>) {
+    bump(env);
+    env.storage().instance().set(&DataKey::TrackedAssets, v);
+}
+
+pub fn get_position_guards(env: &Env) -> Vec<Address> {
+    bump(env);
+    env.storage()
+        .instance()
+        .get(&DataKey::PositionGuards)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn set_position_guards(env: &Env, v: &Vec<Address>) {
+    bump(env);
+    env.storage().instance().set(&DataKey::PositionGuards, v);
 }
 
 // ---------------------------------------------------------------------------

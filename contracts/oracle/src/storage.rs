@@ -39,11 +39,6 @@ pub struct PriceData {
 
 pub fn set_admin(env: &Env, admin: &Address) {
     env.storage().persistent().set(&DataKey::Admin, admin);
-    env.storage().persistent().extend_ttl(
-        &DataKey::Admin,
-        PERSISTENT_LIFETIME_THRESHOLD,
-        PERSISTENT_BUMP_AMOUNT,
-    );
 }
 
 pub fn get_admin(env: &Env) -> Address {
@@ -99,11 +94,6 @@ pub fn set_max_age_ledgers(env: &Env, max_age: u32) {
     env.storage()
         .persistent()
         .set(&DataKey::MaxAgeLedgers, &max_age);
-    env.storage().persistent().extend_ttl(
-        &DataKey::MaxAgeLedgers,
-        PERSISTENT_LIFETIME_THRESHOLD,
-        PERSISTENT_BUMP_AMOUNT,
-    );
 }
 
 pub fn get_max_age_ledgers(env: &Env) -> u32 {

@@ -39,13 +39,6 @@ pub const INSTANCE_LIFETIME_THRESHOLD: u32 = 17_280;
 pub const PERSISTENT_BUMP_AMOUNT: u32 = 5_256_000;
 pub const PERSISTENT_LIFETIME_THRESHOLD: u32 = 2_628_000; // ≈ 6 months
 
-/// Bump amount for the persistent factory-initialized flag.
-/// u32::MAX ≈ 248 000 years — effectively permanent.
-pub const FACTORY_INIT_PERSISTENT_BUMP_AMOUNT: u32 = u32::MAX;
-
-/// Threshold for the persistent factory-initialized flag bump.
-pub const FACTORY_INIT_PERSISTENT_LIFETIME_THRESHOLD: u32 = u32::MAX / 2;
-
 // ---------------------------------------------------------------------------
 // Storage key enum
 // ---------------------------------------------------------------------------
@@ -121,11 +114,6 @@ fn bump_persistent(env: &Env, key: &DataKey) {
 /// attacker from calling `__constructor` again after the instance expires.
 pub fn set_factory_initialized(env: &Env) {
     env.storage().persistent().set(&DataKey::Initialized, &true);
-    env.storage().persistent().extend_ttl(
-        &DataKey::Initialized,
-        FACTORY_INIT_PERSISTENT_LIFETIME_THRESHOLD,
-        FACTORY_INIT_PERSISTENT_BUMP_AMOUNT,
-    );
 }
 
 /// Return `true` when the factory has been initialized.
@@ -141,7 +129,6 @@ pub fn is_factory_initialized(env: &Env) -> bool {
 // ---------------------------------------------------------------------------
 
 pub fn set_admin(env: &Env, v: &Address) {
-    bump_instance(env);
     env.storage().instance().set(&DataKey::Admin, v);
 }
 
@@ -180,7 +167,6 @@ pub fn get_vault_count(env: &Env) -> u32 {
 }
 
 pub fn set_vault_count(env: &Env, count: u32) {
-    bump_instance(env);
     env.storage().instance().set(&DataKey::VaultCount, &count);
 }
 
@@ -333,7 +319,6 @@ pub fn set_vault_manager(env: &Env, vault: &Address, manager: &Address) {
 // ---------------------------------------------------------------------------
 
 pub fn set_asset_handler(env: &Env, asset_handler: &Address) {
-    bump_instance(env);
     env.storage()
         .instance()
         .set(&DataKey::AssetHandler, asset_handler);

@@ -1,8 +1,4 @@
-//! Tests for the BlendStrategy contract.
-//!
-//! A lightweight `MockBlendPool` and `MockToken` are registered inside the
-//! Soroban test environment so that cross-contract calls resolve without
-//! needing real WASM binaries.
+//! Tests for the BlendStrategy multi-position contract.
 
 #![cfg(test)]
 
@@ -13,7 +9,7 @@ use soroban_sdk::{
 use crate::{BlendRequest, BlendStrategy, BlendStrategyClient};
 
 // ---------------------------------------------------------------------------
-// MockToken  — minimal SEP-41 token for testing
+// MockToken
 // ---------------------------------------------------------------------------
 
 #[contracttype]
@@ -113,12 +109,12 @@ impl MockToken {
 }
 
 // ---------------------------------------------------------------------------
-// MockBlendPool — minimal Blend pool for testing
+// MockBlendPool
 // ---------------------------------------------------------------------------
 
 #[contracttype]
 enum BlendKey {
-    Supply(Address), // account → supplied balance
+    Supply(Address),
     Token,
     NoTransferOnWithdraw,
 }
@@ -128,7 +124,6 @@ pub struct MockBlendPool;
 
 #[contractimpl]
 impl MockBlendPool {
-    /// Store the underlying token address so `submit` can transfer on withdraw.
     pub fn set_token(env: Env, token: Address) {
         env.storage().instance().set(&BlendKey::Token, &token);
     }
@@ -139,9 +134,6 @@ impl MockBlendPool {
             .set(&BlendKey::NoTransferOnWithdraw, &enabled);
     }
 
-    /// Mimics `blend_pool.submit(from, spender, to, requests)`.
-    /// Supply: credits `from`'s Blend position.
-    /// Withdraw: reduces `from`'s position and transfers token to `to`.
     pub fn submit(
         env: Env,
         from: Address,
@@ -149,11 +141,9 @@ impl MockBlendPool {
         to: Address,
         requests: Vec<BlendRequest>,
     ) {
-        // Mirror the real Blend pool: the position owner must authorise.
         from.require_auth();
         for req in requests.iter() {
             if req.request_type == 2 {
-                // Supply — record position for `from`.
                 let bal: i128 = env
                     .storage()
                     .persistent()
@@ -163,7 +153,6 @@ impl MockBlendPool {
                     .persistent()
                     .set(&BlendKey::Supply(from.clone()), &(bal + req.amount));
             } else if req.request_type == 3 {
-                // Withdraw — reduce `from`'s position and transfer token to `to`.
                 let bal: i128 = env
                     .storage()
                     .persistent()
@@ -200,7 +189,7 @@ impl MockBlendPool {
 }
 
 // ---------------------------------------------------------------------------
-// MockVault — minimal vault stub that satisfies vault.get_manager() calls
+// MockVault
 // ---------------------------------------------------------------------------
 
 #[contracttype]
@@ -225,7 +214,7 @@ impl MockVault {
 }
 
 // ---------------------------------------------------------------------------
-// Test helpers
+// Test harness
 // ---------------------------------------------------------------------------
 
 struct TestEnv {
@@ -244,16 +233,10 @@ fn setup() -> TestEnv {
     let token_id = env.register(MockToken, ());
     MockTokenClient::new(&env, &token_id).initialize(&Address::generate(&env));
 
-    // For the blend pool mock, we use a simplified approach:
-    // MockBlendPool is registered but strategy uses a simplified version
-    // that just tracks via TotalDeposited (no real blend calls in test mode).
-    // We register a contract at the blend_pool address but strategy's
-    // blend_submit will be routed there.
     let blend_pool = env.register(MockBlendPool, ());
     MockBlendPoolClient::new(&env, &blend_pool).set_token(&token_id);
+
     let manager = Address::generate(&env);
-    // Register a mock vault so strategy.initialize() can cross-call
-    // vault.get_manager() to derive the authoritative initializer.
     let vault = env.register(MockVault, ());
     MockVaultClient::new(&env, &vault).set_manager(&manager);
     let user = Address::generate(&env);
@@ -261,17 +244,11 @@ fn setup() -> TestEnv {
     let strategy_id = env.register(BlendStrategy, ());
     let strategy = BlendStrategyClient::new(&env, &strategy_id);
 
-    strategy.initialize(
-        &vault,
-        &token_id,
-        &blend_pool,
-        &String::from_str(&env, "Blend USDC Strategy"),
-    );
+    // Multi-position initialize: just vault + name; no pool/asset args.
+    strategy.initialize(&vault, &String::from_str(&env, "Blend USDC Strategy"));
 
-    // Mint tokens into vault for deposit tests.
     MockTokenClient::new(&env, &token_id).mint(&vault, &10_000_0000000i128);
 
-    // The unsafe cast is acceptable in test code.
     let strategy: BlendStrategyClient<'static> = unsafe { core::mem::transmute(strategy) };
 
     TestEnv {
@@ -291,21 +268,20 @@ fn setup() -> TestEnv {
 #[test]
 fn test_initialize() {
     let t = setup();
-    assert_eq!(t.strategy.asset(), t.token_id);
-    assert_eq!(t.strategy.get_protocol_address(), t.blend_pool);
+    assert_eq!(t.strategy.get_active_positions().len(), 0);
     assert_eq!(t.strategy.get_value(&t.vault), 0i128);
+    assert_eq!(
+        t.strategy.get_name(),
+        String::from_str(&t.env, "Blend USDC Strategy")
+    );
 }
 
 #[test]
 #[should_panic(expected = "Error(Contract, #1)")]
 fn test_double_initialize_panics() {
     let t = setup();
-    t.strategy.initialize(
-        &t.vault,
-        &t.token_id,
-        &t.blend_pool,
-        &String::from_str(&t.env, "x"),
-    );
+    t.strategy
+        .initialize(&t.vault, &String::from_str(&t.env, "x"));
 }
 
 // ---------------------------------------------------------------------------
@@ -315,7 +291,9 @@ fn test_double_initialize_panics() {
 #[test]
 fn test_deposit_tracks_position() {
     let t = setup();
-    let deposited = t.strategy.deposit(&1_000_0000000i128, &t.vault);
+    let deposited = t
+        .strategy
+        .deposit(&1_000_0000000i128, &t.blend_pool, &t.token_id, &t.vault);
     assert_eq!(deposited, 1_000_0000000i128);
     assert_eq!(t.strategy.get_value(&t.vault), 1_000_0000000i128);
 }
@@ -323,8 +301,10 @@ fn test_deposit_tracks_position() {
 #[test]
 fn test_deposit_multiple_accumulates() {
     let t = setup();
-    t.strategy.deposit(&500_0000000i128, &t.vault);
-    t.strategy.deposit(&300_0000000i128, &t.vault);
+    t.strategy
+        .deposit(&500_0000000i128, &t.blend_pool, &t.token_id, &t.vault);
+    t.strategy
+        .deposit(&300_0000000i128, &t.blend_pool, &t.token_id, &t.vault);
     assert_eq!(t.strategy.get_value(&t.vault), 800_0000000i128);
 }
 
@@ -333,21 +313,24 @@ fn test_deposit_multiple_accumulates() {
 fn test_deposit_not_vault_panics() {
     let t = setup();
     let rogue = Address::generate(&t.env);
-    t.strategy.deposit(&100i128, &rogue);
+    t.strategy
+        .deposit(&100i128, &t.blend_pool, &t.token_id, &rogue);
 }
 
 #[test]
 #[should_panic]
 fn test_deposit_zero_panics() {
     let t = setup();
-    t.strategy.deposit(&0i128, &t.vault);
+    t.strategy
+        .deposit(&0i128, &t.blend_pool, &t.token_id, &t.vault);
 }
 
 #[test]
 #[should_panic]
 fn test_deposit_negative_panics() {
     let t = setup();
-    t.strategy.deposit(&-1i128, &t.vault);
+    t.strategy
+        .deposit(&-1i128, &t.blend_pool, &t.token_id, &t.vault);
 }
 
 // ---------------------------------------------------------------------------
@@ -357,11 +340,17 @@ fn test_deposit_negative_panics() {
 #[test]
 fn test_withdraw_reduces_position() {
     let t = setup();
-    t.strategy.deposit(&1_000_0000000i128, &t.vault);
-    // Pre-fund MockBlendPool with the token so it can pay the user.
+    t.strategy
+        .deposit(&1_000_0000000i128, &t.blend_pool, &t.token_id, &t.vault);
     MockTokenClient::new(&t.env, &t.token_id).mint(&t.blend_pool, &1_000_0000000i128);
 
-    t.strategy.withdraw(&400_0000000i128, &t.vault, &t.user);
+    t.strategy.withdraw(
+        &400_0000000i128,
+        &t.blend_pool,
+        &t.token_id,
+        &t.vault,
+        &t.user,
+    );
     assert_eq!(t.strategy.get_value(&t.vault), 600_0000000i128);
 }
 
@@ -369,28 +358,37 @@ fn test_withdraw_reduces_position() {
 #[should_panic(expected = "Error(Contract, #6)")]
 fn test_withdraw_rejects_pool_that_sends_no_tokens() {
     let t = setup();
-    t.strategy.deposit(&1_000_0000000i128, &t.vault);
-
+    t.strategy
+        .deposit(&1_000_0000000i128, &t.blend_pool, &t.token_id, &t.vault);
     MockBlendPoolClient::new(&t.env, &t.blend_pool).set_no_transfer_on_withdraw(&true);
-
-    t.strategy.withdraw(&400_0000000i128, &t.vault, &t.user);
+    t.strategy.withdraw(
+        &400_0000000i128,
+        &t.blend_pool,
+        &t.token_id,
+        &t.vault,
+        &t.user,
+    );
 }
 
 #[test]
 #[should_panic]
 fn test_withdraw_more_than_position_panics() {
     let t = setup();
-    t.strategy.deposit(&100i128, &t.vault);
-    t.strategy.withdraw(&200i128, &t.vault, &t.user);
+    t.strategy
+        .deposit(&100i128, &t.blend_pool, &t.token_id, &t.vault);
+    t.strategy
+        .withdraw(&200i128, &t.blend_pool, &t.token_id, &t.vault, &t.user);
 }
 
 #[test]
 #[should_panic]
 fn test_withdraw_not_vault_panics() {
     let t = setup();
-    t.strategy.deposit(&100i128, &t.vault);
+    t.strategy
+        .deposit(&100i128, &t.blend_pool, &t.token_id, &t.vault);
     let rogue = Address::generate(&t.env);
-    t.strategy.withdraw(&50i128, &rogue, &t.user);
+    t.strategy
+        .withdraw(&50i128, &t.blend_pool, &t.token_id, &rogue, &t.user);
 }
 
 // ---------------------------------------------------------------------------
@@ -401,36 +399,46 @@ fn test_withdraw_not_vault_panics() {
 fn test_full_lifecycle() {
     let t = setup();
 
-    // 1. Deposit
-    let after_deposit = t.strategy.deposit(&1_000_0000000i128, &t.vault);
+    let after_deposit =
+        t.strategy
+            .deposit(&1_000_0000000i128, &t.blend_pool, &t.token_id, &t.vault);
     assert_eq!(after_deposit, 1_000_0000000i128);
-
-    // 2. get_value
     assert_eq!(t.strategy.get_value(&t.vault), 1_000_0000000i128);
 
-    // 3. Partial withdraw — pre-fund pool
     MockTokenClient::new(&t.env, &t.token_id).mint(&t.blend_pool, &1_000_0000000i128);
-    let withdrawn = t.strategy.withdraw(&300_0000000i128, &t.vault, &t.user);
+
+    let withdrawn = t.strategy.withdraw(
+        &300_0000000i128,
+        &t.blend_pool,
+        &t.token_id,
+        &t.vault,
+        &t.user,
+    );
     assert_eq!(withdrawn, 300_0000000i128);
     assert_eq!(t.strategy.get_value(&t.vault), 700_0000000i128);
 
-    // 4. Full withdraw
-    t.strategy.withdraw(&700_0000000i128, &t.vault, &t.user);
+    t.strategy.withdraw(
+        &700_0000000i128,
+        &t.blend_pool,
+        &t.token_id,
+        &t.vault,
+        &t.user,
+    );
     assert_eq!(t.strategy.get_value(&t.vault), 0i128);
 }
 
 // ---------------------------------------------------------------------------
-// NotInitialized — calling functions before initialize() panics
+// NotInitialized panics
 // ---------------------------------------------------------------------------
 
 #[test]
 #[should_panic]
-fn test_not_initialized_asset_panics() {
+fn test_not_initialized_get_name_panics() {
     let env = Env::default();
     env.mock_all_auths();
     let id = env.register(BlendStrategy, ());
     let client = BlendStrategyClient::new(&env, &id);
-    client.asset(); // no initialize() called
+    client.get_name();
 }
 
 #[test]
@@ -441,7 +449,9 @@ fn test_not_initialized_deposit_panics() {
     let id = env.register(BlendStrategy, ());
     let client = BlendStrategyClient::new(&env, &id);
     let vault = Address::generate(&env);
-    client.deposit(&100i128, &vault);
+    let pool = Address::generate(&env);
+    let asset = Address::generate(&env);
+    client.deposit(&100i128, &pool, &asset, &vault);
 }
 
 #[test]
@@ -452,8 +462,10 @@ fn test_not_initialized_withdraw_panics() {
     let id = env.register(BlendStrategy, ());
     let client = BlendStrategyClient::new(&env, &id);
     let vault = Address::generate(&env);
+    let pool = Address::generate(&env);
+    let asset = Address::generate(&env);
     let user = Address::generate(&env);
-    client.withdraw(&100i128, &vault, &user);
+    client.withdraw(&100i128, &pool, &asset, &vault, &user);
 }
 
 // ---------------------------------------------------------------------------
@@ -464,42 +476,42 @@ fn test_not_initialized_withdraw_panics() {
 #[should_panic]
 fn test_withdraw_zero_panics() {
     let t = setup();
-    t.strategy.deposit(&100i128, &t.vault);
-    t.strategy.withdraw(&0i128, &t.vault, &t.user);
+    t.strategy
+        .deposit(&100i128, &t.blend_pool, &t.token_id, &t.vault);
+    t.strategy
+        .withdraw(&0i128, &t.blend_pool, &t.token_id, &t.vault, &t.user);
 }
 
 #[test]
 #[should_panic]
 fn test_withdraw_negative_panics() {
     let t = setup();
-    t.strategy.deposit(&100i128, &t.vault);
-    t.strategy.withdraw(&-1i128, &t.vault, &t.user);
+    t.strategy
+        .deposit(&100i128, &t.blend_pool, &t.token_id, &t.vault);
+    t.strategy
+        .withdraw(&-1i128, &t.blend_pool, &t.token_id, &t.vault, &t.user);
 }
 
 // ---------------------------------------------------------------------------
-// View functions — name
+// View functions
 // ---------------------------------------------------------------------------
 
 #[test]
 fn test_get_name() {
     let t = setup();
-    let name = t.strategy.get_name();
     assert_eq!(
-        name,
-        soroban_sdk::String::from_str(&t.env, "Blend USDC Strategy")
+        t.strategy.get_name(),
+        String::from_str(&t.env, "Blend USDC Strategy")
     );
 }
-
-// ---------------------------------------------------------------------------
-// Deposit: tokens moved from vault to strategy
-// ---------------------------------------------------------------------------
 
 #[test]
 fn test_deposit_reduces_vault_balance() {
     let t = setup();
     let vault_before = MockTokenClient::new(&t.env, &t.token_id).balance(&t.vault);
     let amount = 500_0000000i128;
-    t.strategy.deposit(&amount, &t.vault);
+    t.strategy
+        .deposit(&amount, &t.blend_pool, &t.token_id, &t.vault);
     let vault_after = MockTokenClient::new(&t.env, &t.token_id).balance(&t.vault);
     assert_eq!(vault_before - vault_after, amount);
 }
@@ -510,6 +522,10 @@ fn test_checked_mul_div_rejects_zero_denominator() {
     let env = Env::default();
     super::checked_mul_div(&env, 1, 1, 0);
 }
+
+// ---------------------------------------------------------------------------
+// withdraw_fraction
+// ---------------------------------------------------------------------------
 
 #[test]
 #[should_panic(expected = "Error(Contract, #3)")]
@@ -539,18 +555,22 @@ fn test_withdraw_fraction_no_position_is_noop() {
 #[test]
 fn test_withdraw_fraction_rounds_to_zero_is_noop() {
     let t = setup();
-    t.strategy.deposit(&1i128, &t.vault);
-
+    t.strategy
+        .deposit(&1i128, &t.blend_pool, &t.token_id, &t.vault);
     t.strategy
         .withdraw_fraction(&t.vault, &1i128, &2i128, &t.user);
-
     assert_eq!(t.strategy.get_value(&t.vault), 1i128);
 }
+
+// ---------------------------------------------------------------------------
+// asset_in_use
+// ---------------------------------------------------------------------------
 
 #[test]
 fn test_asset_in_use_false_for_wrong_vault_and_asset() {
     let t = setup();
-    t.strategy.deposit(&100i128, &t.vault);
+    t.strategy
+        .deposit(&100i128, &t.blend_pool, &t.token_id, &t.vault);
     let rogue_vault = Address::generate(&t.env);
     let rogue_asset = Address::generate(&t.env);
 
@@ -559,11 +579,16 @@ fn test_asset_in_use_false_for_wrong_vault_and_asset() {
     assert!(t.strategy.asset_in_use(&t.vault, &t.token_id));
 }
 
+// ---------------------------------------------------------------------------
+// supply / withdraw_from_lending (execute_op path)
+// ---------------------------------------------------------------------------
+
 #[test]
 #[should_panic(expected = "Error(Contract, #6)")]
 fn test_supply_zero_panics() {
     let t = setup();
-    t.strategy.supply(&t.vault, &0i128);
+    t.strategy
+        .supply(&t.vault, &t.blend_pool, &t.token_id, &0i128);
 }
 
 #[test]
@@ -571,14 +596,16 @@ fn test_supply_zero_panics() {
 fn test_supply_not_vault_panics() {
     let t = setup();
     let rogue = Address::generate(&t.env);
-    t.strategy.supply(&rogue, &100i128);
+    t.strategy
+        .supply(&rogue, &t.blend_pool, &t.token_id, &100i128);
 }
 
 #[test]
 #[should_panic(expected = "Error(Contract, #6)")]
 fn test_withdraw_from_lending_zero_panics() {
     let t = setup();
-    t.strategy.withdraw_from_lending(&t.vault, &0i128);
+    t.strategy
+        .withdraw_from_lending(&t.vault, &t.blend_pool, &t.token_id, &0i128);
 }
 
 #[test]
@@ -586,12 +613,27 @@ fn test_withdraw_from_lending_zero_panics() {
 fn test_withdraw_from_lending_not_vault_panics() {
     let t = setup();
     let rogue = Address::generate(&t.env);
-    t.strategy.withdraw_from_lending(&rogue, &1i128);
+    t.strategy
+        .withdraw_from_lending(&rogue, &t.blend_pool, &t.token_id, &1i128);
 }
 
 #[test]
 #[should_panic(expected = "Error(Contract, #7)")]
 fn test_withdraw_from_lending_insufficient_position_panics() {
     let t = setup();
-    t.strategy.withdraw_from_lending(&t.vault, &1i128);
+    t.strategy
+        .withdraw_from_lending(&t.vault, &t.blend_pool, &t.token_id, &1i128);
+}
+
+// ---------------------------------------------------------------------------
+// get_share_balance
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_get_share_balance_returns_position_count() {
+    let t = setup();
+    assert_eq!(t.strategy.get_share_balance(), 0i128);
+    t.strategy
+        .deposit(&100i128, &t.blend_pool, &t.token_id, &t.vault);
+    assert_eq!(t.strategy.get_share_balance(), 1i128);
 }

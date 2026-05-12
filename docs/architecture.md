@@ -123,11 +123,20 @@ Tier 3: Fallback oracle (DIA)      → invoke_contract (hard fail)
 ## NAV Formula
 
 ```
-NAV = Σ oracle.get_price(asset) × token_balance(vault, asset)   for asset ∈ PortfolioAssets
-    + Σ guard.get_total_value(vault)                             for guard ∈ ActiveGuards
+NAV = Σ oracle.get_price(asset) × token_balance(vault, asset)   for asset ∈ TrackedAssets
+    + Σ guard.get_total_value(vault)                             for guard ∈ PositionGuards
 ```
 
 Share price: `share_price = NAV × PRICE_PRECISION / total_supply`
+
+`PortfolioAssets` and `ActiveGuards` are configuration lists. `TrackedAssets`
+and `PositionGuards` are bounded accounting indexes that contain only live
+assets/positions. This keeps deposits, withdrawals, fee collection, and NAV
+views within Soroban budget when a vault supports many assets and strategies.
+The vault updates the indexes during normal deposits, withdrawals, seed
+deposits, and manager operations. Permissionless `sync_asset_balance(asset)` and
+`sync_guard_position(guard)` entrypoints let keepers reflect external balance or
+yield changes without scanning every configured asset or guard.
 
 ## Accounting Model
 

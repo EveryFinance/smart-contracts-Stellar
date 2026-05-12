@@ -73,9 +73,6 @@ impl OracleContract {
         }
         set_admin(&env, &admin);
         set_max_age_ledgers(&env, DEFAULT_MAX_AGE_LEDGERS);
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
     }
 
     // -----------------------------------------------------------------------

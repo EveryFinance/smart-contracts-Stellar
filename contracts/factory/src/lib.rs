@@ -81,9 +81,6 @@ impl Factory {
             panic_with_error!(&env, FactoryError::AlreadyInitialized);
         }
         admin.require_auth();
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         set_admin(&env, &admin);
         set_vault_count(&env, 0);

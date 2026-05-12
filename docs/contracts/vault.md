@@ -182,6 +182,24 @@ fn withdraw_fraction(vault: Address, numerator: i128, denominator: i128, to: Add
 fn asset_in_use(vault: Address, asset: Address) -> bool
 ```
 
+## Bounded NAV Indexes
+
+The vault separates configuration from live accounting:
+
+| List | Purpose |
+|------|---------|
+| `PortfolioAssets` | Manager-configured asset universe |
+| `TrackedAssets` | Portfolio assets currently holding non-zero idle vault balance |
+| `ActiveGuards` | Manager-configured strategy guard universe |
+| `PositionGuards` | Active guards currently reporting non-zero strategy value |
+
+NAV, fee collection, and proportional withdrawals use `TrackedAssets` and
+`PositionGuards`. This avoids full scans over every supported asset and every
+configured strategy during normal user flows. Manager operations update the
+touched asset and guard indexes automatically, and keepers can call
+`sync_asset_balance(asset)` or `sync_guard_position(guard)` after external
+balance/yield changes.
+
 ## Important Invariants
 
 1. Shares burned before any transfer in withdrawals (reentrancy protection).
@@ -195,6 +213,7 @@ fn asset_in_use(vault: Address, asset: Address) -> bool
 9. Exit cooldown blocks withdrawals until `last_deposit_ts + cooldown_secs` while shares remain non-transferable.
 10. Fee increases require announce → timelock (86 400 s) → commit.
 11. Same-ledger operation/value guard detects suspicious sequence/value drift.
+12. Legacy single-asset vaults count idle base asset balance once, without double-counting `TrackedAssets`.
 
 ## Error Codes
 

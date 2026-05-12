@@ -26,17 +26,19 @@ fn deploy_vault(env: &Env) -> (Address, Address) {
     let base = env.register(MockToken, ());
     MockTokenClient::new(env, &base).initialize(&manager);
 
+    let vault_id = Address::generate(env);
     let share_id = env.register(
         ShareTokenContract,
         (
-            manager.clone(),
+            vault_id.clone(),
             String::from_str(env, "VS"),
             String::from_str(env, "VS"),
             7u32,
         ),
     );
 
-    let vault_id = env.register(
+    env.register_at(
+        &vault_id,
         Vault,
         (VaultParams {
             admin: manager.clone(),
@@ -45,7 +47,7 @@ fn deploy_vault(env: &Env) -> (Address, Address) {
             trader: trader.clone(),
             base_asset: base,
             share_token: share_id,
-            share_token_admin: manager.clone(),
+            share_token_admin: vault_id.clone(),
             treasury: manager.clone(),
             entry_fee_bps: 0,
             exit_fee_bps: 0,

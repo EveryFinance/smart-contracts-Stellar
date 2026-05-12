@@ -100,10 +100,6 @@ impl ShareTokenContract {
         set_decimals(&env, decimals);
         set_total_supply(&env, 0_i128);
         set_transfers_enabled_storage(&env, false);
-
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
     }
 
     // -----------------------------------------------------------------------

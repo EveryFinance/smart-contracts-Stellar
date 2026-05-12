@@ -22,6 +22,7 @@ struct BlendWorld {
     strategy: BlendStrategyClient<'static>,
     strategy_addr: Address,
     blend_pool: MockBlendPoolClient<'static>,
+    pool_addr: Address,
     share_token_addr: Address,
     base: Address,
     manager: Address,
@@ -41,11 +42,13 @@ fn setup_blend() -> BlendWorld {
     let base = env.register(MockToken, ());
     MockTokenClient::new(&env, &base).initialize(&manager);
 
+    let vault_id = Address::generate(&env);
+
     // Share token for the vault.
     let share_id = env.register(
         ShareTokenContract,
         (
-            manager.clone(),
+            vault_id.clone(),
             String::from_str(&env, "Blend Vault Share"),
             String::from_str(&env, "BVS"),
             7u32,
@@ -53,7 +56,8 @@ fn setup_blend() -> BlendWorld {
     );
 
     // Deploy vault.
-    let vault_id = env.register(
+    env.register_at(
+        &vault_id,
         Vault,
         (VaultParams {
             admin: manager.clone(),
@@ -62,7 +66,7 @@ fn setup_blend() -> BlendWorld {
             trader: trader.clone(),
             base_asset: base.clone(),
             share_token: share_id.clone(),
-            share_token_admin: manager.clone(),
+            share_token_admin: vault_id.clone(),
             treasury: manager.clone(),
             entry_fee_bps: 0,
             exit_fee_bps: 0,
@@ -80,12 +84,8 @@ fn setup_blend() -> BlendWorld {
 
     // Deploy BlendStrategy.
     let strategy_id = env.register(BlendStrategy, ());
-    BlendStrategyClient::new(&env, &strategy_id).initialize(
-        &vault_id,
-        &base,
-        &pool_id,
-        &String::from_str(&env, "Blend USDC"),
-    );
+    BlendStrategyClient::new(&env, &strategy_id)
+        .initialize(&vault_id, &String::from_str(&env, "Blend USDC"));
 
     // Whitelist base in portfolio and as a deposit asset so vault NAV includes
     // idle cash.  Guards must also be registered so their positions count.
@@ -115,6 +115,7 @@ fn setup_blend() -> BlendWorld {
         vault,
         vault_addr: vault_id,
         strategy,
+        pool_addr: pool_id,
         strategy_addr: strategy_id,
         blend_pool,
         share_token_addr: share_id,
@@ -139,7 +140,12 @@ fn test_blend_supply_via_execute_op() {
     w.vault.deposit(&deposit, &w.user, &w.base, &0i128);
     assert_eq!(token_balance(&w.env, &w.base, &w.vault_addr), deposit);
 
-    let args: Vec<Val> = soroban_sdk::vec![&w.env, supply_amount.into_val(&w.env)];
+    let args: Vec<Val> = soroban_sdk::vec![
+        &w.env,
+        w.pool_addr.clone().into_val(&w.env),
+        w.base.clone().into_val(&w.env),
+        supply_amount.into_val(&w.env),
+    ];
     w.vault.execute_op(
         &w.trader,
         &w.strategy_addr,
@@ -166,7 +172,12 @@ fn test_blend_withdraw_from_lending_via_execute_op() {
     let supply_amount = 500_0000000i128;
 
     w.vault.deposit(&deposit, &w.user, &w.base, &0i128);
-    let supply_args: Vec<Val> = soroban_sdk::vec![&w.env, supply_amount.into_val(&w.env)];
+    let supply_args: Vec<Val> = soroban_sdk::vec![
+        &w.env,
+        w.pool_addr.clone().into_val(&w.env),
+        w.base.clone().into_val(&w.env),
+        supply_amount.into_val(&w.env),
+    ];
     w.vault.execute_op(
         &w.trader,
         &w.strategy_addr,
@@ -176,7 +187,12 @@ fn test_blend_withdraw_from_lending_via_execute_op() {
 
     assert_eq!(w.blend_pool.get_supply(&w.strategy_addr), supply_amount);
 
-    let withdraw_args: Vec<Val> = soroban_sdk::vec![&w.env, supply_amount.into_val(&w.env)];
+    let withdraw_args: Vec<Val> = soroban_sdk::vec![
+        &w.env,
+        w.pool_addr.clone().into_val(&w.env),
+        w.base.clone().into_val(&w.env),
+        supply_amount.into_val(&w.env),
+    ];
     w.vault.execute_op(
         &w.trader,
         &w.strategy_addr,
@@ -201,7 +217,12 @@ fn test_blend_get_total_value_reflects_position() {
     assert_eq!(w.strategy.get_total_value(&w.vault_addr), 0);
 
     w.vault.deposit(&deposit, &w.user, &w.base, &0i128);
-    let args: Vec<Val> = soroban_sdk::vec![&w.env, supply_amount.into_val(&w.env)];
+    let args: Vec<Val> = soroban_sdk::vec![
+        &w.env,
+        w.pool_addr.clone().into_val(&w.env),
+        w.base.clone().into_val(&w.env),
+        supply_amount.into_val(&w.env),
+    ];
     w.vault.execute_op(
         &w.trader,
         &w.strategy_addr,
@@ -226,7 +247,12 @@ fn test_blend_asset_in_use() {
     assert!(!w.strategy.asset_in_use(&w.vault_addr, &w.base));
 
     w.vault.deposit(&deposit, &w.user, &w.base, &0i128);
-    let args: Vec<Val> = soroban_sdk::vec![&w.env, supply_amount.into_val(&w.env)];
+    let args: Vec<Val> = soroban_sdk::vec![
+        &w.env,
+        w.pool_addr.clone().into_val(&w.env),
+        w.base.clone().into_val(&w.env),
+        supply_amount.into_val(&w.env),
+    ];
     w.vault.execute_op(
         &w.trader,
         &w.strategy_addr,
@@ -246,7 +272,12 @@ fn test_blend_proportional_withdrawal_with_active_guard() {
     let supply_amount = 500_0000000i128;
 
     w.vault.deposit(&deposit, &w.user, &w.base, &0i128);
-    let supply_args: Vec<Val> = soroban_sdk::vec![&w.env, supply_amount.into_val(&w.env)];
+    let supply_args: Vec<Val> = soroban_sdk::vec![
+        &w.env,
+        w.pool_addr.clone().into_val(&w.env),
+        w.base.clone().into_val(&w.env),
+        supply_amount.into_val(&w.env),
+    ];
     w.vault.execute_op(
         &w.trader,
         &w.strategy_addr,

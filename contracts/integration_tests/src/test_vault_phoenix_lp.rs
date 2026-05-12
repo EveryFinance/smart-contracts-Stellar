@@ -5,8 +5,8 @@
 use phoenix_lp_strategy::{PhoenixLpStrategy, PhoenixLpStrategyClient};
 use share_token::ShareTokenContract;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, testutils::Address as _, Address, Env, IntoVal, String,
-    Symbol, Val, Vec,
+    contract, contractimpl, contracttype, testutils::Address as _, Address, Env, IntoVal, Map,
+    String, Symbol, Val, Vec,
 };
 use vault::{Vault, VaultClient, VaultParams};
 
@@ -23,6 +23,14 @@ struct MockLpAssetHandler;
 impl MockLpAssetHandler {
     pub fn get_price(_env: Env, _asset: Address) -> i128 {
         PRICE_PRECISION
+    }
+
+    pub fn get_prices(env: Env, assets: Vec<Address>) -> Map<Address, i128> {
+        let mut result = Map::new(&env);
+        for asset in assets.iter() {
+            result.set(asset, PRICE_PRECISION);
+        }
+        result
     }
 }
 
@@ -121,17 +129,19 @@ fn setup_phoenix() -> PhoenixWorld {
     MockLpFactoryClient::new(&env, &factory_id).authorize_asset(&asset_b);
 
     // Use asset_a as the vault's base asset.
+    let vault_id = Address::generate(&env);
     let vault_share_id = env.register(
         ShareTokenContract,
         (
-            manager.clone(),
+            vault_id.clone(),
             String::from_str(&env, "Phoenix Vault Share"),
             String::from_str(&env, "PVS"),
             7u32,
         ),
     );
 
-    let vault_id = env.register(
+    env.register_at(
+        &vault_id,
         Vault,
         (VaultParams {
             admin: manager.clone(),
@@ -140,7 +150,7 @@ fn setup_phoenix() -> PhoenixWorld {
             trader: trader.clone(),
             base_asset: asset_a.clone(),
             share_token: vault_share_id.clone(),
-            share_token_admin: manager.clone(),
+            share_token_admin: vault_id.clone(),
             treasury: manager.clone(),
             entry_fee_bps: 0,
             exit_fee_bps: 0,
@@ -158,13 +168,8 @@ fn setup_phoenix() -> PhoenixWorld {
 
     // PhoenixLpStrategy — auto-queries share_token from pool during initialize.
     let strategy_id = env.register(PhoenixLpStrategy, ());
-    PhoenixLpStrategyClient::new(&env, &strategy_id).initialize(
-        &vault_id,
-        &asset_a,
-        &asset_b,
-        &pool_id,
-        &String::from_str(&env, "Phoenix USDC-XLM"),
-    );
+    PhoenixLpStrategyClient::new(&env, &strategy_id)
+        .initialize(&vault_id, &String::from_str(&env, "Phoenix USDC-XLM"));
     MockLpFactoryClient::new(&env, &factory_id).authorize_guard(&strategy_id);
 
     // Whitelist both pool assets in portfolio. LP positions and idle balances
@@ -233,6 +238,9 @@ fn test_phoenix_add_liquidity_via_execute_op() {
 
     let args: Vec<Val> = soroban_sdk::vec![
         &w.env,
+        w.pool_addr.clone().into_val(&w.env), // pool
+        w.asset_a.clone().into_val(&w.env),   // asset_a
+        w.asset_b.clone().into_val(&w.env),   // asset_b
         amount_a.into_val(&w.env),
         amount_b.into_val(&w.env),
         0i128.into_val(&w.env), // min_a
@@ -251,8 +259,8 @@ fn test_phoenix_add_liquidity_via_execute_op() {
         token_balance(&w.env, &w.share_token, &w.strategy_addr),
         shares_minted
     );
-    // Strategy's tracked share count matches.
-    assert_eq!(w.strategy.get_share_balance(), shares_minted);
+    // Strategy has 1 active position after add_liquidity.
+    assert_eq!(w.strategy.get_share_balance(), 1i128);
 
     // Vault lost both assets.
     assert_eq!(
@@ -276,6 +284,9 @@ fn test_phoenix_remove_liquidity_via_execute_op() {
     // --- add liquidity first ---
     let add_args: Vec<Val> = soroban_sdk::vec![
         &w.env,
+        w.pool_addr.clone().into_val(&w.env),
+        w.asset_a.clone().into_val(&w.env),
+        w.asset_b.clone().into_val(&w.env),
         amount_a.into_val(&w.env),
         amount_b.into_val(&w.env),
         0i128.into_val(&w.env),
@@ -298,6 +309,9 @@ fn test_phoenix_remove_liquidity_via_execute_op() {
     // No extra allowance setup needed in tests.
     let remove_args: Vec<Val> = soroban_sdk::vec![
         &w.env,
+        w.pool_addr.clone().into_val(&w.env),
+        w.asset_a.clone().into_val(&w.env),
+        w.asset_b.clone().into_val(&w.env),
         shares_minted.into_val(&w.env),
         0i128.into_val(&w.env), // min_a
         0i128.into_val(&w.env), // min_b
@@ -337,12 +351,33 @@ fn test_phoenix_swap_via_execute_op() {
     let w = setup_phoenix();
     let amount_in = 500_0000000i128;
 
+    // Register the position first — swap looks up asset_a/asset_b from the stored position.
+    let add_args: Vec<Val> = soroban_sdk::vec![
+        &w.env,
+        w.pool_addr.clone().into_val(&w.env),
+        w.asset_a.clone().into_val(&w.env),
+        w.asset_b.clone().into_val(&w.env),
+        100_0000000i128.into_val(&w.env),
+        100_0000000i128.into_val(&w.env),
+        0i128.into_val(&w.env),
+        0i128.into_val(&w.env),
+    ];
+    w.vault.execute_op(
+        &w.trader,
+        &w.strategy_addr,
+        &Symbol::new(&w.env, "add_liquidity"),
+        &add_args,
+    );
+
     let vault_a_before = token_balance(&w.env, &w.asset_a, &w.vault_addr);
     let vault_b_before = token_balance(&w.env, &w.asset_b, &w.vault_addr);
 
+    // phoenix swap: [pool, asset_in, asset_out, amount_in, min_out]
     let args: Vec<Val> = soroban_sdk::vec![
         &w.env,
-        true.into_val(&w.env),
+        w.pool_addr.clone().into_val(&w.env),
+        w.asset_a.clone().into_val(&w.env), // selling asset_a
+        w.asset_b.clone().into_val(&w.env), // receiving asset_b
         amount_in.into_val(&w.env),
         0i128.into_val(&w.env),
     ];
@@ -374,6 +409,9 @@ fn test_phoenix_asset_in_use_after_add_liquidity() {
 
     let args: Vec<Val> = soroban_sdk::vec![
         &w.env,
+        w.pool_addr.clone().into_val(&w.env),
+        w.asset_a.clone().into_val(&w.env),
+        w.asset_b.clone().into_val(&w.env),
         amount.into_val(&w.env),
         amount.into_val(&w.env),
         0i128.into_val(&w.env),
@@ -399,6 +437,9 @@ fn test_phoenix_get_total_value_with_asset_handler() {
     let amount = 1_000_0000000i128;
     let args: Vec<Val> = soroban_sdk::vec![
         &w.env,
+        w.pool_addr.clone().into_val(&w.env),
+        w.asset_a.clone().into_val(&w.env),
+        w.asset_b.clone().into_val(&w.env),
         amount.into_val(&w.env),
         amount.into_val(&w.env),
         0i128.into_val(&w.env),

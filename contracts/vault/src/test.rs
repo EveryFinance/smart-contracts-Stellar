@@ -1,7 +1,6 @@
 #![cfg(test)]
 
 use soroban_sdk::{
-    auth::InvokerContractAuthEntry,
     contract, contractimpl, contracttype,
     testutils::{Address as _, Ledger as _},
     vec, Address, Env, IntoVal, String, Symbol, Val, Vec,
@@ -245,16 +244,18 @@ fn setup_with_fees(entry: u32, exit: u32, mgmt: u32, perf: u32) -> T {
 
     let base = env.register(MockToken, ());
     let share = env.register(MockToken, ());
+    let vid = Address::generate(&env);
 
     MockTokenClient::new(&env, &base).initialize(&manager);
-    MockTokenClient::new(&env, &share).initialize(&manager);
+    MockTokenClient::new(&env, &share).initialize(&vid);
 
     // Fund users with base tokens.
     MockTokenClient::new(&env, &base).mint(&manager, &1_000_000_0000000i128);
     MockTokenClient::new(&env, &base).mint(&user, &1_000_000_0000000i128);
     MockTokenClient::new(&env, &base).mint(&user2, &1_000_000_0000000i128);
 
-    let vid = env.register(
+    env.register_at(
+        &vid,
         Vault,
         (VaultParams {
             admin: manager.clone(),
@@ -263,7 +264,7 @@ fn setup_with_fees(entry: u32, exit: u32, mgmt: u32, perf: u32) -> T {
             trader: trader.clone(),
             base_asset: base.clone(),
             share_token: share.clone(),
-            share_token_admin: manager.clone(),
+            share_token_admin: vid.clone(),
             treasury: manager.clone(),
             entry_fee_bps: entry,
             exit_fee_bps: exit,
@@ -313,14 +314,16 @@ fn setup_with_factory() -> (T, Address) {
 
     let base = env.register(MockToken, ());
     let share = env.register(MockToken, ());
+    let vid = Address::generate(&env);
     MockTokenClient::new(&env, &base).initialize(&manager);
-    MockTokenClient::new(&env, &share).initialize(&manager);
+    MockTokenClient::new(&env, &share).initialize(&vid);
     MockTokenClient::new(&env, &base).mint(&user, &1_000_000_0000000i128);
     MockTokenClient::new(&env, &base).mint(&user2, &1_000_000_0000000i128);
 
     let factory_id = env.register(MockFactory, ());
 
-    let vid = env.register(
+    env.register_at(
+        &vid,
         Vault,
         (VaultParams {
             admin: manager.clone(),
@@ -329,7 +332,7 @@ fn setup_with_factory() -> (T, Address) {
             trader: trader.clone(),
             base_asset: base.clone(),
             share_token: share.clone(),
-            share_token_admin: manager.clone(),
+            share_token_admin: vid.clone(),
             treasury: manager.clone(),
             entry_fee_bps: 0,
             exit_fee_bps: 0,
@@ -376,14 +379,33 @@ fn advance_time(t: &T, secs: u64) {
 
 #[test]
 #[should_panic(expected = "Error(Contract, #6)")]
-fn test_push_transfer_auth_rejects_zero_amount() {
-    let env = Env::default();
-    let mut entries: Vec<InvokerContractAuthEntry> = Vec::new(&env);
-    let token = Address::generate(&env);
-    let from = Address::generate(&env);
-    let to = Address::generate(&env);
+fn test_prefund_execute_op_transfers_rejects_zero_amount() {
+    let t = setup();
+    let guard = t.env.register(MockGuard, ());
+    let pool = Address::generate(&t.env);
+    let asset_a = t.env.register(MockToken, ());
+    MockTokenClient::new(&t.env, &asset_a).initialize(&t.manager);
+    MockGuardClient::new(&t.env, &guard).set_assets(&t.base, &asset_a);
+    // phoenix-style swap: [pool, asset_in(=base, which is in portfolio), asset_out, 0, 0]
+    // The zero amount_in should trigger InvalidAmount (#6) after the portfolio check passes.
+    let args: Vec<Val> = vec![
+        &t.env,
+        pool.into_val(&t.env),
+        t.base.into_val(&t.env),
+        asset_a.into_val(&t.env),
+        0i128.into_val(&t.env),
+        0i128.into_val(&t.env),
+    ];
 
-    super::push_transfer_auth(&env, &mut entries, token, from, to, 0);
+    t.env.as_contract(&t.vault_addr, || {
+        super::prefund_execute_op_transfers(
+            &t.env,
+            &t.vault_addr,
+            &guard,
+            &Symbol::new(&t.env, "swap"),
+            &args,
+        );
+    });
 }
 
 #[test]
@@ -602,10 +624,12 @@ fn test_initialize_stores_optional_manager_name() {
     let trader = Address::generate(&env);
     let base = env.register(MockToken, ());
     let share = env.register(MockToken, ());
+    let vault_id = Address::generate(&env);
     MockTokenClient::new(&env, &base).initialize(&manager);
-    MockTokenClient::new(&env, &share).initialize(&manager);
+    MockTokenClient::new(&env, &share).initialize(&vault_id);
 
-    let vault_id = env.register(
+    env.register_at(
+        &vault_id,
         Vault,
         (VaultParams {
             admin: manager.clone(),
@@ -614,7 +638,7 @@ fn test_initialize_stores_optional_manager_name() {
             trader,
             base_asset: base,
             share_token: share,
-            share_token_admin: manager.clone(),
+            share_token_admin: vault_id.clone(),
             treasury: manager,
             entry_fee_bps: 0,
             exit_fee_bps: 0,
@@ -641,9 +665,11 @@ fn test_initialize_entry_fee_too_high_panics() {
     let trader = Address::generate(&env);
     let base = env.register(MockToken, ());
     let share = env.register(MockToken, ());
+    let vault_id = Address::generate(&env);
     MockTokenClient::new(&env, &base).initialize(&manager);
-    MockTokenClient::new(&env, &share).initialize(&manager);
-    env.register(
+    MockTokenClient::new(&env, &share).initialize(&vault_id);
+    env.register_at(
+        &vault_id,
         Vault,
         (VaultParams {
             admin: manager.clone(),
@@ -652,7 +678,7 @@ fn test_initialize_entry_fee_too_high_panics() {
             trader: trader.clone(),
             base_asset: base,
             share_token: share,
-            share_token_admin: manager.clone(),
+            share_token_admin: vault_id.clone(),
             treasury: manager.clone(),
             entry_fee_bps: 501, // > MAX
             exit_fee_bps: 0,
@@ -989,9 +1015,11 @@ fn test_initialize_exit_fee_too_high_panics() {
     let trader = Address::generate(&env);
     let base = env.register(MockToken, ());
     let share = env.register(MockToken, ());
+    let vault_id = Address::generate(&env);
     MockTokenClient::new(&env, &base).initialize(&manager);
-    MockTokenClient::new(&env, &share).initialize(&manager);
-    env.register(
+    MockTokenClient::new(&env, &share).initialize(&vault_id);
+    env.register_at(
+        &vault_id,
         Vault,
         (VaultParams {
             admin: manager.clone(),
@@ -1000,7 +1028,7 @@ fn test_initialize_exit_fee_too_high_panics() {
             trader: trader.clone(),
             base_asset: base,
             share_token: share,
-            share_token_admin: manager.clone(),
+            share_token_admin: vault_id.clone(),
             treasury: manager.clone(),
             entry_fee_bps: 0,
             exit_fee_bps: 501, // > MAX_ENTRY_EXIT_FEE_BPS
@@ -1021,9 +1049,11 @@ fn test_initialize_mgmt_fee_too_high_panics() {
     let trader = Address::generate(&env);
     let base = env.register(MockToken, ());
     let share = env.register(MockToken, ());
+    let vault_id = Address::generate(&env);
     MockTokenClient::new(&env, &base).initialize(&manager);
-    MockTokenClient::new(&env, &share).initialize(&manager);
-    env.register(
+    MockTokenClient::new(&env, &share).initialize(&vault_id);
+    env.register_at(
+        &vault_id,
         Vault,
         (VaultParams {
             admin: manager.clone(),
@@ -1032,7 +1062,7 @@ fn test_initialize_mgmt_fee_too_high_panics() {
             trader: trader.clone(),
             base_asset: base,
             share_token: share,
-            share_token_admin: manager.clone(),
+            share_token_admin: vault_id.clone(),
             treasury: manager.clone(),
             entry_fee_bps: 0,
             exit_fee_bps: 0,
@@ -1053,9 +1083,11 @@ fn test_initialize_perf_fee_too_high_panics() {
     let trader = Address::generate(&env);
     let base = env.register(MockToken, ());
     let share = env.register(MockToken, ());
+    let vault_id = Address::generate(&env);
     MockTokenClient::new(&env, &base).initialize(&manager);
-    MockTokenClient::new(&env, &share).initialize(&manager);
-    env.register(
+    MockTokenClient::new(&env, &share).initialize(&vault_id);
+    env.register_at(
+        &vault_id,
         Vault,
         (VaultParams {
             admin: manager.clone(),
@@ -1064,7 +1096,7 @@ fn test_initialize_perf_fee_too_high_panics() {
             trader: trader.clone(),
             base_asset: base,
             share_token: share,
-            share_token_admin: manager.clone(),
+            share_token_admin: vault_id.clone(),
             treasury: manager.clone(),
             entry_fee_bps: 0,
             exit_fee_bps: 0,
@@ -1466,6 +1498,7 @@ fn test_withdraw_legacy_mode_rejects_insufficient_idle_liquidity() {
     let guard_id = t.env.register(MockGuard, ());
     MockGuardClient::new(&t.env, &guard_id).set_total_value(&1_000i128);
     t.vault.add_active_guard(&t.manager, &guard_id);
+    t.vault.sync_guard_position(&guard_id);
     t.vault.deposit(&1_000i128, &t.user, &t.base, &0i128);
 
     t.env.as_contract(&t.vault_addr, || {
@@ -1727,6 +1760,21 @@ impl MockGuard {
     /// Vault injects itself as first arg — guard receives vault address.
     pub fn noop(_env: Env, _vault: Address) {}
 
+    /// Minimal swap stub: pulls the input asset from the vault into the guard.
+    /// This exercises the real nested token-transfer auth shape used by DEX guards.
+    pub fn swap(env: Env, vault: Address, sell_a: bool, amount_in: i128, _min_out: i128) {
+        let from_asset: Address = if sell_a {
+            env.storage().instance().get(&GKey::AssetA).unwrap()
+        } else {
+            env.storage().instance().get(&GKey::AssetB).unwrap()
+        };
+        MockTokenClient::new(&env, &from_asset).transfer(
+            &vault,
+            &env.current_contract_address(),
+            &amount_in,
+        );
+    }
+
     /// Reduces get_total_value by the stored loss_bps percentage.
     /// Used to test the TVL guard without token transfers.
     pub fn simulate_loss(env: Env, _vault: Address) {
@@ -1762,6 +1810,28 @@ fn test_add_portfolio_asset_no_factory() {
 }
 
 #[test]
+fn test_add_portfolio_asset_prunes_legacy_tracked_base_outside_portfolio() {
+    let t = setup();
+
+    // Simulate a vault that accepted a base deposit in legacy mode, then later
+    // entered multi-asset mode without listing base as a portfolio asset.
+    t.env.as_contract(&t.vault_addr, || {
+        crate::storage::set_portfolio_assets(&t.env, &Vec::new(&t.env));
+        crate::storage::set_deposit_assets(&t.env, &Vec::new(&t.env));
+        crate::storage::set_tracked_assets(&t.env, &Vec::new(&t.env));
+    });
+    t.vault.deposit(&1_000i128, &t.user, &t.base, &0i128);
+    assert_eq!(t.vault.get_tracked_assets().len(), 1);
+
+    let asset = t.env.register(MockToken, ());
+    MockTokenClient::new(&t.env, &asset).initialize(&t.manager);
+    t.vault.add_portfolio_asset(&t.manager, &asset);
+
+    assert_eq!(t.vault.get_tracked_assets().len(), 0);
+    assert_eq!(t.vault.get_nav(), 0);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #33)")]
 fn test_remove_portfolio_asset_with_balance_panics() {
     let t = setup();
@@ -1788,12 +1858,16 @@ fn test_remove_portfolio_asset_blocked_by_active_guard_asset_use() {
 #[should_panic(expected = "Error(Contract, #6)")]
 fn test_nav_rejects_negative_active_guard_value() {
     let t = setup();
-    let guard_id = t.env.register(MockGuard, ());
+    let (guard_id, _) = setup_with_execute_op(&t);
     MockGuardClient::new(&t.env, &guard_id).set_total_value(&-1i128);
 
-    t.vault.add_active_guard(&t.manager, &guard_id);
-
-    t.vault.get_nav();
+    let no_args: Vec<Val> = Vec::new(&t.env);
+    t.vault.execute_op(
+        &t.manager,
+        &guard_id,
+        &Symbol::new(&t.env, "noop"),
+        &no_args,
+    );
 }
 
 #[test]
@@ -2319,13 +2393,13 @@ fn test_execute_op_noop_with_max_loss_disabled() {
 
 #[test]
 #[should_panic(expected = "Error(Contract, #9)")]
-fn test_authorize_execute_op_transfers_rejects_malformed_swap_args() {
+fn test_prefund_execute_op_transfers_rejects_malformed_swap_args() {
     let env = Env::default();
     let vault = Address::generate(&env);
     let guard = Address::generate(&env);
     let malformed_args: Vec<Val> = Vec::new(&env);
 
-    super::authorize_execute_op_transfers(
+    super::prefund_execute_op_transfers(
         &env,
         &vault,
         &guard,
@@ -2335,23 +2409,31 @@ fn test_authorize_execute_op_transfers_rejects_malformed_swap_args() {
 }
 
 #[test]
-fn test_authorize_execute_op_transfers_bool_swap_uses_asset_b_when_sell_a_false() {
+fn test_prefund_execute_op_transfers_phoenix_swap_uses_asset_in() {
     let t = setup();
     let guard = t.env.register(MockGuard, ());
-    let asset_b = t.env.register(MockToken, ());
-    MockTokenClient::new(&t.env, &asset_b).initialize(&t.manager);
-    MockGuardClient::new(&t.env, &guard).set_assets(&t.base, &asset_b);
-    t.vault.add_portfolio_asset(&t.manager, &asset_b);
+    let pool = Address::generate(&t.env);
+    let asset_a = t.env.register(MockToken, ());
+    MockTokenClient::new(&t.env, &asset_a).initialize(&t.manager);
+    MockGuardClient::new(&t.env, &guard).set_assets(&asset_a, &t.base);
+    // Mint base asset (asset_in = t.base) to vault so transfer can succeed.
+    MockTokenClient::new(&t.env, &t.base).mint(&t.vault_addr, &10i128);
 
+    // phoenix-style swap: [pool, asset_in, asset_out, amount_in, min_out]
+    // selling t.base (asset_in) for asset_a
     let args: Vec<Val> = vec![
         &t.env,
-        false.into_val(&t.env),
+        pool.into_val(&t.env),
+        t.base.into_val(&t.env),
+        asset_a.into_val(&t.env),
         1i128.into_val(&t.env),
         0i128.into_val(&t.env),
     ];
 
+    let vault_before = MockTokenClient::new(&t.env, &t.base).balance(&t.vault_addr);
+    let guard_before = MockTokenClient::new(&t.env, &t.base).balance(&guard);
     t.env.as_contract(&t.vault_addr, || {
-        super::authorize_execute_op_transfers(
+        super::prefund_execute_op_transfers(
             &t.env,
             &t.vault_addr,
             &guard,
@@ -2359,6 +2441,14 @@ fn test_authorize_execute_op_transfers_bool_swap_uses_asset_b_when_sell_a_false(
             &args,
         );
     });
+    assert_eq!(
+        MockTokenClient::new(&t.env, &t.base).balance(&t.vault_addr),
+        vault_before - 1
+    );
+    assert_eq!(
+        MockTokenClient::new(&t.env, &t.base).balance(&guard),
+        guard_before + 1
+    );
 }
 
 #[test]
@@ -2426,10 +2516,12 @@ fn test_execute_op_updates_guard_state() {
 
     // Seed guard with a position value.
     MockGuardClient::new(&t.env, &guard_id).set_total_value(&500_0000000i128);
-    // NAV = vault_balance + guard_value = 1000 + 500 = 1500.
-    assert_eq!(t.vault.get_nav(), 1_500_0000000i128);
+    // Bounded NAV does not scan every active guard until a manager operation
+    // touches/synchronizes the guard into the position index.
+    assert_eq!(t.vault.get_nav(), 1_000_0000000i128);
 
-    // simulate_loss with 0 loss_bps = identity. NAV unchanged.
+    // simulate_loss with 0 loss_bps = identity. The touched guard is
+    // synchronized into the position index, so NAV includes it afterwards.
     t.vault.execute_op(
         &t.manager,
         &guard_id,

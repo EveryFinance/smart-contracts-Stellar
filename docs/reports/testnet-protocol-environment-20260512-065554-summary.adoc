@@ -1,0 +1,200 @@
+= Stellar Testnet Protocol Environment Summary
+:toc:
+:sectnums:
+
+Generated for deployment timestamp `20260512-065554` on Stellar testnet.
+
+This summary records the clean deployment state for the Alpha, Beta, and Gamma
+testnet vault environment. The raw transaction/snapshot log is stored at
+`docs/reports/testnet-protocol-environment-20260512-065554.adoc`.
+
+== Deployment Files
+
+* Environment file: `deployments/testnet-protocol-environment-20260512-065554.env`
+* Latest environment pointer: `deployments/testnet-protocol-environment.latest.env`
+* Raw transaction report: `docs/reports/testnet-protocol-environment-20260512-065554.adoc`
+
+== Core Contracts
+
+[cols="1,1",options="header"]
+|===
+| Contract | Address
+
+| AssetHandler
+| `CDUWJNBGGGI4NBJ6MFKP6JYSH23YPFMQ2EZJ6RGQK3M524LI64O3WQTF`
+
+| Oracle
+| `CBHIQWISBHKLRWSG5NMGO26X7PW5YABRFNH6NSN2FIC26WXJ7JFWUCQ5`
+
+| Factory
+| `CCSWBQR5YR6QEXSBHWWR4AIEAJ4WNGJ3SSCEBPGBDX7MQC73SGVHIVI3`
+|===
+
+== Mock Assets
+
+[cols="1,1,1",options="header"]
+|===
+| Asset | Contract | Initial price, 1e7 scale
+
+| USDC
+| `CAPG3C462KL7MWIJDYEPM65KTINRFXMTQCP2KGHA42EXXWQJJEUX42UN`
+| `10000000`
+
+| XLM
+| `CBZFSKHS6YTIULV3AT4I4TXAKMRI2XKEOVZD65464HDDCKIPIAC5ZJCR`
+| `1700000`
+
+| BTC
+| `CDSLCW3MDW4WVUBDYXRRKE3X2GAAHGZROOPASMXVEWBFBFFSPIKG5WPA`
+| `816844300000`
+
+| PYUSD
+| `CA43XM2G7X65XX5362APX5VOAC46BQVZTUGQZHD3C7UR4JLCMS2UWMMS`
+| `10000000`
+
+| EURC
+| `CALZHOSEYXEXYYQJSQYXSBJXCXI4CDMI6RX3LCKSYIM2PVVH3PKFF3PX`
+| `10800000`
+
+| AQUA
+| `CAHGITBB3QRLQCUATFZPPABWRWD24TOWNR22RFSGB2LH5PRNH4CL6MOH`
+| `4500`
+
+| USTRY
+| `CA57LU5NIIC55NFO4WTXRW3AOFJFBTU2WXUFXXUQZHV272ESDLSCZ3GI`
+| `10300000`
+|===
+
+USDC is public-mint and is the only user deposit asset for all vaults.
+
+== Vaults
+
+[cols="1,1,1,1",options="header"]
+|===
+| Vault | Vault contract | Share token | Supported portfolio assets
+
+| Alpha
+| `CCR2ES4J5MM2G4BN5OVMJE6NNGSXXCY6ZD7MGHNAUFWSFYXVZD3VRQSG`
+| `CAEXDSHDDF4PA25U4ZEEBRPV2D43BGDPW3S6O5DDVZY5EYLSUHWTPOJM`
+| `USDC`, `XLM`, `BTC`
+
+| Beta
+| `CCB7RB6KSAJ5H2SBKSQZD6KZVP7VVMVQFR4FJIC2IO3GONJSFFDBJWTP`
+| `CB5HOOB2UEUWTPIPIZQ6JE5UUCRF7LDKQHEPMUTD6HPYINB5GYP5LDRB`
+| `USDC`, `XLM`, `PYUSD`, `EURC`, `AQUA`, `USTRY`
+
+| Gamma
+| `CAQEOSPSAQVESUOH73TG6QX2IIIEHFXGXW5NXLZYTPIW3NNY4BSEWZZL`
+| `CCWADULSPCNJY3RID673ZU4SQI5ODL62SEGFRZFOJI4DWKAN26P6TRUY`
+| `USDC`, `USTRY`
+|===
+
+== Strategies
+
+[cols="1,1,1,1",options="header"]
+|===
+| Vault | Blend lending | Soroswap LP | Phoenix LP
+
+| Alpha
+| `CALQNKIVS457IYPKPMIHOXUFGFACB4CE3PX6ROVOYXZUINY63SAU7JUR`
+| `CBAPG2T3NH3DOLG7P7F6PUUY4V5QCWCRSI6C7N4GH6NS5E2GYPK3L7GT`
+| `CAWYPKFYBAUI36PFGWJCRZTKCTDJNLCFDFXVCQLP2EZFWEPBPEC6JY2K`
+
+| Beta
+| `CCSCLDC4TK3UWKKQSNO2VAWJYDZWLNWSJLEMVCKWIYGOGDLJ7YTFONZ3`
+| `CAPVZFN2TXGPXQ6EA7ER5HZHWGAUF62HZEBUP2NAGZDMNSCK7A77WA5A`
+| `CCYXNADF3NETMMRMPX7552354CJEWCOVLMI2VG6CVA7PNODAYGPMX6HB`
+
+| Gamma
+| `CCNSFOHDCY6BBI2ZAR5DLXEL3QCPFII7EIHJAOCRKNIH5PWPMLKLRHP4`
+| `CDJE4YLTPE5BLXSKRH5LDKKBDVBQLMAHTDGCS35TXXDVVHS74F2I3D6F`
+| `CCLLKHJME3WRGWMZSJADJMO2Z6XRTAGVI6U4IMM6HODBYJQJ3HD3OLUP`
+|===
+
+== Vault Configuration
+
+* Entry fee: `0` bps
+* Withdraw fee: `0` bps
+* Management fee: `200` bps
+* Performance fee: `1000` bps
+* Share transferability: disabled
+* Cooldown: `60` seconds
+* Initial NAV: `0`
+* Initial share token price: `10000000`
+* Initial strategy allocation: all strategies deployed/authorized, initial position value `0`
+
+== Constructor Fix Recorded
+
+The vault constructor no longer requires manager/trader account auth during
+contract creation. Soroban rejects that constructor-time account authorization
+path on testnet deployment. Post-deployment role-protected operations still
+require the configured role signatures.
+
+The share token admin is now assigned to the deterministic future vault address
+before vault deployment. The vault constructor verifies that the share token
+admin is already the current vault address and does not perform nested
+`share_token.set_admin(...)` during construction.
+
+== Testnet Run Notes
+
+The deployment completed and produced the environment files above. The raw
+transaction report records the original failures observed during the first
+full-environment run: full-NAV snapshot calls and manager `execute_op` demo
+actions exceeded Stellar testnet budget when the demo vaults had several active
+guards and, for Beta, a broad portfolio asset list.
+
+The contract fix replaces hot-path full scans with bounded accounting indexes:
+`TrackedAssets` for non-zero idle asset balances and `PositionGuards` for
+non-zero strategy positions. Deposits, withdrawals, seed deposits, and manager
+operations update touched indexes automatically. Keepers can also call
+`sync_asset_balance(asset)` and `sync_guard_position(guard)` after external
+balance/yield changes. `execute_op` now checks the NAV-loss guard against the
+local value surface touched by the operation instead of scanning the entire
+vault.
+
+The historical raw report is kept as evidence of the failure mode that drove
+the fix. A fresh deployment run should be generated after redeploying the
+updated vault WASM.
+
+== Testing Commands
+
+Source the deployment:
+
+[source,bash]
+----
+source deployments/testnet-protocol-environment-20260512-065554.env
+----
+
+Mint test USDC:
+
+[source,bash]
+----
+stellar contract invoke --network testnet --source-account "$SOURCE_ACCOUNT" \
+  --id "$USDC_ID" -- mint --to "$USER1_ADDR" --amount 1000000000
+----
+
+Deposit USDC:
+
+[source,bash]
+----
+stellar contract invoke --network testnet --source-account "$USER1_KEY" \
+  --id "$ALPHA_VAULT_ID" -- deposit \
+  --amount 1000000000 --from "$USER1_ADDR" --asset "$USDC_ID" --min-shares-out 0
+----
+
+Withdraw after cooldown:
+
+[source,bash]
+----
+stellar contract invoke --network testnet --source-account "$USER1_KEY" \
+  --id "$ALPHA_VAULT_ID" -- withdraw \
+  --share_amount 100000000 --from "$USER1_ADDR" --to "$USER1_ADDR" --min-base-out 0
+----
+
+Verify NAV and share price:
+
+[source,bash]
+----
+stellar contract invoke --network testnet --source-account "$SOURCE_ACCOUNT" --id "$ALPHA_VAULT_ID" -- get_nav
+stellar contract invoke --network testnet --source-account "$SOURCE_ACCOUNT" --id "$ALPHA_VAULT_ID" -- get_share_price
+----
