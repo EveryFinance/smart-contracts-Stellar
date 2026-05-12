@@ -2538,14 +2538,16 @@ impl Vault {
         let asset_handler_opt = asset_handler(env);
         let oracle_opt = get_oracle(env);
 
-        // --- Pass 1: collect idle non-base assets (storage + token.balance) ---
-        // Base asset is 1:1, add directly.  Non-base assets go into the batch
-        // pricing list below.
-        let tracked_assets = get_tracked_assets(env);
-        // Use Map<Address, i128> to accumulate balances; handles the case
-        // where an asset appears in both idle holdings and strategy positions.
+        // Accumulate all asset balances (idle + strategy underlying) into a
+        // single Map keyed by asset address.  All portfolio assets — including
+        // the base asset — are priced via the same AssetHandler batch call.
+        // There is no special base-asset branch: the base asset is registered
+        // in AssetHandler with price = 1.0 so the math is identical to a
+        // direct add, but the code stays uniform.
         let mut pending: Map<Address, i128> = Map::new(env);
 
+        // --- Pass 1: idle balances held by the vault ---
+        let tracked_assets = get_tracked_assets(env);
         for asset in tracked_assets.iter() {
             if !portfolio.contains(asset.clone()) {
                 continue;
@@ -2554,16 +2556,11 @@ impl Vault {
             if bal == 0 {
                 continue;
             }
-            if asset == *base_asset {
-                total = checked_add(env, total, bal);
-            } else {
-                let prev = pending.get(asset.clone()).unwrap_or(0);
-                pending.set(asset, checked_add(env, prev, bal));
-            }
+            let prev = pending.get(asset.clone()).unwrap_or(0);
+            pending.set(asset, checked_add(env, prev, bal));
         }
 
-        // --- Pass 2: collect strategy underlying quantities (no oracle inside strategy) ---
-        // Only guards with known non-zero positions are queried.
+        // --- Pass 2: strategy underlying quantities (no oracle inside strategy) ---
         let guards = get_position_guards(env);
         for guard in guards.iter() {
             let underlying: Map<Address, i128> = env.invoke_contract(
@@ -2576,12 +2573,8 @@ impl Vault {
                 if amount <= 0 {
                     continue;
                 }
-                if asset == *base_asset {
-                    total = checked_add(env, total, amount);
-                } else {
-                    let prev = pending.get(asset.clone()).unwrap_or(0);
-                    pending.set(asset, checked_add(env, prev, amount));
-                }
+                let prev = pending.get(asset.clone()).unwrap_or(0);
+                pending.set(asset, checked_add(env, prev, amount));
             }
         }
 
