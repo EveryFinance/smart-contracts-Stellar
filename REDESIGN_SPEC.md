@@ -242,6 +242,11 @@ fn withdraw_from_lending(vault: Address, asset: Address, amount: i128)
 
 ## 8. PnL Tracking
 
+PnL tracking is accurate only while vault shares are non-transferable. This is
+the default protocol mode. If a vault admin enables share transfers, PnL reports
+remain available but are approximate / informational because transferred shares
+do not carry transfer-aware cost-basis accounting.
+
 **Storage per user per vault:**
 ```rust
 DataKey::UserPosition(user: Address)  →  UserPosition {
@@ -273,6 +278,23 @@ fn get_user_pnl(user: Address) -> UserPnLReport {
     total_pnl,
 }
 ```
+
+**Transferability status views:**
+```rust
+fn share_transfers_enabled() -> bool
+fn exit_cooldown_is_hard_control() -> bool
+fn pnl_tracking_is_accurate() -> bool
+```
+
+Default:
+- `share_transfers_enabled() == false`
+- `exit_cooldown_is_hard_control() == true`
+- `pnl_tracking_is_accurate() == true`
+
+Optional admin-enabled transfer mode:
+- `share_transfers_enabled() == true`
+- `exit_cooldown_is_hard_control() == false`
+- `pnl_tracking_is_accurate() == false`
 
 ---
 
@@ -361,6 +383,9 @@ VaultCreated          { vault, manager, seed_amount }  [factory]
 | Invariant | Enforcement |
 |---|---|
 | Shares burned before any transfer | Withdraw burns shares in step 5, transfers in steps 7-8 |
+| Share transfers disabled by default | ShareToken `transfer` and `transfer_from` revert unless admin enables transferability |
+| Cooldown is hard only in default mode | `exit_cooldown_is_hard_control() == !share_transfers_enabled()` |
+| PnL is accurate only in default mode | `pnl_tracking_is_accurate() == !share_transfers_enabled()` |
 | NAV snapshot before deposit | NAV computed before tokens received |
 | Funds only leave vault through vault itself | Vault injects own address as first arg in execute_op — trader cannot substitute a different source |
 | No unauthorized guard functions | fn_name must be in AuthorizedOps(guard) before dispatch |

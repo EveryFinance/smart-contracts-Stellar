@@ -131,6 +131,35 @@ fn test_deposit_mints_real_share_tokens() {
     assert_eq!(token_balance(&w.env, &w.base, &w.vault_addr), amount);
 }
 
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_share_transfers_disabled_by_default() {
+    let w = setup_world();
+    let amount = 1_000_0000000i128;
+    w.vault.deposit(&amount, &w.user, &w.base, &0i128);
+
+    assert!(!w.vault.share_transfers_enabled());
+    assert!(w.vault.exit_cooldown_is_hard_control());
+    assert!(w.vault.pnl_tracking_is_accurate());
+    assert!(!w.share.transfers_enabled());
+    w.share.transfer(&w.user, &w.user2, &1i128);
+}
+
+#[test]
+fn test_vault_admin_can_enable_share_transfers() {
+    let w = setup_world();
+    let amount = 1_000_0000000i128;
+    w.vault.deposit(&amount, &w.user, &w.base, &0i128);
+
+    w.vault.set_share_transfers_enabled(&w.manager, &true);
+
+    assert!(w.vault.share_transfers_enabled());
+    assert!(!w.vault.exit_cooldown_is_hard_control());
+    assert!(!w.vault.pnl_tracking_is_accurate());
+    w.share.transfer(&w.user, &w.user2, &100_0000000i128);
+    assert_eq!(w.share.balance(&w.user2), 100_0000000i128);
+}
+
 /// Bootstrap: first depositor gets shares 1:1 with base amount.
 #[test]
 fn test_bootstrap_share_price_is_one() {
@@ -304,7 +333,9 @@ fn test_sequential_deposit_withdraw_integrity() {
     // Each user withdraws in reverse order.
     for i in (0..3).rev() {
         let before = token_balance(&w.env, &w.base, &users[i]);
-        let returned = w.vault.withdraw(&share_balances[i], &users[i], &users[i], &0i128);
+        let returned = w
+            .vault
+            .withdraw(&share_balances[i], &users[i], &users[i], &0i128);
         let after = token_balance(&w.env, &w.base, &users[i]);
         assert_eq!(after - before, returned);
         assert!(returned > 0);
@@ -358,5 +389,6 @@ fn test_set_deposit_cap_by_non_manager_panics() {
 fn test_withdraw_with_zero_shares_panics() {
     let w = setup_world();
     // user2 never deposited — has no shares.
-    w.vault.withdraw(&1_000_0000000i128, &w.user2, &w.user2, &0i128);
+    w.vault
+        .withdraw(&1_000_0000000i128, &w.user2, &w.user2, &0i128);
 }

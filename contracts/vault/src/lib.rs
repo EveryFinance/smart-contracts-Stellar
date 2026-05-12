@@ -51,14 +51,15 @@ mod storage;
 pub use error::VaultError;
 
 use soroban_sdk::{
+    auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
     contract, contractimpl, contracttype, panic_with_error, token, Address, Env, IntoVal, String,
-    Symbol, Vec,
+    Symbol, TryFromVal, Val, Vec,
 };
 
 use storage::{
-    clear_announced_fees, clear_op_state, get_active_guards, get_admin, get_announced_entry_fee_bps,
-    get_announced_exit_fee_bps, get_announced_fee_activation_ts, get_announced_mgmt_fee_bps,
-    get_announced_perf_fee_bps, get_authorized_ops, get_base_asset,
+    clear_announced_fees, clear_op_state, get_active_guards, get_admin,
+    get_announced_entry_fee_bps, get_announced_exit_fee_bps, get_announced_fee_activation_ts,
+    get_announced_mgmt_fee_bps, get_announced_perf_fee_bps, get_authorized_ops, get_base_asset,
     get_deposit_assets, get_deposit_cap, get_entry_fee_bps, get_exit_cooldown_secs,
     get_exit_fee_bps, get_factory, get_high_water_mark, get_last_deposit_ts_opt,
     get_last_mgmt_fee_ts, get_manager, get_manager_name, get_max_loss_bps, get_mgmt_fee_bps,
@@ -67,14 +68,15 @@ use storage::{
     get_value_manipulation_guard_enabled, is_initialized, is_member, is_seed_deposited,
     set_active_guards, set_admin, set_announced_entry_fee_bps, set_announced_exit_fee_bps,
     set_announced_fee_activation_ts, set_announced_mgmt_fee_bps, set_announced_perf_fee_bps,
-    set_authorized_ops, set_base_asset, set_deposit_assets, set_deposit_cap,
-    set_entry_fee_bps, set_exit_cooldown_secs, set_exit_fee_bps, set_factory, set_high_water_mark,
+    set_authorized_ops, set_base_asset, set_deposit_assets, set_deposit_cap, set_entry_fee_bps,
+    set_exit_cooldown_secs, set_exit_fee_bps, set_factory, set_high_water_mark,
     set_last_deposit_ts, set_last_mgmt_fee_ts, set_manager, set_manager_name, set_max_loss_bps,
-    set_member, set_mgmt_fee_bps, set_op_state, set_ops_paused, set_oracle, set_paused, set_perf_fee_bps,
-    set_portfolio_assets, set_private_pool, set_seed_deposited, set_share_token, set_trader,
-    set_treasury, set_user_position, set_value_manipulation_guard_enabled, OperationState,
-    FEE_DENOMINATOR, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD, MAX_ENTRY_EXIT_FEE_BPS,
-    MAX_GUARDS, MAX_MGMT_FEE_BPS, MAX_PERF_FEE_BPS, MAX_PORTFOLIO_ASSETS, SECONDS_PER_YEAR,
+    set_member, set_mgmt_fee_bps, set_op_state, set_ops_paused, set_oracle, set_paused,
+    set_perf_fee_bps, set_portfolio_assets, set_private_pool, set_seed_deposited, set_share_token,
+    set_trader, set_treasury, set_user_position, set_value_manipulation_guard_enabled,
+    OperationState, FEE_DENOMINATOR, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
+    MAX_ENTRY_EXIT_FEE_BPS, MAX_GUARDS, MAX_MGMT_FEE_BPS, MAX_PERF_FEE_BPS, MAX_PORTFOLIO_ASSETS,
+    SECONDS_PER_YEAR,
 };
 
 use events::{
@@ -91,6 +93,241 @@ const FEE_INCREASE_DELAY_SECS: u64 = 86_400;
 
 const OP_DEPOSIT: u32 = 1;
 const OP_WITHDRAW: u32 = 2;
+
+fn is_reserved_guard_function(env: &Env, fn_name: &Symbol) -> bool {
+    *fn_name == Symbol::new(env, "withdraw_fraction")
+        || *fn_name == Symbol::new(env, "get_total_value")
+        || *fn_name == Symbol::new(env, "asset_in_use")
+        || *fn_name == Symbol::new(env, "pause")
+        || *fn_name == Symbol::new(env, "unpause")
+        || *fn_name == Symbol::new(env, "initialize")
+        || *fn_name == Symbol::new(env, "deposit")
+        || *fn_name == Symbol::new(env, "withdraw")
+        || *fn_name == Symbol::new(env, "deposit_liquidity")
+        || *fn_name == Symbol::new(env, "get_value")
+        || *fn_name == Symbol::new(env, "get_share_balance")
+        || *fn_name == Symbol::new(env, "get_lp_balance")
+        || *fn_name == Symbol::new(env, "get_router")
+        || *fn_name == Symbol::new(env, "get_protocol_address")
+}
+
+fn arg_as_i128(env: &Env, args: &Vec<Val>, idx: u32) -> i128 {
+    args.get(idx)
+        .and_then(|v| i128::try_from_val(env, &v).ok())
+        .unwrap_or_else(|| panic_with_error!(env, VaultError::TradeGuardRejected))
+}
+
+fn arg_as_bool(env: &Env, args: &Vec<Val>, idx: u32) -> bool {
+    args.get(idx)
+        .and_then(|v| bool::try_from_val(env, &v).ok())
+        .unwrap_or_else(|| panic_with_error!(env, VaultError::TradeGuardRejected))
+}
+
+fn arg_as_address(env: &Env, args: &Vec<Val>, idx: u32) -> Address {
+    args.get(idx)
+        .and_then(|v| Address::try_from_val(env, &v).ok())
+        .unwrap_or_else(|| panic_with_error!(env, VaultError::TradeGuardRejected))
+}
+
+fn push_transfer_auth(
+    env: &Env,
+    entries: &mut Vec<InvokerContractAuthEntry>,
+    token: Address,
+    from: Address,
+    to: Address,
+    amount: i128,
+) {
+    if amount <= 0 {
+        panic_with_error!(env, VaultError::InvalidAmount);
+    }
+    entries.push_back(InvokerContractAuthEntry::Contract(SubContractInvocation {
+        context: ContractContext {
+            contract: token,
+            fn_name: Symbol::new(env, "transfer"),
+            args: (from, to, amount).into_val(env),
+        },
+        sub_invocations: Vec::new(env),
+    }));
+}
+
+fn assert_transfer_asset_allowed(env: &Env, asset: &Address) {
+    let portfolio = get_portfolio_assets(env);
+    if portfolio.is_empty() {
+        if *asset != get_base_asset(env) {
+            panic_with_error!(env, VaultError::AssetNotInPortfolio);
+        }
+        return;
+    }
+    if !portfolio.contains(asset.clone()) {
+        panic_with_error!(env, VaultError::AssetNotInPortfolio);
+    }
+    if let Some(factory) = get_factory(env) {
+        let is_auth: bool = env.invoke_contract(
+            &factory,
+            &Symbol::new(env, "is_authorized_asset"),
+            (asset.clone(),).into_val(env),
+        );
+        if !is_auth {
+            panic_with_error!(env, VaultError::AssetNotAuthorized);
+        }
+    }
+}
+
+fn strategy_asset(env: &Env, guard: &Address, fn_name: &str) -> Address {
+    env.invoke_contract(guard, &Symbol::new(env, fn_name), ().into_val(env))
+}
+
+fn authorize_execute_op_transfers(
+    env: &Env,
+    vault: &Address,
+    guard: &Address,
+    fn_name: &Symbol,
+    args: &Vec<Val>,
+) {
+    let mut entries: Vec<InvokerContractAuthEntry> = Vec::new(env);
+    let guard_addr = guard.clone();
+
+    if *fn_name == Symbol::new(env, "supply") {
+        let asset = strategy_asset(env, guard, "asset");
+        assert_transfer_asset_allowed(env, &asset);
+        let amount = arg_as_i128(env, args, 0);
+        push_transfer_auth(env, &mut entries, asset, vault.clone(), guard_addr, amount);
+    } else if *fn_name == Symbol::new(env, "add_liquidity") {
+        let asset_a = strategy_asset(env, guard, "asset_a");
+        let asset_b = strategy_asset(env, guard, "asset_b");
+        assert_transfer_asset_allowed(env, &asset_a);
+        assert_transfer_asset_allowed(env, &asset_b);
+        let amount_a = arg_as_i128(env, args, 0);
+        let amount_b = arg_as_i128(env, args, 1);
+        push_transfer_auth(
+            env,
+            &mut entries,
+            asset_a,
+            vault.clone(),
+            guard_addr.clone(),
+            amount_a,
+        );
+        push_transfer_auth(
+            env,
+            &mut entries,
+            asset_b,
+            vault.clone(),
+            guard_addr,
+            amount_b,
+        );
+    } else if *fn_name == Symbol::new(env, "swap") {
+        if args.len() == 4 {
+            let from_asset = arg_as_address(env, args, 0);
+            let to_asset = arg_as_address(env, args, 1);
+            let asset_a = strategy_asset(env, guard, "asset_a");
+            let asset_b = strategy_asset(env, guard, "asset_b");
+            let valid_pair = (from_asset == asset_a && to_asset == asset_b)
+                || (from_asset == asset_b && to_asset == asset_a);
+            if !valid_pair {
+                panic_with_error!(env, VaultError::TradeGuardRejected);
+            }
+            assert_transfer_asset_allowed(env, &from_asset);
+            let amount_in = arg_as_i128(env, args, 2);
+            push_transfer_auth(
+                env,
+                &mut entries,
+                from_asset,
+                vault.clone(),
+                guard_addr,
+                amount_in,
+            );
+        } else if args.len() == 3 {
+            let sell_a = arg_as_bool(env, args, 0);
+            let asset = if sell_a {
+                strategy_asset(env, guard, "asset_a")
+            } else {
+                strategy_asset(env, guard, "asset_b")
+            };
+            assert_transfer_asset_allowed(env, &asset);
+            let amount_in = arg_as_i128(env, args, 1);
+            push_transfer_auth(
+                env,
+                &mut entries,
+                asset,
+                vault.clone(),
+                guard_addr,
+                amount_in,
+            );
+        } else {
+            panic_with_error!(env, VaultError::TradeGuardRejected);
+        }
+    }
+
+    if !entries.is_empty() {
+        env.authorize_as_current_contract(entries);
+    }
+}
+
+fn asset_handler(env: &Env) -> Option<Address> {
+    get_factory(env).and_then(|factory| {
+        env.invoke_contract(
+            &factory,
+            &Symbol::new(env, "get_asset_handler"),
+            ().into_val(env),
+        )
+    })
+}
+
+fn price_asset_to_base(
+    env: &Env,
+    asset: &Address,
+    base_asset: &Address,
+    amount: i128,
+    asset_handler_opt: &Option<Address>,
+    oracle_opt: &Option<Address>,
+) -> i128 {
+    if amount == 0 {
+        return 0;
+    }
+    if *asset == *base_asset {
+        return amount;
+    }
+
+    let price: i128 = if let Some(ref ah) = asset_handler_opt {
+        env.invoke_contract(
+            ah,
+            &Symbol::new(env, "get_price"),
+            (asset.clone(),).into_val(env),
+        )
+    } else if let Some(ref oracle) = oracle_opt {
+        env.invoke_contract(
+            oracle,
+            &Symbol::new(env, "get_price"),
+            (asset.clone(),).into_val(env),
+        )
+    } else {
+        panic_with_error!(env, VaultError::OracleRequired);
+    };
+
+    if price <= 0 {
+        panic_with_error!(env, VaultError::InvalidOraclePrice);
+    }
+    checked_mul_div(env, amount, price, PRICE_PRECISION)
+}
+
+fn checked_add(env: &Env, a: i128, b: i128) -> i128 {
+    a.checked_add(b)
+        .unwrap_or_else(|| panic_with_error!(env, VaultError::Overflow))
+}
+
+fn checked_sub(env: &Env, a: i128, b: i128) -> i128 {
+    a.checked_sub(b)
+        .unwrap_or_else(|| panic_with_error!(env, VaultError::Overflow))
+}
+
+fn checked_mul_div(env: &Env, a: i128, b: i128, denominator: i128) -> i128 {
+    if denominator <= 0 {
+        panic_with_error!(env, VaultError::InvalidAmount);
+    }
+    a.checked_mul(b)
+        .map(|v| v / denominator)
+        .unwrap_or_else(|| panic_with_error!(env, VaultError::Overflow))
+}
 
 // ---------------------------------------------------------------------------
 // Cross-contract helpers
@@ -123,6 +360,20 @@ mod share {
     pub fn set_admin(env: &Env, share_token: &Address, new_admin: &Address) {
         let args = (new_admin.clone(),).into_val(env);
         env.invoke_contract::<()>(share_token, &Symbol::new(env, "set_admin"), args);
+    }
+
+    pub fn set_transfers_enabled(env: &Env, share_token: &Address, enabled: bool) {
+        let args = (enabled,).into_val(env);
+        env.invoke_contract::<()>(
+            share_token,
+            &Symbol::new(env, "set_transfers_enabled"),
+            args,
+        );
+    }
+
+    pub fn transfers_enabled(env: &Env, share_token: &Address) -> bool {
+        let args = ().into_val(env);
+        env.invoke_contract(share_token, &Symbol::new(env, "transfers_enabled"), args)
     }
 }
 
@@ -309,7 +560,13 @@ impl Vault {
     /// * [`VaultError::InvalidAmount`]
     /// * [`VaultError::AssetNotInPortfolio`] — not in deposit asset list
     /// * [`VaultError::DepositCapExceeded`]
-    pub fn deposit(env: Env, amount: i128, from: Address, asset: Address, min_shares_out: i128) -> i128 {
+    pub fn deposit(
+        env: Env,
+        amount: i128,
+        from: Address,
+        asset: Address,
+        min_shares_out: i128,
+    ) -> i128 {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
@@ -341,6 +598,16 @@ impl Vault {
             if !deposit_assets.contains(asset.clone()) {
                 panic_with_error!(&env, VaultError::AssetNotInPortfolio);
             }
+            if let Some(factory) = get_factory(&env) {
+                let is_auth: bool = env.invoke_contract(
+                    &factory,
+                    &Symbol::new(&env, "is_authorized_asset"),
+                    (asset.clone(),).into_val(&env),
+                );
+                if !is_auth {
+                    panic_with_error!(&env, VaultError::AssetNotAuthorized);
+                }
+            }
         } else if asset != base_asset {
             // Legacy mode: only base_asset accepted.
             panic_with_error!(&env, VaultError::AssetNotInPortfolio);
@@ -353,32 +620,32 @@ impl Vault {
         let nav = Self::nav(&env, &vault, &base_asset);
         Self::op_guard_pre_check(&env, &from, OP_DEPOSIT, nav);
         let total_supply = share::total_supply(&env, &share_token);
-        let share_price = Self::share_price(nav, total_supply);
+        let share_price = Self::share_price(&env, nav, total_supply);
 
-        // Convert deposit amount to base-asset value via oracle (if non-base).
-        let deposit_value = if asset == base_asset {
-            amount
-        } else {
-            let oracle = get_oracle(&env)
-                .unwrap_or_else(|| panic_with_error!(&env, VaultError::OracleRequired));
-            let price: i128 = env.invoke_contract(
-                &oracle,
-                &Symbol::new(&env, "get_price"),
-                (asset.clone(),).into_val(&env),
-            );
-            amount.saturating_mul(price) / PRICE_PRECISION
-        };
+        // Convert deposits with the same price source used by NAV: factory
+        // AssetHandler first, then the legacy vault-wide oracle fallback.
+        let asset_handler_opt = asset_handler(&env);
+        let oracle_opt = get_oracle(&env);
+        let deposit_value = price_asset_to_base(
+            &env,
+            &asset,
+            &base_asset,
+            amount,
+            &asset_handler_opt,
+            &oracle_opt,
+        );
 
         // Total shares the deposit value buys at current price.
         let total_shares = if share_price == 0 || total_supply == 0 {
             deposit_value
         } else {
-            deposit_value * PRICE_PRECISION / share_price
+            checked_mul_div(&env, deposit_value, PRICE_PRECISION, share_price)
         };
 
         let entry_fee_bps = get_entry_fee_bps(&env) as i128;
-        let fee_shares = total_shares * entry_fee_bps / FEE_DENOMINATOR as i128;
-        let user_shares = total_shares - fee_shares;
+        let fee_shares =
+            checked_mul_div(&env, total_shares, entry_fee_bps, FEE_DENOMINATOR as i128);
+        let user_shares = checked_sub(&env, total_shares, fee_shares);
 
         if user_shares <= 0 {
             panic_with_error!(&env, VaultError::InvalidAmount);
@@ -386,7 +653,7 @@ impl Vault {
 
         // Deposit cap (checked in base-asset value terms).
         let cap = get_deposit_cap(&env);
-        if cap > 0 && nav + deposit_value > cap {
+        if cap > 0 && checked_add(&env, nav, deposit_value) > cap {
             panic_with_error!(&env, VaultError::DepositCapExceeded);
         }
 
@@ -402,7 +669,7 @@ impl Vault {
         // PnL: increase user cost basis by the deposit value (net, after fee).
         {
             let mut pos = get_user_position(&env, &from);
-            pos.cost_basis = pos.cost_basis.saturating_add(deposit_value);
+            pos.cost_basis = checked_add(&env, pos.cost_basis, deposit_value);
             set_user_position(&env, &from, &pos);
         }
 
@@ -449,7 +716,13 @@ impl Vault {
     /// * [`VaultError::InvalidAmount`]
     /// * [`VaultError::InsufficientShares`]
     /// * [`VaultError::CooldownActive`]
-    pub fn withdraw(env: Env, share_amount: i128, from: Address, to: Address, min_base_out: i128) -> i128 {
+    pub fn withdraw(
+        env: Env,
+        share_amount: i128,
+        from: Address,
+        to: Address,
+        min_base_out: i128,
+    ) -> i128 {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
@@ -490,14 +763,18 @@ impl Vault {
         let total_supply = share::total_supply(&env, &share_token);
         let nav = Self::nav(&env, &vault, &base_asset);
         Self::op_guard_pre_check(&env, &from, OP_WITHDRAW, nav);
-        let share_price = Self::share_price(nav, total_supply);
+        let share_price = Self::share_price(&env, nav, total_supply);
 
         // Gross value and exit fee (fee fraction stays in vault).
         let exit_fee_bps = get_exit_fee_bps(&env) as i128;
         // Effective numerator after exit fee: shares_burned × (1 − fee).
         // We apply this to each asset transfer individually.
-        let numerator = share_amount * (FEE_DENOMINATOR as i128 - exit_fee_bps)
-            / FEE_DENOMINATOR as i128;
+        let numerator = checked_mul_div(
+            &env,
+            share_amount,
+            FEE_DENOMINATOR as i128 - exit_fee_bps,
+            FEE_DENOMINATOR as i128,
+        );
         let denominator = total_supply;
 
         if numerator <= 0 {
@@ -505,8 +782,13 @@ impl Vault {
         }
 
         // Slippage: approximate base-asset value to be received.
-        let gross_base = share_amount * share_price / PRICE_PRECISION;
-        let net_base = gross_base * (FEE_DENOMINATOR as i128 - exit_fee_bps) / FEE_DENOMINATOR as i128;
+        let gross_base = checked_mul_div(&env, share_amount, share_price, PRICE_PRECISION);
+        let net_base = checked_mul_div(
+            &env,
+            gross_base,
+            FEE_DENOMINATOR as i128 - exit_fee_bps,
+            FEE_DENOMINATOR as i128,
+        );
         if min_base_out > 0 && net_base < min_base_out {
             panic_with_error!(&env, VaultError::SlippageTooHigh);
         }
@@ -518,11 +800,11 @@ impl Vault {
             // We use total_supply for avg cost calculation.
             if pos.cost_basis > 0 && share_balance > 0 {
                 let avg_cost_per_share = pos.cost_basis / share_balance;
-                let withdrawal_cost = avg_cost_per_share * share_amount;
+                let withdrawal_cost = checked_mul_div(&env, avg_cost_per_share, share_amount, 1);
                 let withdrawal_value = net_base;
-                let realized = withdrawal_value - withdrawal_cost;
-                pos.realized_pnl = pos.realized_pnl.saturating_add(realized);
-                pos.cost_basis = pos.cost_basis.saturating_sub(withdrawal_cost).max(0);
+                let realized = checked_sub(&env, withdrawal_value, withdrawal_cost);
+                pos.realized_pnl = checked_add(&env, pos.realized_pnl, realized);
+                pos.cost_basis = checked_sub(&env, pos.cost_basis, withdrawal_cost).max(0);
             }
             set_user_position(&env, &from, &pos);
         }
@@ -545,8 +827,10 @@ impl Vault {
             // Multi-asset mode: proportional across all portfolio assets.
             for asset in portfolio.iter() {
                 let bal = token::Client::new(&env, &asset).balance(&vault);
-                if bal == 0 { continue; }
-                let amt = bal * numerator / denominator;
+                if bal == 0 {
+                    continue;
+                }
+                let amt = checked_mul_div(&env, bal, numerator, denominator);
                 if amt > 0 {
                     token::Client::new(&env, &asset).transfer(&vault, &to, &amt);
                 }
@@ -630,8 +914,21 @@ impl Vault {
         if !guards.contains(guard.clone()) {
             panic_with_error!(&env, VaultError::StrategyNotWhitelisted);
         }
+        if let Some(factory) = get_factory(&env) {
+            let is_auth: bool = env.invoke_contract(
+                &factory,
+                &Symbol::new(&env, "is_authorized_guard"),
+                (guard.clone(),).into_val(&env),
+            );
+            if !is_auth {
+                panic_with_error!(&env, VaultError::GuardNotAuthorized);
+            }
+        }
 
         // fn_name must be in the authorized set for this guard.
+        if is_reserved_guard_function(&env, &fn_name) {
+            panic_with_error!(&env, VaultError::TradeGuardRejected);
+        }
         let auth_ops = get_authorized_ops(&env, &guard);
         if !auth_ops.contains(fn_name.clone()) {
             panic_with_error!(&env, VaultError::TradeGuardRejected);
@@ -656,14 +953,21 @@ impl Vault {
             full_args.push_back(arg);
         }
 
+        authorize_execute_op_transfers(&env, &vault, &guard, &fn_name, &args);
+
         // Dispatch directly to the guard's named function.
         let result: soroban_sdk::Val = env.invoke_contract(&guard, &fn_name, full_args);
 
         // TVL guard: revert if NAV dropped beyond tolerance.
         if max_loss_bps > 0 {
             let nav_after = Self::nav(&env, &vault, &base_asset);
-            let min_nav = nav_before
-                .saturating_sub(nav_before * max_loss_bps as i128 / FEE_DENOMINATOR as i128);
+            let allowed_loss = checked_mul_div(
+                &env,
+                nav_before,
+                max_loss_bps as i128,
+                FEE_DENOMINATOR as i128,
+            );
+            let min_nav = checked_sub(&env, nav_before, allowed_loss);
             if nav_after < min_nav {
                 panic_with_error!(&env, VaultError::TvlGuardTripped);
             }
@@ -675,23 +979,42 @@ impl Vault {
     }
 
     // -----------------------------------------------------------------------
-    // Fee collection (internal — called before every deposit/withdraw)
+    // Fee collection
     // -----------------------------------------------------------------------
 
-    /// Accrue management fee and performance fee, minting shares to manager.
-    fn collect_fees(env: &Env, vault: &Address, share_token: &Address, _manager: &Address) {
+    /// Permissionlessly settle pending management and performance fees.
+    ///
+    /// Fees are deterministic from vault state: the caller cannot choose the
+    /// fee amount, recipient, NAV, or timestamp. This lets keepers, users, UIs,
+    /// or the manager sync fee accounting even when no deposit/withdraw occurs.
+    ///
+    /// Returns the number of fee shares minted to the treasury.
+    pub fn collect_pending_fees(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        let vault = env.current_contract_address();
+        let share_token = get_share_token(&env);
+        let manager = get_manager(&env);
+        Self::collect_fees(&env, &vault, &share_token, &manager)
+    }
+
+    /// Accrue management fee and performance fee, minting shares to treasury.
+    fn collect_fees(env: &Env, vault: &Address, share_token: &Address, _manager: &Address) -> i128 {
         let total_supply = share::total_supply(env, share_token);
         if total_supply == 0 {
             // Nothing to accrue yet.
             let now = env.ledger().timestamp();
             set_last_mgmt_fee_ts(env, now);
-            return;
+            return 0;
         }
 
         // All fees go to the treasury.
         let treasury = get_treasury(env);
         let base_asset = get_base_asset(env);
         let nav = Self::nav(env, vault, &base_asset);
+        let mut minted_shares = 0i128;
 
         // ---- Management fee (streaming) ------------------------------------
         let mgmt_fee_bps = get_mgmt_fee_bps(env) as i128;
@@ -709,14 +1032,15 @@ impl Vault {
                     .checked_mul(mgmt_fee_bps)
                     .and_then(|v| v.checked_mul(elapsed))
                     .map(|v| v / (FEE_DENOMINATOR as i128 * SECONDS_PER_YEAR as i128))
-                    .unwrap_or(0);
+                    .unwrap_or_else(|| panic_with_error!(env, VaultError::Overflow));
 
                 if fee_value > 0 {
                     // Convert fee value to shares at current price.
-                    let price = Self::share_price(nav, total_supply);
-                    let fee_shares = fee_value * PRICE_PRECISION / price.max(1);
+                    let price = Self::share_price(env, nav, total_supply);
+                    let fee_shares = checked_mul_div(env, fee_value, PRICE_PRECISION, price.max(1));
                     if fee_shares > 0 {
                         share::mint(env, share_token, &treasury, fee_shares);
+                        minted_shares = checked_add(env, minted_shares, fee_shares);
                         mgmt_fee_event(env, fee_shares, now);
                     }
                 }
@@ -729,7 +1053,7 @@ impl Vault {
             // Re-read total supply (may have increased from mgmt fee minting).
             let new_supply = share::total_supply(env, share_token);
             let new_nav = Self::nav(env, vault, &base_asset);
-            let current_price = Self::share_price(new_nav, new_supply);
+            let current_price = Self::share_price(env, new_nav, new_supply);
             let hwm = get_high_water_mark(env);
 
             if current_price > hwm && hwm > 0 {
@@ -739,18 +1063,22 @@ impl Vault {
                     .checked_mul(gain)
                     .and_then(|v| v.checked_mul(perf_fee_bps))
                     .map(|v| v / (PRICE_PRECISION * FEE_DENOMINATOR as i128))
-                    .unwrap_or(0);
+                    .unwrap_or_else(|| panic_with_error!(env, VaultError::Overflow));
 
                 if fee_value > 0 {
-                    let fee_shares = fee_value * PRICE_PRECISION / current_price.max(1);
+                    let fee_shares =
+                        checked_mul_div(env, fee_value, PRICE_PRECISION, current_price.max(1));
                     if fee_shares > 0 {
                         share::mint(env, share_token, &treasury, fee_shares);
+                        minted_shares = checked_add(env, minted_shares, fee_shares);
                         perf_fee_event(env, fee_shares, current_price);
                     }
                 }
                 set_high_water_mark(env, current_price);
             }
         }
+
+        minted_shares
     }
 
     // -----------------------------------------------------------------------
@@ -822,7 +1150,9 @@ impl Vault {
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         caller.require_auth();
-        if caller != get_admin(&env) && caller != get_manager(&env) {
+        let factory = get_factory(&env);
+        let factory_authorized = factory.as_ref().map(|f| caller == *f).unwrap_or(false);
+        if caller != get_admin(&env) && caller != get_manager(&env) && !factory_authorized {
             panic_with_error!(&env, VaultError::NotManager);
         }
         set_manager(&env, &new_manager);
@@ -851,6 +1181,24 @@ impl Vault {
             panic_with_error!(&env, VaultError::NotManager);
         }
         set_treasury(&env, &treasury);
+    }
+
+    /// Enable or disable transferable vault shares. Admin only.
+    ///
+    /// Shares are non-transferable by default so exit cooldown and per-user PnL
+    /// accounting remain accurate. If transfers are enabled, cooldown becomes a
+    /// same-address friction control and PnL becomes informational unless a
+    /// future transfer-aware accounting design is added.
+    pub fn set_share_transfers_enabled(env: Env, caller: Address, enabled: bool) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        caller.require_auth();
+        if caller != get_admin(&env) {
+            panic_with_error!(&env, VaultError::NotAdmin);
+        }
+        let share_token = get_share_token(&env);
+        share::set_transfers_enabled(&env, &share_token, enabled);
     }
 
     /// Transfer the trader role to a new address. Manager only.
@@ -1067,8 +1415,8 @@ impl Vault {
         if caller != get_manager(&env) {
             panic_with_error!(&env, VaultError::NotManager);
         }
-        // 0 = guard disabled; values above 10 000 bps are out of range.
-        if bps > FEE_DENOMINATOR {
+        // Keep the NAV-loss guard active; 10 000 bps would allow total loss.
+        if bps == 0 || bps >= FEE_DENOMINATOR {
             panic_with_error!(&env, VaultError::InvalidAmount);
         }
         set_max_loss_bps(&env, bps);
@@ -1189,18 +1537,37 @@ impl Vault {
     ///
     /// # Errors
     /// * [`VaultError::SeedAlreadyDeposited`]
-    pub fn seed_deposit(env: Env, seed_amount: i128) {
+    pub fn seed_deposit(env: Env, caller: Address, seed_amount: i128) {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
+        caller.require_auth();
+        let factory =
+            get_factory(&env).unwrap_or_else(|| panic_with_error!(&env, VaultError::FactoryNotSet));
+        if caller != factory {
+            panic_with_error!(&env, VaultError::NotFactory);
+        }
+        if seed_amount <= 0 {
+            panic_with_error!(&env, VaultError::InvalidAmount);
+        }
         if is_seed_deposited(&env) {
             panic_with_error!(&env, VaultError::SeedAlreadyDeposited);
         }
 
+        let vault = env.current_contract_address();
+        let base_asset = get_base_asset(&env);
+        let vault_balance = token::Client::new(&env, &base_asset).balance(&vault);
+        if vault_balance < seed_amount {
+            panic_with_error!(&env, VaultError::InsufficientLiquidity);
+        }
+
         let share_token = get_share_token(&env);
         // Burn address: all-zeros, no one controls this key.
-        let burn_addr = Address::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF");
+        let burn_addr = Address::from_str(
+            &env,
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        );
         share::mint(&env, &share_token, &burn_addr, seed_amount);
         set_seed_deposited(&env);
     }
@@ -1493,6 +1860,15 @@ impl Vault {
         if caller != get_manager(&env) {
             panic_with_error!(&env, VaultError::NotManager);
         }
+        let active_guards = get_active_guards(&env);
+        if !active_guards.contains(guard.clone()) {
+            panic_with_error!(&env, VaultError::StrategyNotWhitelisted);
+        }
+        for op in ops.iter() {
+            if is_reserved_guard_function(&env, &op) {
+                panic_with_error!(&env, VaultError::TradeGuardRejected);
+            }
+        }
         set_authorized_ops(&env, &guard, &ops);
     }
 
@@ -1528,7 +1904,7 @@ impl Vault {
         let share_token = get_share_token(&env);
         let nav = Self::nav(&env, &vault, &base_asset);
         let total_supply = share::total_supply(&env, &share_token);
-        Self::share_price(nav, total_supply)
+        Self::share_price(&env, nav, total_supply)
     }
 
     pub fn get_manager(env: Env) -> Address {
@@ -1557,6 +1933,30 @@ impl Vault {
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         get_share_token(&env)
+    }
+
+    pub fn share_transfers_enabled(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        let share_token = get_share_token(&env);
+        share::transfers_enabled(&env, &share_token)
+    }
+
+    pub fn exit_cooldown_is_hard_control(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        let share_token = get_share_token(&env);
+        !share::transfers_enabled(&env, &share_token)
+    }
+
+    pub fn pnl_tracking_is_accurate(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        let share_token = get_share_token(&env);
+        !share::transfers_enabled(&env, &share_token)
     }
 
     pub fn is_paused(env: Env) -> bool {
@@ -1651,11 +2051,11 @@ impl Vault {
         let shares = token::Client::new(&env, &share_token).balance(&user);
         let nav = Self::nav(&env, &vault, &base_asset);
         let total_supply = share::total_supply(&env, &share_token);
-        let share_price = Self::share_price(nav, total_supply);
+        let share_price = Self::share_price(&env, nav, total_supply);
 
-        let current_value = shares * share_price / PRICE_PRECISION;
-        let unrealized_pnl = current_value - pos.cost_basis;
-        let total_pnl = pos.realized_pnl + unrealized_pnl;
+        let current_value = checked_mul_div(&env, shares, share_price, PRICE_PRECISION);
+        let unrealized_pnl = checked_sub(&env, current_value, pos.cost_basis);
+        let total_pnl = checked_add(&env, pos.realized_pnl, unrealized_pnl);
 
         UserPnLReport {
             cost_basis: pos.cost_basis,
@@ -1705,43 +2105,32 @@ impl Vault {
     fn nav(env: &Env, vault: &Address, base_asset: &Address) -> i128 {
         let mut total: i128 = 0;
 
-        // Only assets explicitly whitelisted in PortfolioAssets by the manager
-        // are counted.  The base asset itself must be added to this list for
-        // idle vault cash to appear in NAV.
         let portfolio = get_portfolio_assets(env);
-        // AssetHandler lives in the factory — fetch it from there if a factory is configured.
-        let asset_handler_opt: Option<Address> = get_factory(env).and_then(|factory| {
-            env.invoke_contract(
-                &factory,
-                &Symbol::new(env, "get_asset_handler"),
-                ().into_val(env),
-            )
-        });
+        // Legacy mode has no PortfolioAssets list. Idle base must still be
+        // counted or bootstrap deposits can leave the vault with zero NAV.
+        if portfolio.is_empty() {
+            let bal = token::Client::new(env, base_asset).balance(vault);
+            total = checked_add(env, total, bal);
+        }
+
+        // AssetHandler lives in the factory; it is the preferred dHedge-style
+        // per-asset price source. The vault-wide oracle is kept as fallback.
+        let asset_handler_opt = asset_handler(env);
         let oracle_opt = get_oracle(env);
         for asset in portfolio.iter() {
             let bal = token::Client::new(env, &asset).balance(vault);
-            if bal == 0 {
-                continue;
-            }
-            if asset == *base_asset {
-                total = total.saturating_add(bal);
-            } else if let Some(ref ah) = asset_handler_opt {
-                // Per-asset pricing via AssetHandler (dHedge V2 pattern).
-                let price: i128 = env.invoke_contract(
-                    ah,
-                    &Symbol::new(env, "get_price"),
-                    (asset.clone(),).into_val(env),
-                );
-                total = total.saturating_add(bal.saturating_mul(price) / PRICE_PRECISION);
-            } else if let Some(ref oracle) = oracle_opt {
-                // Fallback: single vault-wide oracle.
-                let price: i128 = env.invoke_contract(
-                    oracle,
-                    &Symbol::new(env, "get_price"),
-                    (asset.clone(),).into_val(env),
-                );
-                total = total.saturating_add(bal.saturating_mul(price) / PRICE_PRECISION);
-            }
+            total = checked_add(
+                env,
+                total,
+                price_asset_to_base(
+                    env,
+                    &asset,
+                    base_asset,
+                    bal,
+                    &asset_handler_opt,
+                    &oracle_opt,
+                ),
+            );
         }
 
         // Active guard positions always contribute regardless of portfolio config.
@@ -1753,22 +2142,29 @@ impl Vault {
                 &Symbol::new(env, "get_total_value"),
                 (vault.clone(),).into_val(env),
             );
-            total = total.saturating_add(v);
+            if v < 0 {
+                panic_with_error!(env, VaultError::InvalidAmount);
+            }
+            total = checked_add(env, total, v);
         }
 
         total
     }
 
-    fn share_price(nav: i128, total_supply: i128) -> i128 {
+    fn share_price(env: &Env, nav: i128, total_supply: i128) -> i128 {
         if total_supply == 0 || nav == 0 {
             PRICE_PRECISION // bootstrap price = 1.0
         } else {
-            let p = nav * PRICE_PRECISION / total_supply;
+            let p = checked_mul_div(env, nav, PRICE_PRECISION, total_supply);
             // Floor at 1 to prevent a zero share price when
             // nav * PRICE_PRECISION < total_supply (extreme dilution scenario).
             // A zero price would cause withdraw to compute base_gross = 0 and
             // revert with InvalidAmount, permanently locking all funds.
-            if p == 0 { 1 } else { p }
+            if p == 0 {
+                1
+            } else {
+                p
+            }
         }
     }
 
@@ -1802,7 +2198,6 @@ impl Vault {
         };
         set_op_state(env, actor, &state);
     }
-
 }
 
 #[cfg(test)]

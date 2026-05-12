@@ -11,11 +11,8 @@
 //! | `AssetB`       | `Address` | Second token in the Phoenix pair                 |
 //! | `ShareToken`   | `Address` | Phoenix LP share token (auto-queried from pool)  |
 //! | `PhoenixPool`  | `Address` | Phoenix pool contract                            |
-//! | `Manager`      | `Address` | Account allowed to pause / unpause               |
 //! | `Name`         | `String`  | Human-readable strategy name                     |
-//! | `Paused`       | `bool`    | Emergency pause flag                             |
 //! | `TotalShares`  | `i128`    | Running total of Phoenix share tokens held       |
-//! | `Oracle`       | `Address` | Optional oracle used for reserve decomposition   |
 
 use crate::error::PhoenixLpError;
 use soroban_sdk::{contracttype, panic_with_error, Address, Env, String};
@@ -31,6 +28,9 @@ pub const INSTANCE_BUMP_AMOUNT: u32 = 34_560;
 /// Trigger a bump when the remaining instance TTL drops below this threshold.
 /// 17 280 ledgers ≈ 1.2 days.
 pub const INSTANCE_LIFETIME_THRESHOLD: u32 = 17_280;
+/// Persistent init flag TTL: effectively permanent.
+pub const PERSISTENT_BUMP_AMOUNT: u32 = u32::MAX;
+pub const PERSISTENT_LIFETIME_THRESHOLD: u32 = u32::MAX / 2;
 
 // ---------------------------------------------------------------------------
 // Storage key enum
@@ -52,19 +52,8 @@ pub enum DataKey {
     ShareToken,
     /// Phoenix pool contract used for `provide_liquidity` / `withdraw_liquidity`.
     PhoenixPool,
-    /// Manager address captured at initialization only.
-    ///
-    /// This address is stored solely to satisfy the `manager.require_auth()`
-    /// call during `initialize` (front-running prevention).  It is **not**
-    /// consulted by post-initialization admin operations (`pause`, `unpause`,
-    /// `set_oracle`), which instead derive authority from `vault.get_manager()`
-    /// on-chain at call time.
-    Manager,
     /// Human-readable name for this strategy instance.
     Name,
-    /// Emergency pause flag.  When `true`, `deposit_liquidity` and `withdraw`
-    /// revert immediately.
-    Paused,
     /// Cumulative Phoenix share tokens held by this strategy contract.
     /// Incremented on `deposit_liquidity`, decremented on `withdraw`.
     TotalShares,
@@ -72,6 +61,8 @@ pub enum DataKey {
     /// Factory address cached during initialize so get_total_value can reach
     /// AssetHandler without calling back into the vault (re-entry prevention).
     Factory,
+    /// Persistent initialization flag.
+    Initialized,
 }
 
 // ---------------------------------------------------------------------------
@@ -88,9 +79,20 @@ fn bump(env: &Env) {
 // Initialization guard
 // ---------------------------------------------------------------------------
 
+/// Persist the initialization flag in persistent storage so instance TTL expiry
+/// cannot reopen initialization for a strategy address that still holds shares.
+pub fn set_initialized(env: &Env) {
+    env.storage().persistent().set(&DataKey::Initialized, &true);
+    env.storage().persistent().extend_ttl(
+        &DataKey::Initialized,
+        PERSISTENT_LIFETIME_THRESHOLD,
+        PERSISTENT_BUMP_AMOUNT,
+    );
+}
+
 /// Return `true` when the strategy has been initialized.
 pub fn is_initialized(env: &Env) -> bool {
-    env.storage().instance().has(&DataKey::Vault)
+    env.storage().persistent().has(&DataKey::Initialized)
 }
 
 // ---------------------------------------------------------------------------
@@ -172,29 +174,8 @@ addr_set!(set_share_token, ShareToken);
 addr_get!(get_share_token, ShareToken);
 addr_set!(set_phoenix_pool, PhoenixPool);
 addr_get!(get_phoenix_pool, PhoenixPool);
-addr_set!(set_manager, Manager);
-addr_get!(get_manager, Manager);
 str_set!(set_name, Name);
 str_get!(get_name, Name);
-
-// ---------------------------------------------------------------------------
-// Pause flag
-// ---------------------------------------------------------------------------
-
-/// Persist the pause flag.
-pub fn set_paused(env: &Env, v: bool) {
-    bump(env);
-    env.storage().instance().set(&DataKey::Paused, &v);
-}
-
-/// Read the pause flag (defaults to `false` when not yet set).
-pub fn get_paused(env: &Env) -> bool {
-    bump(env);
-    env.storage()
-        .instance()
-        .get(&DataKey::Paused)
-        .unwrap_or(false)
-}
 
 // ---------------------------------------------------------------------------
 // Total shares

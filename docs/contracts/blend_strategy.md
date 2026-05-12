@@ -8,18 +8,20 @@ Single-asset strategy adapter for Blend protocol.
 
 ## Public Methods
 
-- `initialize(vault, asset, protocol, manager, name)`
-- `deposit(amount, from) -> i128`
-- `withdraw(amount, from, to) -> i128`
+- `initialize(vault, asset, protocol, name)`
+- `supply(vault, amount)`
+- `withdraw_from_lending(vault, amount)`
+- `withdraw_fraction(vault, numerator, denominator, to)`
 - `get_value(_vault) -> i128`
+- `get_total_value(vault) -> i128`
 - `sync_position(caller, actual_position)`
-- `asset()`, `get_protocol_address()`, `get_name()`, `is_paused()`
-- `pause(caller)`, `unpause(caller)`
+- `asset()`, `get_protocol_address()`, `get_name()`
 
 ## Access Control
 
-- `deposit`/`withdraw`: vault-only (`from == vault`, auth required).
-- `pause`/`unpause`/`sync_position`: manager-only.
+- Strategy execution functions are vault-only: the vault address is injected by `vault.execute_op`.
+- `sync_position`: manager-only.
+- Pause/unpause live only on the vault; the strategy does not store a manager or pause flag.
 
 ## Notes
 

@@ -15,7 +15,7 @@ Main protocol engine for:
 
 | Role | Who | Responsibilities |
 |------|-----|-----------------|
-| **Admin** | Set at construction | Emergency controls, private-pool management, admin transfer |
+| **Admin** | Set at construction | Emergency controls, private-pool management, share-transfer mode, admin transfer |
 | **Manager** | Assigned by admin | Strategy config, fee config, oracle/guard wiring, trader assignment |
 | **Trader** | Assigned by manager | Executes operations via `execute_op` |
 
@@ -59,6 +59,7 @@ Security-critical behavior:
 - `execute_op(caller, guard, fn_name, args) -> Val`
   - Vault injects its own address as first arg before calling the guard
   - `fn_name` must be in `AuthorizedOps(guard)`
+  - Strategy lifecycle/view/rescue functions are reserved and cannot be authorized through `execute_op`
   - Blocked when `OpsPaused` is set
 
 ### Multi-asset portfolio management (manager)
@@ -76,6 +77,14 @@ Security-critical behavior:
 - `set_entry_fee_bps`, `set_exit_fee_bps`, `set_mgmt_fee_bps`, `set_perf_fee_bps` — decrease-only direct setters
 - `announce_fee_increase(entry, exit, mgmt, perf)`, `commit_fee_increase`, `renounce_fee_increase` — timelock flow for increases
 
+### Fee settlement (permissionless)
+
+- `collect_pending_fees() -> i128`
+  - Settles accrued management and performance fees without requiring a deposit or withdrawal.
+  - Mints deterministic fee shares to treasury only.
+  - Caller does not provide NAV, fee amounts, recipient, timestamp, or price inputs.
+  - Returns the number of fee shares minted.
+
 ### Risk / config (manager)
 
 - `set_oracle(caller, oracle)`
@@ -90,6 +99,7 @@ Security-critical behavior:
 
 - `pause_deposits(caller)` / `unpause_deposits(caller)` — blocks `deposit` and `withdraw`
 - `pause_operations(caller)` / `unpause_operations(caller)` — blocks `execute_op`
+- `set_share_transfers_enabled(caller, enabled)` — opts vault shares into or out of transferability
 
 ### Private-pool management (admin only)
 
@@ -111,9 +121,41 @@ Security-critical behavior:
 - `is_paused() -> bool` — deposits/withdrawals paused
 - `is_ops_paused() -> bool` — execute_op paused
 - `is_private_pool() -> bool`, `is_member_allowed(member) -> bool`
+- `share_transfers_enabled() -> bool`
+- `exit_cooldown_is_hard_control() -> bool`
+- `pnl_tracking_is_accurate() -> bool`
 - `get_exit_cooldown_secs`, `get_announced_fees`
 - `is_value_guard_enabled`
 - `get_user_pnl(user) -> UserPnLReport`
+
+### Share transferability, cooldown, and PnL
+
+Vault shares are non-transferable by default. In this default mode:
+- `share_transfers_enabled() == false`
+- `exit_cooldown_is_hard_control() == true`
+- `pnl_tracking_is_accurate() == true`
+
+This is the secure default because cooldown and PnL tracking are account-based.
+The vault records `LastDepositTs(user)` for cooldown and `UserPosition(user)` for
+cost basis / realized PnL. Keeping shares non-transferable ensures the account
+that receives shares through `deposit` is the same account whose cooldown and PnL
+state is used during `withdraw`.
+
+Default mode also routes share burns through vault withdrawal. Direct delegated
+burns are blocked while transfers are disabled, preventing out-of-vault burns
+from desynchronizing share balances from vault PnL state.
+
+The vault admin may explicitly enable transfers with
+`set_share_transfers_enabled(caller, true)`. This is an opt-in mode for vaults
+that accept weaker account-level guarantees:
+- cooldown becomes same-address friction only, not a hard protocol control,
+- PnL becomes approximate / informational only,
+- `exit_cooldown_is_hard_control() == false`,
+- `pnl_tracking_is_accurate() == false`.
+
+To keep accurate PnL and hard cooldown while allowing transfers, a future design
+would need transfer-aware accounting hooks that move or recompute cost basis and
+cooldown state with the transferred shares.
 
 ## execute_op Dispatch
 
@@ -121,12 +163,14 @@ Security-critical behavior:
 trader/manager calls: vault.execute_op(caller, guard, "swap", [from_asset, to_asset, amount])
 vault checks:         guard ∈ ActiveGuards
                       "swap" ∈ AuthorizedOps(guard)
+                      "swap" is not a reserved lifecycle/view function
                       OpsPaused == false
 vault builds args:    [vault_addr, from_asset, to_asset, amount]
 vault calls:          guard.swap(vault_addr, from_asset, to_asset, amount)
 ```
 
 The vault always injects its own address as the first argument — the trader cannot substitute a different source.
+Reserved functions include strategy initialization, vault withdrawal helpers, direct deposit/withdraw entrypoints, pause controls, and NAV/view helpers. Manager/trader execution should use explicit trader operations such as `supply`, `withdraw_from_lending`, `add_liquidity`, `remove_liquidity`, and `swap`.
 
 ## Guard Interface (strategy contracts)
 
@@ -147,9 +191,10 @@ fn asset_in_use(vault: Address, asset: Address) -> bool
 5. Only authorized function names per guard are dispatched.
 6. NAV loss guard (`max_loss_bps`) enforces post-operation limits.
 7. In private-pool mode, only admin, manager, and allowlisted members can deposit.
-8. Exit cooldown blocks withdrawals until `last_deposit_ts + cooldown_secs`.
-9. Fee increases require announce → timelock (86 400 s) → commit.
-10. Same-ledger operation/value guard detects suspicious sequence/value drift.
+8. Shares are non-transferable by default, preserving account-based cooldown and PnL accuracy.
+9. Exit cooldown blocks withdrawals until `last_deposit_ts + cooldown_secs` while shares remain non-transferable.
+10. Fee increases require announce → timelock (86 400 s) → commit.
+11. Same-ledger operation/value guard detects suspicious sequence/value drift.
 
 ## Error Codes
 

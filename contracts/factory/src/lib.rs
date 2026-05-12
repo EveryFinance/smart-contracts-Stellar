@@ -29,17 +29,20 @@ mod storage;
 
 pub use error::FactoryError;
 
-use soroban_sdk::{contract, contractimpl, panic_with_error, token, Address, Env, IntoVal, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl, panic_with_error, token, Address, Env, IntoVal, Symbol, Vec,
+};
 
 use storage::{
-    clear_pending_admin, get_admin, get_asset_handler, get_authorized_assets, get_authorized_guards,
-    get_is_registered, get_pending_admin, get_vault_by_index, get_vault_count, get_vault_manager,
-    get_vault_position, is_authorized_asset, is_authorized_guard, is_factory_initialized,
-    remove_registered, remove_vault_by_index, remove_vault_position,
-    set_admin, set_asset_handler, set_authorized_assets, set_authorized_guards,
-    set_factory_initialized, set_pending_admin, set_registered, set_vault_by_index,
-    set_vault_count, set_vault_manager, set_vault_position, DataKey, INSTANCE_BUMP_AMOUNT,
-    INSTANCE_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT, PERSISTENT_LIFETIME_THRESHOLD,
+    clear_pending_admin, get_admin, get_asset_handler, get_authorized_assets,
+    get_authorized_guards, get_is_registered, get_pending_admin, get_vault_by_index,
+    get_vault_count, get_vault_manager, get_vault_position, is_authorized_asset,
+    is_authorized_guard, is_factory_initialized, remove_registered, remove_vault_by_index,
+    remove_vault_position, set_admin, set_asset_handler, set_authorized_assets,
+    set_authorized_guards, set_factory_initialized, set_pending_admin, set_registered,
+    set_vault_by_index, set_vault_count, set_vault_manager, set_vault_position, DataKey,
+    INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT,
+    PERSISTENT_LIFETIME_THRESHOLD,
 };
 
 use events::{
@@ -151,6 +154,7 @@ impl Factory {
         set_vault_by_index(&env, idx, &vault);
         set_vault_position(&env, &vault, idx);
         set_registered(&env, &vault);
+        set_vault_manager(&env, &vault, &onchain_manager);
         set_vault_count(&env, idx + 1);
         vault_registered_event(&env, &vault, &onchain_manager);
     }
@@ -188,6 +192,7 @@ impl Factory {
         set_vault_by_index(&env, idx, &vault);
         set_vault_position(&env, &vault, idx);
         set_registered(&env, &vault);
+        set_vault_manager(&env, &vault, &manager);
         set_vault_count(&env, idx + 1);
         vault_registered_event(&env, &vault, &manager);
     }
@@ -526,8 +531,8 @@ impl Factory {
             panic_with_error!(&env, FactoryError::VaultNotFound);
         }
         set_vault_manager(&env, &vault, &new_manager);
-        // Propagate to the vault contract so the vault's own Manager key is updated.
-        let args = (new_manager.clone(),).into_val(&env);
+        // Propagate through the factory identity configured on the vault.
+        let args = (env.current_contract_address(), new_manager.clone()).into_val(&env);
         env.invoke_contract::<()>(&vault, &Symbol::new(&env, "set_manager"), args);
         vault_manager_set_event(&env, &vault, &new_manager);
     }
@@ -592,7 +597,7 @@ impl Factory {
         );
 
         // Instruct the vault to mint seed shares to the burn address.
-        let args = (seed_amount,).into_val(&env);
+        let args = (env.current_contract_address(), seed_amount).into_val(&env);
         env.invoke_contract::<()>(&vault, &Symbol::new(&env, "seed_deposit"), args);
 
         // Register the vault.

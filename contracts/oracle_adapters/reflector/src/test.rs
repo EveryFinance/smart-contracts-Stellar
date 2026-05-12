@@ -1,6 +1,9 @@
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    Address, Env,
+};
 
 use crate::{ReflectorAdapter, ReflectorAdapterClient, PRICE_PRECISION};
 
@@ -31,8 +34,15 @@ mod mock_reflector {
     #[contractimpl]
     impl MockReflector {
         pub fn __constructor(env: Env, price: i128, decimals: u32) {
-            env.storage().instance().set(&symbol_short!("price"), &price);
-            env.storage().instance().set(&symbol_short!("dec"), &decimals);
+            env.storage()
+                .instance()
+                .set(&symbol_short!("price"), &price);
+            env.storage()
+                .instance()
+                .set(&symbol_short!("dec"), &decimals);
+            env.storage()
+                .instance()
+                .set(&symbol_short!("ts"), &env.ledger().timestamp());
         }
 
         pub fn decimals(env: Env) -> u32 {
@@ -43,14 +53,20 @@ mod mock_reflector {
         }
 
         pub fn lastprice(env: Env, _asset: ReflectorAsset) -> Option<PriceData> {
-            let price: i128 = env.storage()
+            let price: i128 = env
+                .storage()
                 .instance()
                 .get(&symbol_short!("price"))
                 .unwrap_or(0);
             if price == 0 {
                 None
             } else {
-                Some(PriceData { price, timestamp: 12345 })
+                let timestamp: u64 = env
+                    .storage()
+                    .instance()
+                    .get(&symbol_short!("ts"))
+                    .unwrap_or(0);
+                Some(PriceData { price, timestamp })
             }
         }
     }
@@ -78,8 +94,12 @@ mod mock_reflector_none {
 
     #[contractimpl]
     impl MockReflectorNone {
-        pub fn decimals(_env: Env) -> u32 { 8 }
-        pub fn lastprice(_env: Env, _asset: ReflectorAsset) -> Option<PriceData> { None }
+        pub fn decimals(_env: Env) -> u32 {
+            8
+        }
+        pub fn lastprice(_env: Env, _asset: ReflectorAsset) -> Option<PriceData> {
+            None
+        }
     }
 }
 
@@ -150,6 +170,41 @@ fn test_get_price_7_decimals_no_conversion_needed() {
     let (env, client, _) = setup(price_7dec, 7);
     let asset = Address::generate(&env);
     assert_eq!(client.get_price(&asset), 42 * PRICE_PRECISION);
+}
+
+#[test]
+fn test_get_price_unsupported_decimals_returns_zero() {
+    let (env, client, _) = setup(100_000_000, 100);
+    let asset = Address::generate(&env);
+    assert_eq!(client.get_price(&asset), 0);
+}
+
+#[test]
+fn test_get_price_stale_reflector_returns_zero() {
+    let (env, client, _) = setup(100_000_000, 8);
+    let asset = Address::generate(&env);
+    assert_eq!(client.get_price(&asset), PRICE_PRECISION);
+
+    env.ledger().with_mut(|li| li.timestamp = 3_601);
+    assert_eq!(client.get_price(&asset), 0);
+}
+
+#[test]
+fn test_set_max_age_secs_extends_freshness_window() {
+    let (env, client, admin) = setup(100_000_000, 8);
+    let asset = Address::generate(&env);
+    client.set_max_age_secs(&admin, &7_200u64);
+
+    env.ledger().with_mut(|li| li.timestamp = 3_601);
+    assert_eq!(client.get_price(&asset), PRICE_PRECISION);
+    assert_eq!(client.get_max_age_secs(), 7_200);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #5)")]
+fn test_set_max_age_zero_panics() {
+    let (_, client, admin) = setup(100_000_000, 8);
+    client.set_max_age_secs(&admin, &0u64);
 }
 
 // ---------------------------------------------------------------------------

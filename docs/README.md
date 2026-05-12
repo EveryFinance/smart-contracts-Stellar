@@ -14,7 +14,8 @@ Dapp: https://www.elyx.finance/
 6. [Vaults Alpha Beta Gamma](./vaults_alpha_beta_gamma.md)
 7. [Demo Runbook](./demo_runbook.md)
 8. [Reviewer Quickstart](./reviewer_quickstart.md)
-9. Contract Docs
+9. [Coverage Report](./coverage_report.md)
+10. Contract Docs
    - [Vault](./contracts/vault.md)
    - [Share Token (SEP-41)](./contracts/share_token.md)
    - [Oracle Contracts (AssetHandler, ReflectorAdapter, DIAAdapter, Mock)](./contracts/oracle.md)
@@ -34,6 +35,8 @@ Dapp: https://www.elyx.finance/
   - Strategy contracts implement the full guard interface — no separate trade guard contracts
   - `execute_op` replaces `execute_trade`; vault injects its own address as first arg
   - Multi-asset NAV, proportional withdrawal, PnL tracking
+  - Vault shares are non-transferable by default; enabling transfers makes
+    cooldown non-hard and PnL informational
 
 ## Deployment References
 

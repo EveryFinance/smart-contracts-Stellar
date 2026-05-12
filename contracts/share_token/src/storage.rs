@@ -65,6 +65,8 @@ pub enum DataKey {
     Decimals,
     /// Running total of minted tokens — stored in INSTANCE storage.
     TotalSupply,
+    /// Whether user share transfers are enabled. Defaults to false.
+    TransfersEnabled,
     /// Per-account token balance — stored in PERSISTENT storage.
     Balance(Address),
     /// Per-(from, spender) allowance — stored in PERSISTENT storage.
@@ -146,6 +148,21 @@ pub fn get_total_supply(env: &Env) -> i128 {
         .instance()
         .get(&DataKey::TotalSupply)
         .unwrap_or(0_i128)
+}
+
+/// Store whether user share transfers are enabled.
+pub fn set_transfers_enabled(env: &Env, enabled: bool) {
+    env.storage()
+        .instance()
+        .set(&DataKey::TransfersEnabled, &enabled);
+}
+
+/// Return whether user share transfers are enabled.
+pub fn get_transfers_enabled(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::TransfersEnabled)
+        .unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------

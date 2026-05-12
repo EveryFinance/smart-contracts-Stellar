@@ -1,6 +1,9 @@
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, Address, Env, String};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    Address, Env, String,
+};
 
 use crate::{DiaAdapter, DiaAdapterClient, PRICE_PRECISION};
 
@@ -24,7 +27,12 @@ mod mock_dia {
     #[contractimpl]
     impl MockDia {
         pub fn __constructor(env: Env, price: i128) {
-            env.storage().instance().set(&symbol_short!("price"), &price);
+            env.storage()
+                .instance()
+                .set(&symbol_short!("price"), &price);
+            env.storage()
+                .instance()
+                .set(&symbol_short!("ts"), &env.ledger().timestamp());
         }
 
         pub fn read_oracle_value(env: Env, _key: String) -> OracleValue {
@@ -33,7 +41,12 @@ mod mock_dia {
                 .instance()
                 .get(&symbol_short!("price"))
                 .unwrap_or(0);
-            OracleValue { price, timestamp: 12345 }
+            let timestamp: u64 = env
+                .storage()
+                .instance()
+                .get(&symbol_short!("ts"))
+                .unwrap_or(0);
+            OracleValue { price, timestamp }
         }
     }
 }
@@ -123,6 +136,36 @@ fn test_get_price_fractional() {
     let asset = Address::generate(&env);
     client.set_asset_key(&admin, &asset, &xlm_key(&env));
     assert_eq!(client.get_price(&asset), 1_000_000);
+}
+
+#[test]
+fn test_get_price_stale_dia_returns_zero() {
+    let (env, client, admin) = setup(100_000_000);
+    let asset = Address::generate(&env);
+    client.set_asset_key(&admin, &asset, &xlm_key(&env));
+    assert_eq!(client.get_price(&asset), PRICE_PRECISION);
+
+    env.ledger().with_mut(|li| li.timestamp = 3_601);
+    assert_eq!(client.get_price(&asset), 0);
+}
+
+#[test]
+fn test_set_max_age_secs_extends_freshness_window() {
+    let (env, client, admin) = setup(100_000_000);
+    let asset = Address::generate(&env);
+    client.set_asset_key(&admin, &asset, &xlm_key(&env));
+    client.set_max_age_secs(&admin, &7_200u64);
+
+    env.ledger().with_mut(|li| li.timestamp = 3_601);
+    assert_eq!(client.get_price(&asset), PRICE_PRECISION);
+    assert_eq!(client.get_max_age_secs(), 7_200);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #5)")]
+fn test_set_max_age_zero_panics() {
+    let (_, client, admin) = setup(100_000_000);
+    client.set_max_age_secs(&admin, &0u64);
 }
 
 // ---------------------------------------------------------------------------

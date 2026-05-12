@@ -115,7 +115,6 @@ pub enum VaultError {
     // -----------------------------------------------------------------------
     // Multi-asset v2 errors (30+)
     // -----------------------------------------------------------------------
-
     /// The asset is not in the factory's global authorized asset list.
     AssetNotAuthorized = 30,
 
@@ -162,4 +161,10 @@ pub enum VaultError {
 
     /// The caller is not the registered admin address.
     NotAdmin = 44,
+
+    /// The caller is not the configured factory contract.
+    NotFactory = 45,
+
+    /// A price source returned a zero or negative price.
+    InvalidOraclePrice = 46,
 }

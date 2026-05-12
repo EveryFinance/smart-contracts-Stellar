@@ -6,7 +6,9 @@ The protocol is a modular, non-custodial fund management system built on Soroban
 
 Core design:
 - `vault` is the central accounting and policy engine.
-- `share_token` represents depositor ownership as SEP-41 fungible shares.
+- `share_token` represents depositor ownership as SEP-41-style shares. Shares
+  are non-transferable by default to preserve account-based cooldown and PnL
+  correctness.
 - `strategies` hold and manage external protocol positions and implement the guard interface.
 - `asset_handler` is the asset registry and three-tier price oracle.
 - `oracle_adapters/reflector` and `oracle_adapters/dia` adapt on-chain oracle networks.
@@ -50,6 +52,7 @@ Controls emergency and access settings. Set at construction time. Cannot be chan
 |---|---|
 | `pause_deposits` / `unpause_deposits` | Block/unblock user deposits and withdrawals |
 | `pause_operations` / `unpause_operations` | Block/unblock manager execute_op calls |
+| `set_share_transfers_enabled` | Explicitly opt shares into/out of transferability |
 | `set_private_pool` | Toggle member-only deposit mode |
 | `add_member` / `remove_member` | Manage allowlist for private-pool deposits |
 | `set_pending_admin` / `accept_admin` | Two-step admin transfer |
@@ -74,9 +77,12 @@ Executes trades through guard contracts via `vault.execute_op(caller, guard, fn_
 - `fn_name` must be in `AuthorizedOps(guard)` — manager whitelists which functions are permitted per guard.
 - The vault **injects its own address** as the first argument — the trader cannot substitute a different source.
 - Operations are blocked when `OpsPaused` is set by admin.
+- Strategy lifecycle/view functions are reserved and cannot be dispatched through `execute_op`.
 
 **DEX strategy functions:** `swap`, `add_liquidity`, `remove_liquidity`  
 **Lending strategy functions:** `supply`, `withdraw_from_lending`
+
+Strategy guards do not store a manager or expose local pause/unpause controls. Pausing is centralized in the vault through `pause_deposits`/`unpause_deposits` and `pause_operations`/`unpause_operations`.
 
 ## Strategy = Guard
 
@@ -105,7 +111,7 @@ factory.AuthorizedAssets  ⊇  vault.PortfolioAssets  ⊇  vault.DepositAssets
 `AssetHandler` resolves prices with a three-tier cascade:
 
 ```
-Tier 1: Per-asset oracle override  → invoke_contract (hard fail)
+Tier 1: Per-asset oracle override  → try_invoke_contract (graceful fallback)
 Tier 2: Primary oracle (Reflector) → try_invoke_contract (graceful fallback)
 Tier 3: Fallback oracle (DIA)      → invoke_contract (hard fail)
 ```
@@ -132,6 +138,16 @@ Share price: `share_price = NAV × PRICE_PRECISION / total_supply`
 - Entry fee is charged in shares (minted to treasury).
 - Exit fee fraction remains in vault (benefits remaining LPs).
 
+Default share-transfer policy:
+- Shares are non-transferable by default.
+- In default mode, exit cooldown is a hard account-level control and per-user
+  PnL tracking is accurate.
+- If vault admin enables share transfers, the vault explicitly reports
+  `exit_cooldown_is_hard_control() == false` and
+  `pnl_tracking_is_accurate() == false`.
+- Transferable-share mode is therefore an opt-in operational mode where cooldown
+  is same-address friction and PnL is approximate / informational only.
+
 ### Inflation Attack Prevention
 
 Factory `create_vault()` atomically seeds the vault, ensuring `total_supply > 0` from day one and eliminating the first-depositor share-price attack.
@@ -142,12 +158,16 @@ Factory `create_vault()` atomically seeds the vault, ensuring `total_supply > 0`
 |-----|-----|---------|
 | Entry fee | 500 bps | On deposit — shares minted to treasury |
 | Exit fee | 500 bps | On withdrawal — fraction stays in vault |
-| Management fee | 300 bps annualized | Streamed continuously; settled as shares to treasury |
-| Performance fee | 3 000 bps | On NAV-per-share exceeding high-water mark |
+| Management fee | 300 bps annualized | Streamed continuously; settled as shares to treasury on deposit, withdrawal, or permissionless fee collection |
+| Performance fee | 3 000 bps | On NAV-per-share exceeding high-water mark; settled on deposit, withdrawal, or permissionless fee collection |
 
 Fee-increase hardening:
 - Direct setters are decrease-only.
 - Increases use `announce_fee_increase` → 86 400 s delay → `commit_fee_increase`.
+
+Fee settlement is lazy by default and also keeper-compatible. Anyone can call
+`collect_pending_fees()` to settle deterministic accrued management and
+performance fee shares to treasury without waiting for a user action.
 
 ## Risk and Control Layers
 
@@ -156,9 +176,10 @@ Fee-increase hardening:
 3. Operation whitelist (`fn_name ∈ AuthorizedOps(guard)`).
 4. TVL/NAV loss guard (`max_loss_bps`) around every `execute_op`.
 5. Deposit cap (`deposit_cap`) on total NAV.
-6. Exit cooldown to reduce atomic deposit/withdraw extraction risk.
-7. Same-ledger operation/value checkpoint guard (`set_value_guard_enabled`).
-8. Admin-controlled pause splits: `pause_deposits` (user flows) / `pause_operations` (manager ops).
+6. Non-transferable shares by default, preserving account-based cooldown and PnL guarantees.
+7. Exit cooldown to reduce atomic deposit/withdraw extraction risk.
+8. Same-ledger operation/value checkpoint guard (`set_value_guard_enabled`).
+9. Admin-controlled pause splits: `pause_deposits` (user flows) / `pause_operations` (manager ops).
 
 ## Data Lifetime / TTL
 

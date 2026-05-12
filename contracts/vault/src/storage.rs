@@ -169,7 +169,6 @@ pub enum DataKey {
     // -----------------------------------------------------------------------
     // Multi-asset v2 keys
     // -----------------------------------------------------------------------
-
     /// Ordered list of all assets tracked in NAV (base_asset + USDT + XLM …).
     /// Every asset in this list is priced via the oracle and included in NAV.
     /// Vault managers may only add assets that appear in factory.AuthorizedAssets.
@@ -642,9 +641,11 @@ pub fn set_op_state(env: &Env, user: &Address, state: &OperationState) {
     // prevents unbounded per-user entries from accumulating in instance storage
     // (DoS via entry-size exhaustion). INSTANCE_LIFETIME_THRESHOLD is a
     // conservative safety buffer beyond the ledger close.
-    env.storage()
-        .temporary()
-        .extend_ttl(&key, INSTANCE_LIFETIME_THRESHOLD, INSTANCE_LIFETIME_THRESHOLD);
+    env.storage().temporary().extend_ttl(
+        &key,
+        INSTANCE_LIFETIME_THRESHOLD,
+        INSTANCE_LIFETIME_THRESHOLD,
+    );
 }
 
 pub fn get_op_state(env: &Env, user: &Address) -> Option<OperationState> {
@@ -800,9 +801,11 @@ pub fn set_seed_deposited(env: &Env) {
 pub fn get_user_position(env: &Env, user: &Address) -> UserPosition {
     let key = DataKey::UserPosition(user.clone());
     if env.storage().persistent().has(&key) {
-        env.storage()
-            .persistent()
-            .extend_ttl(&key, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
         env.storage().persistent().get(&key).unwrap()
     } else {
         UserPosition {
@@ -815,7 +818,9 @@ pub fn get_user_position(env: &Env, user: &Address) -> UserPosition {
 pub fn set_user_position(env: &Env, user: &Address, pos: &UserPosition) {
     let key = DataKey::UserPosition(user.clone());
     env.storage().persistent().set(&key, pos);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+    env.storage().persistent().extend_ttl(
+        &key,
+        PERSISTENT_LIFETIME_THRESHOLD,
+        PERSISTENT_BUMP_AMOUNT,
+    );
 }

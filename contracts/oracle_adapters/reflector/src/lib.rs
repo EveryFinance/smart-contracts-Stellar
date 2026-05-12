@@ -41,18 +41,20 @@ mod storage;
 pub use error::ReflectorAdapterError;
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, panic_with_error, Address, Env, IntoVal, Symbol, Val,
-    Vec,
+    contract, contractimpl, contracttype, panic_with_error, Address, Env, IntoVal, Symbol, Val, Vec,
 };
 
 use storage::{
-    clear_pending_admin, get_admin, get_decimals, get_pending_admin, get_reflector_contract,
-    is_initialized, set_admin, set_decimals, set_initialized, set_pending_admin,
-    set_reflector_contract, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
+    clear_pending_admin, get_admin, get_decimals, get_max_age_secs, get_pending_admin,
+    get_reflector_contract, is_initialized, set_admin, set_decimals, set_initialized,
+    set_max_age_secs, set_pending_admin, set_reflector_contract, INSTANCE_BUMP_AMOUNT,
+    INSTANCE_LIFETIME_THRESHOLD,
 };
 
 /// Protocol price precision: 7 decimal places (Stellar native).
 pub const PRICE_PRECISION: i128 = 10_000_000;
+/// Default freshness window for upstream Reflector prices.
+const DEFAULT_MAX_AGE_SECS: u64 = 3_600;
 
 // ---------------------------------------------------------------------------
 // Local mirrors of Reflector's on-chain types
@@ -105,15 +107,13 @@ impl ReflectorAdapter {
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         // Query Reflector for its decimal precision.
-        let decimals: u32 = env.invoke_contract(
-            &reflector,
-            &Symbol::new(&env, "decimals"),
-            Vec::new(&env),
-        );
+        let decimals: u32 =
+            env.invoke_contract(&reflector, &Symbol::new(&env, "decimals"), Vec::new(&env));
 
         set_admin(&env, &admin);
         set_reflector_contract(&env, &reflector);
         set_decimals(&env, decimals);
+        set_max_age_secs(&env, DEFAULT_MAX_AGE_SECS);
         set_initialized(&env);
     }
 
@@ -134,14 +134,11 @@ impl ReflectorAdapter {
         let reflector_asset = ReflectorAsset::Stellar(asset);
         let args: Vec<Val> = (reflector_asset,).into_val(&env);
 
-        let result: Option<PriceData> = env.invoke_contract(
-            &reflector,
-            &Symbol::new(&env, "lastprice"),
-            args,
-        );
+        let result: Option<PriceData> =
+            env.invoke_contract(&reflector, &Symbol::new(&env, "lastprice"), args);
 
         match result {
-            Some(data) if data.price > 0 => {
+            Some(data) if data.price > 0 && Self::is_fresh(&env, data.timestamp) => {
                 Self::normalize(data.price, get_decimals(&env))
             }
             _ => 0,
@@ -161,11 +158,8 @@ impl ReflectorAdapter {
         if caller != get_admin(&env) {
             panic_with_error!(&env, ReflectorAdapterError::NotAdmin);
         }
-        let decimals: u32 = env.invoke_contract(
-            &reflector,
-            &Symbol::new(&env, "decimals"),
-            Vec::new(&env),
-        );
+        let decimals: u32 =
+            env.invoke_contract(&reflector, &Symbol::new(&env, "decimals"), Vec::new(&env));
         set_reflector_contract(&env, &reflector);
         set_decimals(&env, decimals);
     }
@@ -182,12 +176,24 @@ impl ReflectorAdapter {
             panic_with_error!(&env, ReflectorAdapterError::NotAdmin);
         }
         let reflector = get_reflector_contract(&env);
-        let decimals: u32 = env.invoke_contract(
-            &reflector,
-            &Symbol::new(&env, "decimals"),
-            Vec::new(&env),
-        );
+        let decimals: u32 =
+            env.invoke_contract(&reflector, &Symbol::new(&env, "decimals"), Vec::new(&env));
         set_decimals(&env, decimals);
+    }
+
+    /// Set the maximum accepted upstream Reflector price age in seconds. Admin only.
+    pub fn set_max_age_secs(env: Env, caller: Address, secs: u64) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        caller.require_auth();
+        if caller != get_admin(&env) {
+            panic_with_error!(&env, ReflectorAdapterError::NotAdmin);
+        }
+        if secs == 0 {
+            panic_with_error!(&env, ReflectorAdapterError::InvalidMaxAge);
+        }
+        set_max_age_secs(&env, secs);
     }
 
     // -----------------------------------------------------------------------
@@ -244,6 +250,13 @@ impl ReflectorAdapter {
         get_decimals(&env)
     }
 
+    pub fn get_max_age_secs(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        get_max_age_secs(&env)
+    }
+
     // -----------------------------------------------------------------------
     // Internal
     // -----------------------------------------------------------------------
@@ -253,14 +266,20 @@ impl ReflectorAdapter {
     ///
     /// Formula: `reflector_price * PRICE_PRECISION / 10^oracle_decimals`
     ///
-    /// Uses checked arithmetic; returns 0 on overflow (should never happen for
-    /// realistic prices and oracle_decimals values).
+    /// Uses checked arithmetic; returns 0 on overflow or unsupported decimals.
     fn normalize(reflector_price: i128, oracle_decimals: u32) -> i128 {
-        let divisor = 10i128.pow(oracle_decimals);
+        let Some(divisor) = 10i128.checked_pow(oracle_decimals) else {
+            return 0;
+        };
         reflector_price
             .checked_mul(PRICE_PRECISION)
             .and_then(|p| p.checked_div(divisor))
             .unwrap_or(0)
+    }
+
+    fn is_fresh(env: &Env, timestamp: u64) -> bool {
+        let now = env.ledger().timestamp();
+        timestamp <= now && now.saturating_sub(timestamp) <= get_max_age_secs(env)
     }
 }
 

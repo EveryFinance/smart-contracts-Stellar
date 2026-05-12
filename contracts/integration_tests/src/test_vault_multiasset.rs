@@ -12,7 +12,9 @@
 #![cfg(test)]
 
 use share_token::{ShareTokenContract, ShareTokenContractClient};
-use soroban_sdk::{contract, contractimpl, contracttype, testutils::Address as _, Address, Env, String, Vec};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, testutils::Address as _, Address, Env, String, Vec,
+};
 use vault::{Vault, VaultClient, VaultParams};
 
 use crate::common::{token_balance, MockToken, MockTokenClient};
@@ -123,11 +125,7 @@ impl MockGuard2 {
         let payout = v * numerator / denominator;
         // Transfer tokens to user.
         let token: Address = env.storage().instance().get(&G2Key::Token).unwrap();
-        MockTokenClient::new(&env, &token).transfer(
-            &env.current_contract_address(),
-            &to,
-            &payout,
-        );
+        MockTokenClient::new(&env, &token).transfer(&env.current_contract_address(), &to, &payout);
         env.storage().instance().set(&G2Key::Value, &(v - payout));
     }
     pub fn asset_in_use(env: Env, _vault: Address, _asset: Address) -> bool {
@@ -145,7 +143,7 @@ struct World {
     vault: VaultClient<'static>,
     vault_addr: Address,
     share: ShareTokenContractClient<'static>,
-    base: Address,   // USDC — base asset
+    base: Address,    // USDC — base asset
     token_b: Address, // USDT — second portfolio asset
     manager: Address,
     _trader: Address,

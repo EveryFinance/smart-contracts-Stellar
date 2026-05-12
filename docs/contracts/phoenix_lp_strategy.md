@@ -28,16 +28,15 @@ These are dispatched by the vault after checking the function name is in `Author
 
 ## Admin Methods
 
-- `initialize(vault, asset_a, asset_b, phoenix_pool, manager, name)`
-- `set_oracle(caller, oracle)`
-- `pause(caller)` / `unpause(caller)`
+- `initialize(vault, asset_a, asset_b, phoenix_pool, name)`
+
+Pause/unpause live only on the vault. The strategy does not store a manager or pause flag.
 
 ## Views
 
 - `get_share_balance() -> i128`
 - `get_value(vault) -> i128`
 - `asset_a()`, `asset_b()`, `share_token()`, `get_name()`
-- `is_paused()`, `has_oracle()`
 
 ## Access Control
 

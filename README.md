@@ -33,6 +33,11 @@ An on-chain, non-custodial asset management protocol built on **Stellar Soroban*
 
 Depositors retain economic ownership at all times through share tokens. The manager can invest capital and execute trades, but can never withdraw funds to an arbitrary address — only `withdraw()` callers who hold shares can redeem base assets, and then only proportional to their share.
 
+Vault shares are non-transferable by default. This preserves account-based exit
+cooldown and exact per-user PnL tracking. A vault admin can explicitly opt into
+transferable shares, but that mode makes cooldown same-address friction and PnL
+approximate / informational only.
+
 ### On-chain policy enforcement
 
 Every manager action passes through a layered validation stack before execution:
@@ -108,7 +113,7 @@ The Vault has no knowledge of specific protocols. It interacts with strategies t
 │    amount)   │  │    get_value / sync_position│  │    validate_swap_exact_out│
 │  burn(from,  │  │                             │  │                          │
 │    amount)   │  │  SoroswapLpStrategy         │  │  PhoenixTradeGuard       │
-│  transfer /  │  │    deposit_liquidity /      │  │    validate_swap          │
+│  transfer* / │  │    deposit_liquidity /      │  │    validate_swap          │
 │  approve /   │  │    withdraw / get_value /   │  │    validate_swap_exact_in │
 │  balance …   │  │    set_oracle               │  │                          │
 └──────────────┘  │                             │  │  Rules enforced:         │
@@ -138,13 +143,15 @@ The Vault has no knowledge of specific protocols. It interacts with strategies t
 └──────────────────────────┘
 ```
 
+`*` Share transfers are disabled by default and must be explicitly enabled by vault admin.
+
 ### Component roles at a glance
 
 | Component | Who interacts with it | Primary responsibility |
 |---|---|---|
 | **Factory** | Protocol admin, off-chain tooling | Registry of vault addresses |
 | **Vault** | Depositors, manager, trader | NAV accounting, fee management, capital routing |
-| **ShareToken** | Vault (mint/burn), depositors (transfer) | SEP-41 fungible proof-of-deposit |
+| **ShareToken** | Vault (mint/burn), depositors (balance/approval; optional transfer) | SEP-41-style proof-of-deposit, non-transferable by default |
 | **Oracle** | Vault `nav()`, Soroswap LP `get_value()` | PRICE_PRECISION-scaled asset prices |
 | **Strategies** | Vault | Abstract interface to DeFi protocols |
 | **Trade Guards** | Vault (before each trade) | Pre-execution policy enforcement |
@@ -157,7 +164,7 @@ The Vault has no knowledge of specific protocols. It interacts with strategies t
 |---|---|---|
 | **Factory** | `contracts/factory` | Append-only registry of deployed and verified vaults |
 | **Vault** | `contracts/vault` | Central NAV engine: deposit, withdraw, invest, trade |
-| **ShareToken** | `contracts/share_token` | SEP-41 fungible token representing vault shares |
+| **ShareToken** | `contracts/share_token` | SEP-41-style token representing vault shares, non-transferable by default |
 | **Oracle** | `contracts/oracle` | Admin-controlled on-chain price feed |
 | **BlendStrategy** | `contracts/strategies/blend` | Single-asset supply to Blend Protocol lending pool |
 | **SoroswapLpStrategy** | `contracts/strategies/soroswap_lp` | Two-asset LP position on Soroswap AMM |
@@ -225,7 +232,23 @@ User
 
 **Key design decision:** The exit fee is NOT transferred to the manager. The fee fraction stays inside the vault, increasing the NAV per share for remaining depositors. This prevents a manager from extracting value on every withdrawal.
 
-### 4.3 Invest (manager deploys capital)
+### 4.3 Share Transfer Mode
+
+Default mode:
+- shares are non-transferable,
+- exit cooldown is a hard account-level control,
+- per-user PnL tracking is accurate.
+
+Optional transfer mode:
+- vault admin calls `set_share_transfers_enabled(admin, true)`,
+- `transfer` and `transfer_from` become available,
+- cooldown is no longer a hard security control,
+- PnL is approximate / informational only.
+
+Integrators can query `share_transfers_enabled()`,
+`exit_cooldown_is_hard_control()`, and `pnl_tracking_is_accurate()` on the vault.
+
+### 4.4 Invest (manager deploys capital)
 
 ```
 Manager
@@ -245,7 +268,7 @@ Manager
                 nav_after ≥ nav_before × (1 − max_loss_bps / 10_000)
 ```
 
-### 4.4 Unwind (manager reclaims capital)
+### 4.5 Unwind (manager reclaims capital)
 
 ```
 Manager
@@ -259,7 +282,7 @@ Manager
          └─ 5. TVL guard: nav_after ≥ nav_before × (1 − max_loss_bps / 10_000)
 ```
 
-### 4.5 Spot Trade (trader executes swap)
+### 4.6 Spot Trade (trader executes swap)
 
 ```
 Trader
@@ -279,7 +302,7 @@ Trader
          └─ 7. TVL guard: nav_after ≥ nav_before × (1 − max_loss_bps / 10_000)
 ```
 
-### 4.6 Auto-Unwind on Withdrawal
+### 4.7 Auto-Unwind on Withdrawal
 
 When a user withdraws more than the vault's available cash balance, the vault automatically partially unwinds single-asset strategies in proportion to their NAV share to cover the shortfall. LP strategies (Soroswap, Phoenix) are **skipped** during auto-unwind because they hold two assets and cannot accept a single-asset partial redemption cleanly.
 
@@ -359,8 +382,8 @@ All fees are expressed in **basis points** (`1 bps = 0.01%`). Hard caps are enfo
 |---|---|---|---|---|
 | **Entry fee** | 500 bps (5 %) | `deposit` | Shares minted to manager at deposit share price | Manager (as shares) |
 | **Exit fee** | 500 bps (5 %) | `withdraw` | Fee fraction stays in vault; user receives `base_net` only | Remaining shareholders (NAV increase) |
-| **Management fee** | 300 bps (3 %/yr) | Every `deposit` / `withdraw` | Continuously streamed: `NAV × mgmt_bps × elapsed_seconds / (10_000 × SECONDS_PER_YEAR)` | Manager (as minted shares) |
-| **Performance fee** | 3 000 bps (30 %) | Every `deposit` / `withdraw` | Charged on gain above high-water mark per share: `gain × total_supply × perf_bps / (PRICE_PRECISION × 10_000)` | Manager (as minted shares) |
+| **Management fee** | 300 bps (3 %/yr) | Every `deposit` / `withdraw`, or permissionless `collect_pending_fees` | Continuously streamed: `NAV × mgmt_bps × elapsed_seconds / (10_000 × SECONDS_PER_YEAR)` | Treasury (as minted shares) |
+| **Performance fee** | 3 000 bps (30 %) | Every `deposit` / `withdraw`, or permissionless `collect_pending_fees` | Charged on gain above high-water mark per share: `gain × total_supply × perf_bps / (PRICE_PRECISION × 10_000)` | Treasury (as minted shares) |
 
 ### Entry fee — shares, not base asset
 
@@ -376,6 +399,15 @@ The exit fee model keeps the fee fraction in the vault rather than transferring 
 ### High-water mark (performance fee)
 
 The performance fee is only charged when the current NAV per share exceeds the **highest previously recorded NAV per share**. If the fund declines and then recovers, the manager earns no performance fee until the prior peak is surpassed. This protects depositors from paying twice for the same gain.
+
+### Permissionless fee settlement
+
+Anyone may call `collect_pending_fees()` to settle accrued management and
+performance fees without waiting for a user deposit or withdrawal. The caller
+does not provide NAV, fee amounts, timestamps, or recipients; the vault computes
+fees from current state and mints any accrued fee shares to the configured
+treasury. Deposits and withdrawals still call the same fee settlement logic
+before user accounting.
 
 ```
 hwm          = stored high-water mark (PRICE_PRECISION-scaled)
@@ -490,23 +522,23 @@ All strategies expose this minimal interface to the vault:
 
 | Function | Caller | Description |
 |---|---|---|
-| `initialize(vault, asset, protocol, manager, name)` | Deployer | One-time setup |
-| `deposit(amount, from) → units` | Vault | Pull `amount` from `from`, invest in protocol, return position |
-| `withdraw(units, from, to) → amount` | Vault | Redeem `units`, send asset directly to `to` |
-| `get_value(vault) → i128` | Vault | Return current position value in base-asset units |
-| `pause(caller)` / `unpause(caller)` | Manager | Emergency halt |
-| `is_paused() → bool` | Anyone | Read pause state |
+| `initialize(vault, asset, protocol, name)` | Deployer | One-time setup; vault manager authorizes via `vault.get_manager()` |
+| `supply(vault, amount)` | Vault `execute_op` | Pull funds from vault and supply to lending protocol |
+| `withdraw_from_lending(vault, amount)` | Vault `execute_op` | Withdraw from lending protocol back to vault |
+| `withdraw_fraction(vault, numerator, denominator, to)` | Vault | Proportional user withdrawal helper |
+| `get_total_value(vault) → i128` | Vault | Return current position value in base-asset units |
 | `get_name() → String` | Anyone | Strategy label |
 
 ### Two-asset LP strategies (e.g. Soroswap, Phoenix)
 
 | Function | Caller | Description |
 |---|---|---|
-| `initialize(vault, asset_a, asset_b, …, manager, name)` | Deployer | One-time setup |
-| `deposit_liquidity(amount_a, amount_b, min_a, min_b, from) → lp_units` | Vault | Provide liquidity to pool |
-| `withdraw(lp_units, min_a, min_b, from, to) → (amount_a, amount_b)` | Vault | Remove liquidity, send tokens directly to `to` |
-| `get_value(vault) → i128` | Vault | Return LP position value (raw or oracle-priced) |
-| `set_oracle(caller, oracle)` | Manager | Configure reserve-decomposition oracle |
+| `initialize(vault, asset_a, asset_b, …, name)` | Deployer | One-time setup; vault manager authorizes via `vault.get_manager()` |
+| `add_liquidity(vault, amount_a, amount_b, min_a, min_b)` | Vault `execute_op` | Provide liquidity to pool |
+| `remove_liquidity(vault, lp_units, min_a, min_b)` | Vault `execute_op` | Remove liquidity back to vault |
+| `swap(vault, …)` | Vault `execute_op` | Swap only within the configured pair |
+| `withdraw_fraction(vault, numerator, denominator, to)` | Vault | Proportional user withdrawal helper |
+| `get_total_value(vault) → i128` | Vault | Return LP position value using AssetHandler prices |
 
 ### Blend strategy specifics
 
@@ -554,14 +586,15 @@ To avoid floating-point, the slippage condition is rewritten as:
 ### Guard configuration
 
 ```
-// Deploy and initialize a guard
-soroswap_guard.initialize(vault_address, manager_address, initial_whitelist)
+// Deploy and initialize a strategy guard
+soroswap_strategy.initialize(vault_address, asset_a, asset_b, lp_token, router, name)
 
-// Register it with the vault
-vault.set_trade_guard(manager, strategy_address, guard_address)
+// Register it with the vault and authorize the exact operations
+vault.add_active_guard(manager, strategy_address)
+vault.set_authorized_ops(manager, strategy_address, ["swap", "add_liquidity", "remove_liquidity"])
 
-// Update whitelist
-soroswap_guard.set_whitelist(manager, [usdc, xlm, btc])
+// Pause operations at the vault if needed
+vault.pause_operations(admin)
 ```
 
 ---
@@ -620,11 +653,11 @@ Every entry-point call bumps the relevant TTL before reading or writing state, e
 ### New single-asset strategy
 
 1. Create `contracts/strategies/<name>/src/lib.rs` implementing:
-   - `initialize(vault, asset, protocol, manager, name)`
-   - `deposit(amount, from) → i128`
-   - `withdraw(amount, from, to) → i128`
-   - `get_value(vault) → i128`
-   - `pause(caller)` / `unpause(caller)` / `is_paused() → bool`
+   - `initialize(vault, asset, protocol, name)`
+   - `supply(vault, amount)` or `deposit(vault, amount)`
+   - `withdraw_from_lending(vault, amount)` / `withdraw(vault, amount)`
+   - `withdraw_fraction(vault, numerator, denominator, to)`
+   - `get_total_value(vault) → i128`
 
 2. Add the crate to `Cargo.toml` workspace members.
 
@@ -638,9 +671,11 @@ No vault code changes required.
 ### New LP strategy
 
 Follow the same steps but implement:
-- `deposit_liquidity(amount_a, amount_b, min_a, min_b, from) → i128`
-- `withdraw(lp_amount, min_a, min_b, from, to) → (i128, i128)`
-- `get_value(vault) → i128`
+- `add_liquidity(vault, amount_a, amount_b, min_a, min_b)`
+- `remove_liquidity(vault, lp_amount, min_a, min_b)`
+- `swap(vault, …)`
+- `withdraw_fraction(vault, numerator, denominator, to)`
+- `get_total_value(vault) → i128`
 
 Then mark it as an LP strategy so auto-unwind skips it:
 ```
@@ -649,14 +684,15 @@ vault.set_lp_strategy(manager, new_strategy, true)
 
 ### New trade guard
 
-1. Create `contracts/trade_guards/<name>/` implementing:
-   - `initialize(vault, manager, tokens)`
-   - `set_whitelist(caller, tokens)`
-   - `validate_swap_exact_in(caller, amount_in, min_out, path)`
+1. Create `contracts/strategies/<name>/` implementing the strategy guard entrypoints:
+   - DEX: `swap`, `add_liquidity`, `remove_liquidity`
+   - Lending: `supply`/`deposit`, `withdraw`
+   - Shared guard views: `get_total_value`, `asset_in_use`, `withdraw_fraction`
 
 2. Deploy, initialize, then:
    ```
-   vault.set_trade_guard(manager, strategy_address, guard_address)
+   vault.add_active_guard(manager, strategy_address)
+   vault.set_authorized_ops(manager, strategy_address, [...allowed_ops])
    ```
 
 ---
@@ -755,8 +791,8 @@ cargo build --workspace
 ### Test
 
 ```bash
-# Run the full test suite (348 tests across 10 crates)
-cargo test --workspace
+# Run the full library test suite (407 tests across current crates)
+cargo test --workspace --lib
 
 # Run tests for a single contract
 cargo test -p vault
@@ -771,16 +807,22 @@ cargo test -p vault test_tvl_guard_trips_when_loss_exceeds_tolerance
 
 | Crate | Tests | What is covered |
 |---|---|---|
-| `vault` | 76 | Deposit/withdraw, fees, invest/unwind, oracle NAV, concentration limits, TVL guard, auto-unwind, guards, pause |
-| `integration_tests` | 58 | End-to-end Vault ↔ ShareToken lifecycle with real contract implementations |
-| `soroswap_trade_guard` | 25 | Whitelist, slippage, path validation, auth |
-| `factory` | 30 | Registry CRUD, verify-and-register, pagination, admin transfer |
-| `phoenix_lp` | 29 | Deposit/withdraw LP, share tracking, pause |
-| `soroswap_lp` | 29 | Deposit/withdraw LP, LP balance tracking, reserve decomposition NAV |
-| `phoenix_trade_guard` | 24 | Whitelist, slippage, multi-hop ops validation, auth |
-| `share_token` | 34 | SEP-41: mint, burn, transfer, approve, transfer_from, burn_from |
-| `blend` | 24 | Supply/withdraw, position tracking, sync_position, pause |
-| `oracle` | 19 | Set/get price, batch get, admin management |
+| `vault` | 100 | Deposit/withdraw, fees, NAV, PnL, cooldown, factory authorization, value guard, execute_op, pause |
+| `integration_tests` | 77 | End-to-end Vault ↔ ShareToken lifecycle, multi-asset accounting, strategies, transfer mode, fee settlement, AssetHandler edges |
+| `factory` | 53 | Registry CRUD, create/seed vault, verify-and-register, authorization, pagination, admin transfer |
+| `asset_handler` | 20 | Asset registry, per-asset/primary/fallback oracle routing, admin transfer |
+| `dia_adapter` | 16 | DIA price normalization, staleness, asset keys, admin transfer |
+| `reflector_adapter` | 16 | Reflector price normalization, staleness, admin transfer |
+| `phoenix_lp` | 24 | Add/remove liquidity, share tracking, value calculation |
+| `soroswap_lp` | 24 | Add/remove liquidity, LP balance tracking, reserve decomposition NAV |
+| `share_token` | 42 | SEP-41-style accounting, mint, burn, approve, transfer opt-in, transfer_from gating |
+| `blend` | 18 | Supply/withdraw, position tracking, sync_position |
+| `oracle` | 17 | Set/get price, batch get, staleness, admin management |
+
+Measured production smart-contract coverage is documented in
+[`docs/coverage_report.md`](docs/coverage_report.md). Current production line
+coverage is **88.78%** when excluding test source files, the integration-test
+harness, and the mock-only Blend pool crate.
 
 ---
 

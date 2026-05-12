@@ -50,9 +50,17 @@ pub fn withdraw_event(env: &Env, to: &Address, shares_burned: i128, base_amount:
 /// * `guard`    — The guard contract that executed the operation.
 /// * `fn_name`  — The function name dispatched on the guard.
 /// * `args_len` — Number of caller-provided arguments (vault address not counted).
-pub fn execute_op_event(env: &Env, guard: &Address, fn_name: &Symbol, args: &soroban_sdk::Vec<Val>) {
+pub fn execute_op_event(
+    env: &Env,
+    guard: &Address,
+    fn_name: &Symbol,
+    args: &soroban_sdk::Vec<Val>,
+) {
     env.events().publish(
-        (Symbol::new(env, "execute_op"), env.current_contract_address()),
+        (
+            Symbol::new(env, "execute_op"),
+            env.current_contract_address(),
+        ),
         (guard.clone(), fn_name.clone(), args.len()),
     );
 }

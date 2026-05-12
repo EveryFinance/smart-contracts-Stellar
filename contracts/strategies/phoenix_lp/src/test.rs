@@ -277,7 +277,9 @@ impl MockVault {
 // MockFactory — satisfies factory.get_asset_handler() in get_total_value/compute_lp_value
 
 #[contracttype]
-enum FactoryKey { AssetHandler }
+enum FactoryKey {
+    AssetHandler,
+}
 
 #[contract]
 pub struct MockFactory;
@@ -340,7 +342,6 @@ fn setup() -> T {
         &token_a,
         &token_b,
         &pool,
-        &manager,
         &String::from_str(&env, "Phoenix USDC/XLM LP"),
     );
 
@@ -371,7 +372,6 @@ fn test_initialize() {
     assert_eq!(t.strategy.asset_b(), t.token_b);
     assert_eq!(t.strategy.share_token(), t.share_token);
     assert_eq!(t.strategy.get_share_balance(), 0i128);
-    assert!(!t.strategy.is_paused());
 }
 
 #[test]
@@ -383,7 +383,6 @@ fn test_double_initialize_panics() {
         &t.token_a,
         &t.token_b,
         &t.pool,
-        &t.manager,
         &String::from_str(&t.env, "x"),
     );
 }
@@ -449,15 +448,6 @@ fn test_deposit_zero_amount_b_panics() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #5)")]
-fn test_deposit_paused_panics() {
-    let t = setup();
-    t.strategy.pause(&t.manager);
-    t.strategy
-        .deposit_liquidity(&100i128, &100i128, &0, &0, &t.vault);
-}
-
-#[test]
 fn test_withdraw_sends_to_user() {
     let t = setup();
     let shares = t
@@ -502,51 +492,14 @@ fn test_withdraw_not_vault_panics() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #5)")]
-fn test_withdraw_paused_panics() {
-    let t = setup();
-    t.strategy
-        .deposit_liquidity(&100_0000000i128, &100_0000000i128, &0, &0, &t.vault);
-    t.strategy.pause(&t.manager);
-    t.strategy
-        .withdraw(&50_0000000i128, &0, &0, &t.vault, &t.user);
-}
-
-#[test]
-fn test_pause_unpause_cycle() {
-    let t = setup();
-    t.strategy.pause(&t.manager);
-    assert!(t.strategy.is_paused());
-    t.strategy.unpause(&t.manager);
-    assert!(!t.strategy.is_paused());
-}
-
-#[test]
-#[should_panic]
-fn test_pause_not_manager_panics() {
-    let t = setup();
-    let rogue = Address::generate(&t.env);
-    t.strategy.pause(&rogue);
-}
-
-#[test]
-#[should_panic]
-fn test_unpause_not_manager_panics() {
-    let t = setup();
-    t.strategy.pause(&t.manager);
-    let rogue = Address::generate(&t.env);
-    t.strategy.unpause(&rogue);
-}
-
-#[test]
-fn test_get_value_no_oracle_returns_zero() {
+#[should_panic(expected = "Error(Contract, #9)")]
+fn test_get_value_no_oracle_panics() {
     let t = setup();
     let shares = t
         .strategy
         .deposit_liquidity(&300_0000000i128, &300_0000000i128, &0, &0, &t.vault);
-    // Without an oracle, share units are not base-asset-denominated; returns 0.
-    assert_eq!(t.strategy.get_value(&t.vault), 0);
     assert_eq!(t.strategy.get_share_balance(), shares);
+    t.strategy.get_value(&t.vault);
 }
 
 #[test]
@@ -693,20 +646,4 @@ fn test_withdraw_user_receives_both_tokens() {
     let half = shares / 2;
     assert_eq!(a, half);
     assert_eq!(b, half);
-}
-
-// ---------------------------------------------------------------------------
-// Paused state persists across calls
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_paused_persists() {
-    let t = setup();
-    assert!(!t.strategy.is_paused());
-    t.strategy.pause(&t.manager);
-    assert!(t.strategy.is_paused());
-    // Multiple reads return same state.
-    assert!(t.strategy.is_paused());
-    t.strategy.unpause(&t.manager);
-    assert!(!t.strategy.is_paused());
 }

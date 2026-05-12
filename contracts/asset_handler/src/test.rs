@@ -1,9 +1,6 @@
 #![cfg(test)]
 
-use soroban_sdk::{
-    testutils::Address as _,
-    Address, Env,
-};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
 use crate::{AssetHandler, AssetHandlerClient, PRICE_PRECISION};
 
@@ -62,8 +59,8 @@ mod mock_oracle_panic {
 }
 
 use mock_oracle::MockOracle;
-use mock_oracle_zero::MockOracleZero;
 use mock_oracle_panic::MockOraclePanic;
+use mock_oracle_zero::MockOracleZero;
 
 // ---------------------------------------------------------------------------
 // Test setup helpers
@@ -192,8 +189,8 @@ fn test_get_price_from_primary() {
 #[test]
 fn test_get_price_falls_back_when_primary_returns_zero() {
     let (env, handler, admin) = setup();
-    let asset    = Address::generate(&env);
-    let primary  = make_zero_oracle(&env);
+    let asset = Address::generate(&env);
+    let primary = make_zero_oracle(&env);
     let fallback = make_oracle(&env, 3_000 * PRICE_PRECISION);
     handler.add_asset(&admin, &asset);
     handler.set_primary_oracle(&admin, &primary);
@@ -208,13 +205,41 @@ fn test_get_price_falls_back_when_primary_returns_zero() {
 #[test]
 fn test_get_price_falls_back_when_primary_reverts() {
     let (env, handler, admin) = setup();
-    let asset    = Address::generate(&env);
-    let primary  = make_panic_oracle(&env);
+    let asset = Address::generate(&env);
+    let primary = make_panic_oracle(&env);
     let fallback = make_oracle(&env, PRICE_PRECISION);
     handler.add_asset(&admin, &asset);
     handler.set_primary_oracle(&admin, &primary);
     handler.set_fallback_oracle(&admin, &fallback);
     assert_eq!(handler.get_price(&asset), PRICE_PRECISION);
+}
+
+// ---------------------------------------------------------------------------
+// get_price — per-asset oracle returns 0/reverts, primary succeeds
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_get_price_falls_back_when_asset_oracle_returns_zero() {
+    let (env, handler, admin) = setup();
+    let asset = Address::generate(&env);
+    let asset_oracle = make_zero_oracle(&env);
+    let primary = make_oracle(&env, 2 * PRICE_PRECISION);
+    handler.add_asset(&admin, &asset);
+    handler.set_asset_oracle(&admin, &asset, &asset_oracle);
+    handler.set_primary_oracle(&admin, &primary);
+    assert_eq!(handler.get_price(&asset), 2 * PRICE_PRECISION);
+}
+
+#[test]
+fn test_get_price_falls_back_when_asset_oracle_reverts() {
+    let (env, handler, admin) = setup();
+    let asset = Address::generate(&env);
+    let asset_oracle = make_panic_oracle(&env);
+    let primary = make_oracle(&env, 3 * PRICE_PRECISION);
+    handler.add_asset(&admin, &asset);
+    handler.set_asset_oracle(&admin, &asset, &asset_oracle);
+    handler.set_primary_oracle(&admin, &primary);
+    assert_eq!(handler.get_price(&asset), 3 * PRICE_PRECISION);
 }
 
 // ---------------------------------------------------------------------------
@@ -225,8 +250,8 @@ fn test_get_price_falls_back_when_primary_reverts() {
 #[should_panic(expected = "Error(Contract, #8)")]
 fn test_get_price_both_oracles_fail_panics() {
     let (env, handler, admin) = setup();
-    let asset    = Address::generate(&env);
-    let primary  = make_zero_oracle(&env);
+    let asset = Address::generate(&env);
+    let primary = make_zero_oracle(&env);
     let fallback = make_zero_oracle(&env);
     handler.add_asset(&admin, &asset);
     handler.set_primary_oracle(&admin, &primary);
@@ -242,7 +267,7 @@ fn test_get_price_both_oracles_fail_panics() {
 #[should_panic(expected = "Error(Contract, #8)")]
 fn test_get_price_primary_zero_no_fallback_panics() {
     let (env, handler, admin) = setup();
-    let asset   = Address::generate(&env);
+    let asset = Address::generate(&env);
     let primary = make_zero_oracle(&env);
     handler.add_asset(&admin, &asset);
     handler.set_primary_oracle(&admin, &primary);
@@ -256,14 +281,14 @@ fn test_get_price_primary_zero_no_fallback_panics() {
 #[test]
 fn test_multiple_assets_single_primary_oracle() {
     let (env, handler, admin) = setup();
-    let btc  = Address::generate(&env);
+    let btc = Address::generate(&env);
     let usdc = Address::generate(&env);
     let primary = make_oracle(&env, 65_000 * PRICE_PRECISION);
     handler.set_primary_oracle(&admin, &primary);
     handler.add_asset(&admin, &btc);
     handler.add_asset(&admin, &usdc);
     assert_eq!(handler.get_all_assets().len(), 2);
-    assert_eq!(handler.get_price(&btc),  65_000 * PRICE_PRECISION);
+    assert_eq!(handler.get_price(&btc), 65_000 * PRICE_PRECISION);
     assert_eq!(handler.get_price(&usdc), 65_000 * PRICE_PRECISION);
 }
 
@@ -293,7 +318,7 @@ fn test_set_get_fallback_oracle() {
 #[should_panic]
 fn test_set_primary_oracle_not_admin_panics() {
     let (env, handler, _admin) = setup();
-    let rogue  = Address::generate(&env);
+    let rogue = Address::generate(&env);
     let oracle = make_oracle(&env, PRICE_PRECISION);
     handler.set_primary_oracle(&rogue, &oracle);
 }

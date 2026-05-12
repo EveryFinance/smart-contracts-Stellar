@@ -40,4 +40,7 @@ pub enum ShareTokenError {
     /// allowance already exists for that (owner, spender) pair.  Set the
     /// allowance to 0 first, or use `increase_allowance`/`decrease_allowance`.
     NonZeroAllowance = 9,
+
+    /// Share transfers are disabled for this vault share token.
+    TransfersDisabled = 10,
 }

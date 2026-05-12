@@ -4,9 +4,9 @@
 //! represents fractional ownership of an on-chain asset-management vault.
 //!
 //! ## Design decisions
-//! * **Admin = Vault contract**: Only the vault may mint or burn shares.
-//!   All other SEP-41 operations (transfer, approve, burn-by-holder) are
-//!   permissionless once the caller supplies valid auth.
+//! * **Admin = Vault contract**: Only the vault may mint shares. In the default
+//!   non-transferable mode, share burns are also routed through the vault so
+//!   cooldown and PnL accounting stay coherent.
 //! * **Persistent storage** is used for per-account balances and allowances
 //!   so they survive archival windows; TTLs are bumped on every read and write.
 //! * **Instance storage** is used for immutable/rarely-changed metadata
@@ -25,8 +25,10 @@ use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, String
 
 use storage::{
     get_admin, get_allowance, get_allowance_value, get_balance, get_decimals, get_name, get_symbol,
-    get_total_supply, has_admin, set_admin, set_allowance, set_balance, set_decimals, set_name,
-    set_symbol, set_total_supply, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
+    get_total_supply, get_transfers_enabled, has_admin, set_admin, set_allowance, set_balance,
+    set_decimals, set_name, set_symbol, set_total_supply,
+    set_transfers_enabled as set_transfers_enabled_storage, INSTANCE_BUMP_AMOUNT,
+    INSTANCE_LIFETIME_THRESHOLD,
 };
 
 // ---------------------------------------------------------------------------
@@ -53,6 +55,12 @@ fn require_positive(env: &Env, amount: i128) {
     }
     if amount == 0 {
         panic_with_error!(env, ShareTokenError::ZeroAmount);
+    }
+}
+
+fn require_transfers_enabled(env: &Env) {
+    if !get_transfers_enabled(env) {
+        panic_with_error!(env, ShareTokenError::TransfersDisabled);
     }
 }
 
@@ -91,6 +99,7 @@ impl ShareTokenContract {
         set_symbol(&env, &symbol);
         set_decimals(&env, decimals);
         set_total_supply(&env, 0_i128);
+        set_transfers_enabled_storage(&env, false);
 
         env.storage()
             .instance()
@@ -188,6 +197,14 @@ impl ShareTokenContract {
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         get_allowance(&env, &from, &spender)
+    }
+
+    /// Return true when user share transfers are enabled.
+    pub fn transfers_enabled(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        get_transfers_enabled(&env)
     }
 
     // -----------------------------------------------------------------------
@@ -346,6 +363,7 @@ impl ShareTokenContract {
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         require_positive(&env, amount);
+        require_transfers_enabled(&env);
         from.require_auth();
 
         let from_balance = get_balance(&env, &from);
@@ -400,6 +418,7 @@ impl ShareTokenContract {
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         require_positive(&env, amount);
+        require_transfers_enabled(&env);
         spender.require_auth();
 
         let allowance_value = get_allowance_value(&env, &from, &spender);
@@ -447,16 +466,21 @@ impl ShareTokenContract {
         events::transfer_event(&env, from, to, amount);
     }
 
-    /// Burn (destroy) `amount` tokens from the caller's own balance.
+    /// Burn (destroy) `amount` tokens from `from`.
     ///
     /// Reduces `total_supply` accordingly.
+    ///
+    /// In the default non-transferable vault-share mode, only the admin vault can
+    /// burn shares. This keeps withdrawals, cooldown, and PnL accounting routed
+    /// through the vault. When transfers are enabled, holders may burn their own
+    /// shares directly as part of the explicitly informational accounting mode.
     ///
     /// # Arguments
     /// * `from`   – Token holder whose tokens are destroyed (must sign).
     /// * `amount` – Number of tokens to burn. Must be > 0.
     ///
     /// # Auth
-    /// `from` must authorize this call.
+    /// Default mode: admin must authorize. Transferable mode: `from` must authorize.
     ///
     /// # Errors
     /// * [`ShareTokenError::NegativeAmount`]      if `amount < 0`.
@@ -469,7 +493,13 @@ impl ShareTokenContract {
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         require_positive(&env, amount);
-        from.require_auth();
+        if get_transfers_enabled(&env) {
+            from.require_auth();
+        } else {
+            // Default vault-share mode keeps cooldown and PnL accounting accurate by
+            // allowing burns only through the vault/admin withdrawal path.
+            get_admin(&env).require_auth();
+        }
 
         let balance = get_balance(&env, &from);
         if balance < amount {
@@ -496,6 +526,9 @@ impl ShareTokenContract {
     /// The spender's allowance is decremented by `amount`. Reduces
     /// `total_supply` accordingly.
     ///
+    /// Disabled while share transfers are disabled, because delegated burning can
+    /// otherwise break the default vault-mode PnL and cooldown assumptions.
+    ///
     /// # Arguments
     /// * `spender` – Authorized burner (must sign).
     /// * `from`    – Token holder whose tokens are destroyed.
@@ -516,6 +549,7 @@ impl ShareTokenContract {
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         require_positive(&env, amount);
+        require_transfers_enabled(&env);
         spender.require_auth();
 
         let allowance_value = get_allowance_value(&env, &from, &spender);
@@ -624,6 +658,23 @@ impl ShareTokenContract {
         admin.require_auth();
 
         set_admin(&env, &new_admin);
+    }
+
+    /// Enable or disable user share transfers. Admin only.
+    ///
+    /// Vault deployments keep transfers disabled by default so cooldown and
+    /// per-user PnL accounting remain address-accurate. Enabling transfers is
+    /// an explicit vault/governance decision that makes those per-user controls
+    /// informational unless the vault implements transfer-aware accounting.
+    pub fn set_transfers_enabled(env: Env, enabled: bool) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        let admin = get_admin(&env);
+        admin.require_auth();
+
+        set_transfers_enabled_storage(&env, enabled);
     }
 }
 

@@ -2,14 +2,206 @@
 
 #![cfg(test)]
 
-use soroswap_lp_strategy::{SoroswapLpStrategy, SoroswapLpStrategyClient};
 use share_token::ShareTokenContract;
-use soroban_sdk::{testutils::Address as _, Address, Env, IntoVal, String, Symbol, Val, Vec};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, testutils::Address as _, Address, Env, IntoVal, String,
+    Symbol, Val, Vec,
+};
+use soroswap_lp_strategy::{SoroswapLpStrategy, SoroswapLpStrategyClient};
 use vault::{Vault, VaultClient, VaultParams};
 
 use crate::common::{
     token_balance, MockSoroswapRouter, MockSoroswapRouterClient, MockToken, MockTokenClient,
 };
+
+const PRICE_PRECISION: i128 = 10_000_000;
+
+#[contract]
+struct MockLpAssetHandler;
+
+#[contractimpl]
+impl MockLpAssetHandler {
+    pub fn get_price(_env: Env, _asset: Address) -> i128 {
+        PRICE_PRECISION
+    }
+}
+
+#[contracttype]
+enum LpFactoryKey {
+    AssetHandler,
+    Asset(Address),
+    Guard(Address),
+}
+
+#[contract]
+struct MockLpFactory;
+
+#[contractimpl]
+impl MockLpFactory {
+    pub fn init(env: Env, asset_handler: Address) {
+        env.storage()
+            .instance()
+            .set(&LpFactoryKey::AssetHandler, &asset_handler);
+    }
+
+    pub fn authorize_asset(env: Env, asset: Address) {
+        env.storage()
+            .instance()
+            .set(&LpFactoryKey::Asset(asset), &true);
+    }
+
+    pub fn is_authorized_asset(env: Env, asset: Address) -> bool {
+        env.storage()
+            .instance()
+            .get(&LpFactoryKey::Asset(asset))
+            .unwrap_or(false)
+    }
+
+    pub fn authorize_guard(env: Env, guard: Address) {
+        env.storage()
+            .instance()
+            .set(&LpFactoryKey::Guard(guard), &true);
+    }
+
+    pub fn is_authorized_guard(env: Env, guard: Address) -> bool {
+        env.storage()
+            .instance()
+            .get(&LpFactoryKey::Guard(guard))
+            .unwrap_or(false)
+    }
+
+    pub fn get_asset_handler(env: Env) -> Option<Address> {
+        env.storage().instance().get(&LpFactoryKey::AssetHandler)
+    }
+}
+
+#[contracttype]
+enum PairKey {
+    Balance(Address),
+    Allowance(Address, Address),
+    TotalSupply,
+    Token0,
+    Token1,
+    Reserve0,
+    Reserve1,
+}
+
+#[contract]
+struct MockSoroswapPair;
+
+#[contractimpl]
+impl MockSoroswapPair {
+    pub fn pair_init(env: Env, token0: Address, token1: Address, reserve0: i128, reserve1: i128) {
+        env.storage().instance().set(&PairKey::Token0, &token0);
+        env.storage().instance().set(&PairKey::Token1, &token1);
+        env.storage().instance().set(&PairKey::Reserve0, &reserve0);
+        env.storage().instance().set(&PairKey::Reserve1, &reserve1);
+    }
+
+    pub fn mint(env: Env, to: Address, amount: i128) {
+        let bal: i128 = env
+            .storage()
+            .persistent()
+            .get(&PairKey::Balance(to.clone()))
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&PairKey::Balance(to), &(bal + amount));
+        let supply: i128 = env
+            .storage()
+            .persistent()
+            .get(&PairKey::TotalSupply)
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&PairKey::TotalSupply, &(supply + amount));
+    }
+
+    pub fn balance(env: Env, id: Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&PairKey::Balance(id))
+            .unwrap_or(0)
+    }
+
+    pub fn total_supply(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&PairKey::TotalSupply)
+            .unwrap_or(0)
+    }
+
+    pub fn approve(env: Env, from: Address, spender: Address, amount: i128, _expiry: u32) {
+        from.require_auth();
+        env.storage()
+            .persistent()
+            .set(&PairKey::Allowance(from, spender), &amount);
+    }
+
+    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+        from.require_auth();
+        let from_bal = Self::balance(env.clone(), from.clone());
+        assert!(from_bal >= amount, "pair transfer: insufficient balance");
+        env.storage()
+            .persistent()
+            .set(&PairKey::Balance(from), &(from_bal - amount));
+        let to_bal = Self::balance(env.clone(), to.clone());
+        env.storage()
+            .persistent()
+            .set(&PairKey::Balance(to), &(to_bal + amount));
+    }
+
+    pub fn transfer_from(env: Env, spender: Address, from: Address, to: Address, amount: i128) {
+        spender.require_auth();
+        let allowance: i128 = env
+            .storage()
+            .persistent()
+            .get(&PairKey::Allowance(from.clone(), spender.clone()))
+            .unwrap_or(0);
+        assert!(
+            allowance >= amount,
+            "pair transfer_from: insufficient allowance"
+        );
+        env.storage().persistent().set(
+            &PairKey::Allowance(from.clone(), spender),
+            &(allowance - amount),
+        );
+        let from_bal = Self::balance(env.clone(), from.clone());
+        assert!(
+            from_bal >= amount,
+            "pair transfer_from: insufficient balance"
+        );
+        env.storage()
+            .persistent()
+            .set(&PairKey::Balance(from), &(from_bal - amount));
+        let to_bal = Self::balance(env.clone(), to.clone());
+        env.storage()
+            .persistent()
+            .set(&PairKey::Balance(to), &(to_bal + amount));
+    }
+
+    pub fn get_reserves(env: Env) -> (i128, i128) {
+        let reserve0 = env
+            .storage()
+            .instance()
+            .get(&PairKey::Reserve0)
+            .unwrap_or(0);
+        let reserve1 = env
+            .storage()
+            .instance()
+            .get(&PairKey::Reserve1)
+            .unwrap_or(0);
+        (reserve0, reserve1)
+    }
+
+    pub fn token0(env: Env) -> Address {
+        env.storage().instance().get(&PairKey::Token0).unwrap()
+    }
+
+    pub fn token1(env: Env) -> Address {
+        env.storage().instance().get(&PairKey::Token1).unwrap()
+    }
+}
 
 // ---------------------------------------------------------------------------
 // World fixture
@@ -44,8 +236,19 @@ fn setup_soroswap() -> SoroswapWorld {
     let asset_b = env.register(MockToken, ());
     MockTokenClient::new(&env, &asset_b).initialize(&manager);
 
-    let lp_token = env.register(MockToken, ());
-    MockTokenClient::new(&env, &lp_token).initialize(&manager);
+    let lp_token = env.register(MockSoroswapPair, ());
+    MockSoroswapPairClient::new(&env, &lp_token).pair_init(
+        &asset_a,
+        &asset_b,
+        &50_000_0000000i128,
+        &50_000_0000000i128,
+    );
+
+    let asset_handler = env.register(MockLpAssetHandler, ());
+    let factory_id = env.register(MockLpFactory, ());
+    MockLpFactoryClient::new(&env, &factory_id).init(&asset_handler);
+    MockLpFactoryClient::new(&env, &factory_id).authorize_asset(&asset_a);
+    MockLpFactoryClient::new(&env, &factory_id).authorize_asset(&asset_b);
 
     // Use asset_a as vault base (simplest setup — no oracle needed for basic ops).
     let share_id = env.register(
@@ -73,7 +276,7 @@ fn setup_soroswap() -> SoroswapWorld {
             exit_fee_bps: 0,
             mgmt_fee_bps: 0,
             perf_fee_bps: 0,
-            factory: None,
+            factory: Some(factory_id.clone()),
             is_private: false,
         },),
     );
@@ -91,15 +294,14 @@ fn setup_soroswap() -> SoroswapWorld {
         &asset_b,
         &lp_token,
         &router_id,
-        &manager,
         &String::from_str(&env, "Soroswap USDC-XLM"),
     );
+    MockLpFactoryClient::new(&env, &factory_id).authorize_guard(&strategy_id);
 
-    // Whitelist asset_a (base) in portfolio.  asset_b is not whitelisted here
-    // because these tests pre-fund the vault via mint, not deposit; only asset_a
-    // needs to appear in NAV for the TVL check.  asset_b and LP positions require
-    // an oracle for accurate NAV — we disable the TVL guard instead.
+    // Whitelist both pool assets in portfolio. LP positions and idle balances
+    // are valued through the factory's AssetHandler, matching production.
     vault.add_portfolio_asset(&manager, &asset_a);
+    vault.add_portfolio_asset(&manager, &asset_b);
 
     vault.add_active_guard(&manager, &strategy_id);
     let ops: Vec<Symbol> = soroban_sdk::vec![
@@ -110,9 +312,8 @@ fn setup_soroswap() -> SoroswapWorld {
     ];
     vault.set_authorized_ops(&manager, &strategy_id, &ops);
 
-    // Disable TVL guard: LP positions require an oracle for get_total_value,
-    // which is not configured in these dispatch-focused tests.
-    vault.set_max_loss_bps(&manager, &0u32);
+    // Use a permissive but non-zero TVL guard for dispatch-focused tests.
+    vault.set_max_loss_bps(&manager, &9_999u32);
 
     // Fund the vault with both underlying assets.
     MockTokenClient::new(&env, &asset_a).mint(&vault_id, &50_000_0000000i128);
@@ -151,20 +352,6 @@ fn test_soroswap_add_liquidity_via_execute_op() {
     let amount_a = 1_000_0000000i128;
     let amount_b = 1_000_0000000i128;
 
-    // strategy.add_liquidity calls transfer_from(strategy, vault, strategy) for both assets.
-    MockTokenClient::new(&w.env, &w.asset_a).approve(
-        &w.vault_addr,
-        &w.strategy_addr,
-        &amount_a,
-        &1000u32,
-    );
-    MockTokenClient::new(&w.env, &w.asset_b).approve(
-        &w.vault_addr,
-        &w.strategy_addr,
-        &amount_b,
-        &1000u32,
-    );
-
     let args: Vec<Val> = soroban_sdk::vec![
         &w.env,
         amount_a.into_val(&w.env),
@@ -181,7 +368,10 @@ fn test_soroswap_add_liquidity_via_execute_op() {
 
     // MockRouter mints min(amount_a, amount_b) LP tokens to strategy.
     let lp_minted = amount_a.min(amount_b);
-    assert_eq!(token_balance(&w.env, &w.lp_token, &w.strategy_addr), lp_minted);
+    assert_eq!(
+        token_balance(&w.env, &w.lp_token, &w.strategy_addr),
+        lp_minted
+    );
 
     // Strategy's tracked LP balance matches.
     assert_eq!(w.strategy.get_lp_balance(), lp_minted);
@@ -202,18 +392,6 @@ fn test_soroswap_remove_liquidity_via_execute_op() {
     let amount_b = 2_000_0000000i128;
 
     // Add liquidity first.
-    MockTokenClient::new(&w.env, &w.asset_a).approve(
-        &w.vault_addr,
-        &w.strategy_addr,
-        &amount_a,
-        &1000u32,
-    );
-    MockTokenClient::new(&w.env, &w.asset_b).approve(
-        &w.vault_addr,
-        &w.strategy_addr,
-        &amount_b,
-        &1000u32,
-    );
     let add_args: Vec<Val> = soroban_sdk::vec![
         &w.env,
         amount_a.into_val(&w.env),
@@ -274,14 +452,6 @@ fn test_soroswap_swap_via_execute_op() {
     let vault_a_before = token_balance(&w.env, &w.asset_a, &w.vault_addr);
     let vault_b_before = token_balance(&w.env, &w.asset_b, &w.vault_addr);
 
-    // strategy.swap calls transfer_from(strategy, vault, strategy, amount_in) on asset_a.
-    MockTokenClient::new(&w.env, &w.asset_a).approve(
-        &w.vault_addr,
-        &w.strategy_addr,
-        &amount_in,
-        &1000u32,
-    );
-
     let args: Vec<Val> = soroban_sdk::vec![
         &w.env,
         w.asset_a.clone().into_val(&w.env), // from_asset
@@ -308,11 +478,32 @@ fn test_soroswap_swap_via_execute_op() {
     );
 }
 
-/// get_total_value returns 0 when no oracle is configured (early exit).
 #[test]
-fn test_soroswap_get_total_value_without_oracle_returns_zero() {
+#[should_panic(expected = "Error(Contract, #9)")]
+fn test_soroswap_swap_rejects_non_pair_asset_via_execute_op() {
     let w = setup_soroswap();
-    // No oracle set → strategy returns 0 rather than panicking.
+    let rogue_asset = Address::generate(&w.env);
+    let amount_in = 500_0000000i128;
+
+    let args: Vec<Val> = soroban_sdk::vec![
+        &w.env,
+        rogue_asset.into_val(&w.env),
+        w.asset_b.clone().into_val(&w.env),
+        amount_in.into_val(&w.env),
+        0i128.into_val(&w.env),
+    ];
+    w.vault.execute_op(
+        &w.trader,
+        &w.strategy_addr,
+        &Symbol::new(&w.env, "swap"),
+        &args,
+    );
+}
+
+/// get_total_value returns 0 before any LP position exists.
+#[test]
+fn test_soroswap_get_total_value_without_position_returns_zero() {
+    let w = setup_soroswap();
     assert_eq!(w.strategy.get_total_value(&w.vault_addr), 0);
 }
 
@@ -325,18 +516,6 @@ fn test_soroswap_asset_in_use_after_add_liquidity() {
     assert!(!w.strategy.asset_in_use(&w.vault_addr, &w.asset_a));
     assert!(!w.strategy.asset_in_use(&w.vault_addr, &w.asset_b));
 
-    MockTokenClient::new(&w.env, &w.asset_a).approve(
-        &w.vault_addr,
-        &w.strategy_addr,
-        &amount,
-        &1000u32,
-    );
-    MockTokenClient::new(&w.env, &w.asset_b).approve(
-        &w.vault_addr,
-        &w.strategy_addr,
-        &amount,
-        &1000u32,
-    );
     let args: Vec<Val> = soroban_sdk::vec![
         &w.env,
         amount.into_val(&w.env),

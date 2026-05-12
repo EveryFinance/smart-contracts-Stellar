@@ -8,8 +8,8 @@ The protocol uses a **three-tier oracle resolution** inside `AssetHandler` to pr
 AssetHandler::get_price(asset)
   │
   ├─ Tier 1: Per-asset oracle (optional override)
-  │     invoke_contract — hard fail on revert
-  │     Returns > 0 → use it; returns 0 → fall through
+  │     try_invoke_contract — gracefully catches reverts
+  │     Returns > 0 → use it; reverts or 0 → fall through
   │
   ├─ Tier 2: Primary global oracle (ReflectorAdapter)
   │     try_invoke_contract — gracefully catches reverts

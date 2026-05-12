@@ -16,6 +16,7 @@ soroban-sdk  = { version = "22.0.1", features = ["testutils"] }
 vault                = { path = "../vault",                    features = ["testutils"] }
 share-token          = { path = "../share_token",              features = ["testutils"] }
 oracle               = { path = "../oracle",                   features = ["testutils"] }
+asset_handler        = { path = "../asset_handler",            features = ["testutils"] }
 blend-strategy       = { path = "../strategies/blend",         features = ["testutils"] }
 soroswap-lp-strategy = { path = "../strategies/soroswap_lp",  features = ["testutils"] }
 phoenix-lp-strategy  = { path = "../strategies/phoenix_lp",   features = ["testutils"] }

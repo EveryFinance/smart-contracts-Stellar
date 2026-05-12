@@ -52,6 +52,7 @@ fn test_initialize() {
     assert_eq!(client.symbol(), String::from_str(&env, "VST"));
     assert_eq!(client.decimals(), 7u32);
     assert_eq!(client.total_supply(), 0i128);
+    assert!(!client.transfers_enabled());
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +117,7 @@ fn test_transfer_happy_path() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin) = setup(&env);
+    client.set_transfers_enabled(&true);
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
 
@@ -129,11 +131,25 @@ fn test_transfer_happy_path() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_transfer_disabled_by_default_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = setup(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    client.mint(&alice, &1_000i128);
+    client.transfer(&alice, &bob, &1i128);
+}
+
+#[test]
 #[should_panic]
 fn test_transfer_insufficient_balance_panics() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin) = setup(&env);
+    client.set_transfers_enabled(&true);
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
 
@@ -174,6 +190,7 @@ fn test_approve_and_transfer_from() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin) = setup(&env);
+    client.set_transfers_enabled(&true);
     let alice = Address::generate(&env);
     let spender = Address::generate(&env);
     let bob = Address::generate(&env);
@@ -192,11 +209,27 @@ fn test_approve_and_transfer_from() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_transfer_from_disabled_by_default_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = setup(&env);
+    let alice = Address::generate(&env);
+    let spender = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    client.mint(&alice, &1_000i128);
+    client.approve(&alice, &spender, &500i128, &999u32);
+    client.transfer_from(&spender, &alice, &bob, &1i128);
+}
+
+#[test]
 #[should_panic]
 fn test_transfer_from_insufficient_allowance_panics() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin) = setup(&env);
+    client.set_transfers_enabled(&true);
     let alice = Address::generate(&env);
     let spender = Address::generate(&env);
     let bob = Address::generate(&env);
@@ -256,6 +289,7 @@ fn test_burn_from_with_allowance() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin) = setup(&env);
+    client.set_transfers_enabled(&true);
     let alice = Address::generate(&env);
     let burner = Address::generate(&env);
 
@@ -274,12 +308,27 @@ fn test_burn_from_insufficient_allowance_panics() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin) = setup(&env);
+    client.set_transfers_enabled(&true);
     let alice = Address::generate(&env);
     let burner = Address::generate(&env);
 
     client.mint(&alice, &1_000i128);
     client.approve(&alice, &burner, &100i128, &999u32);
     client.burn_from(&burner, &alice, &200i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_burn_from_disabled_by_default_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin) = setup(&env);
+    let alice = Address::generate(&env);
+    let burner = Address::generate(&env);
+
+    client.mint(&alice, &1_000i128);
+    client.approve(&alice, &burner, &500i128, &999u32);
+    client.burn_from(&burner, &alice, &100i128);
 }
 
 // ---------------------------------------------------------------------------
@@ -309,6 +358,7 @@ fn test_total_supply_consistency_after_mixed_ops() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin) = setup(&env);
+    client.set_transfers_enabled(&true);
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
 
@@ -368,6 +418,7 @@ fn test_transfer_to_overflow_panics() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin) = setup(&env);
+    client.set_transfers_enabled(&true);
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
 
@@ -414,6 +465,7 @@ fn test_transfer_from_zero_panics() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin) = setup(&env);
+    client.set_transfers_enabled(&true);
     let alice = Address::generate(&env);
     let spender = Address::generate(&env);
     let bob = Address::generate(&env);
@@ -447,6 +499,7 @@ fn test_transfer_to_self() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin) = setup(&env);
+    client.set_transfers_enabled(&true);
     let alice = Address::generate(&env);
     client.mint(&alice, &1_000i128);
     client.transfer(&alice, &alice, &400i128);
@@ -507,6 +560,7 @@ fn test_transfer_from_expired_allowance_panics() {
     });
 
     let (client, _admin) = setup(&env);
+    client.set_transfers_enabled(&true);
     let owner = Address::generate(&env);
     let spender = Address::generate(&env);
     let recipient = Address::generate(&env);
@@ -531,6 +585,7 @@ fn test_burn_from_expired_allowance_panics() {
     });
 
     let (client, _admin) = setup(&env);
+    client.set_transfers_enabled(&true);
     let owner = Address::generate(&env);
     let spender = Address::generate(&env);
 
@@ -572,8 +627,8 @@ fn test_approve_zero_revoke_then_set_succeeds() {
     let bob = Address::generate(&env);
     client.mint(&alice, &1_000i128);
     client.approve(&alice, &bob, &500i128, &999u32);
-    client.approve(&alice, &bob, &0i128, &999u32);    // revoke
-    client.approve(&alice, &bob, &200i128, &999u32);  // re-set after zero
+    client.approve(&alice, &bob, &0i128, &999u32); // revoke
+    client.approve(&alice, &bob, &200i128, &999u32); // re-set after zero
     assert_eq!(client.allowance(&alice, &bob), 200i128);
 }
 

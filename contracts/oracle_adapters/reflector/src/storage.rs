@@ -2,7 +2,7 @@ use soroban_sdk::{contracttype, panic_with_error, Address, Env};
 
 use crate::error::ReflectorAdapterError;
 
-pub const INSTANCE_BUMP_AMOUNT: u32 = 34_560;       // ~2.4 days
+pub const INSTANCE_BUMP_AMOUNT: u32 = 34_560; // ~2.4 days
 pub const INSTANCE_LIFETIME_THRESHOLD: u32 = 17_280; // ~1.2 days
 pub const PERSISTENT_BUMP_AMOUNT: u32 = 5_256_000;
 pub const PERSISTENT_LIFETIME_THRESHOLD: u32 = 2_628_000;
@@ -17,12 +17,16 @@ pub enum DataKey {
     ReflectorContract,
     /// Decimal precision reported by the Reflector contract (typically 8).
     Decimals,
+    /// Maximum accepted upstream oracle age in seconds.
+    MaxAgeSecs,
 }
 
 fn bump_persistent(env: &Env, key: &DataKey) {
-    env.storage()
-        .persistent()
-        .extend_ttl(key, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+    env.storage().persistent().extend_ttl(
+        key,
+        PERSISTENT_LIFETIME_THRESHOLD,
+        PERSISTENT_BUMP_AMOUNT,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -34,9 +38,7 @@ pub fn is_initialized(env: &Env) -> bool {
 }
 
 pub fn set_initialized(env: &Env) {
-    env.storage()
-        .persistent()
-        .set(&DataKey::Initialized, &true);
+    env.storage().persistent().set(&DataKey::Initialized, &true);
     env.storage()
         .persistent()
         .extend_ttl(&DataKey::Initialized, u32::MAX / 2, u32::MAX);
@@ -60,9 +62,7 @@ pub fn get_admin(env: &Env) -> Address {
 }
 
 pub fn set_pending_admin(env: &Env, admin: &Address) {
-    env.storage()
-        .instance()
-        .set(&DataKey::PendingAdmin, admin);
+    env.storage().instance().set(&DataKey::PendingAdmin, admin);
 }
 
 pub fn get_pending_admin(env: &Env) -> Option<Address> {
@@ -105,4 +105,17 @@ pub fn get_decimals(env: &Env) -> u32 {
         .persistent()
         .get(&DataKey::Decimals)
         .unwrap_or(8) // Reflector standard
+}
+
+pub fn set_max_age_secs(env: &Env, secs: u64) {
+    env.storage().persistent().set(&DataKey::MaxAgeSecs, &secs);
+    bump_persistent(env, &DataKey::MaxAgeSecs);
+}
+
+pub fn get_max_age_secs(env: &Env) -> u64 {
+    bump_persistent(env, &DataKey::MaxAgeSecs);
+    env.storage()
+        .persistent()
+        .get(&DataKey::MaxAgeSecs)
+        .unwrap_or_else(|| panic_with_error!(env, ReflectorAdapterError::NotInitialized))
 }

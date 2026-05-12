@@ -52,9 +52,10 @@ use soroban_sdk::{
 };
 
 use storage::{
-    clear_pending_admin, get_admin, get_asset_key, get_dia_contract, get_pending_admin,
-    is_initialized, remove_asset_key, set_admin, set_asset_key, set_dia_contract, set_initialized,
-    set_pending_admin, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
+    clear_pending_admin, get_admin, get_asset_key, get_dia_contract, get_max_age_secs,
+    get_pending_admin, is_initialized, remove_asset_key, set_admin, set_asset_key,
+    set_dia_contract, set_initialized, set_max_age_secs, set_pending_admin, INSTANCE_BUMP_AMOUNT,
+    INSTANCE_LIFETIME_THRESHOLD,
 };
 
 /// Protocol price precision: 7 decimal places (Stellar native).
@@ -62,6 +63,8 @@ pub const PRICE_PRECISION: i128 = 10_000_000;
 
 /// DIA oracle always uses 8 fixed decimal places.
 const DIA_DECIMALS: i128 = 100_000_000; // 10^8
+/// Default freshness window for upstream DIA prices.
+const DEFAULT_MAX_AGE_SECS: u64 = 3_600;
 
 // ---------------------------------------------------------------------------
 // Local mirror of DIA's OracleValue struct
@@ -97,6 +100,7 @@ impl DiaAdapter {
 
         set_admin(&env, &admin);
         set_dia_contract(&env, &dia_contract);
+        set_max_age_secs(&env, DEFAULT_MAX_AGE_SECS);
         set_initialized(&env);
     }
 
@@ -132,12 +136,11 @@ impl DiaAdapter {
 
         // Step 3: normalize.
         match result {
-            Ok(Ok(val)) if val.price > 0 => {
-                val.price
-                    .checked_mul(PRICE_PRECISION)
-                    .and_then(|p| p.checked_div(DIA_DECIMALS))
-                    .unwrap_or(0)
-            }
+            Ok(Ok(val)) if val.price > 0 && Self::is_fresh(&env, val.timestamp) => val
+                .price
+                .checked_mul(PRICE_PRECISION)
+                .and_then(|p| p.checked_div(DIA_DECIMALS))
+                .unwrap_or(0),
             _ => 0,
         }
     }
@@ -196,6 +199,28 @@ impl DiaAdapter {
         set_dia_contract(&env, &dia);
     }
 
+    /// Set the maximum accepted upstream DIA price age in seconds. Admin only.
+    pub fn set_max_age_secs(env: Env, caller: Address, secs: u64) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        caller.require_auth();
+        if caller != get_admin(&env) {
+            panic_with_error!(&env, DiaAdapterError::NotAdmin);
+        }
+        if secs == 0 {
+            panic_with_error!(&env, DiaAdapterError::InvalidMaxAge);
+        }
+        set_max_age_secs(&env, secs);
+    }
+
+    pub fn get_max_age_secs(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        get_max_age_secs(&env)
+    }
+
     // -----------------------------------------------------------------------
     // Admin — two-step transfer
     // -----------------------------------------------------------------------
@@ -241,6 +266,11 @@ impl DiaAdapter {
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         get_dia_contract(&env)
+    }
+
+    fn is_fresh(env: &Env, timestamp: u64) -> bool {
+        let now = env.ledger().timestamp();
+        timestamp <= now && now.saturating_sub(timestamp) <= get_max_age_secs(env)
     }
 }
 

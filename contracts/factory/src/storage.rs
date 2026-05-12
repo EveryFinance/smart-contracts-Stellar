@@ -104,9 +104,11 @@ fn bump_instance(env: &Env) {
 }
 
 fn bump_persistent(env: &Env, key: &DataKey) {
-    env.storage()
-        .persistent()
-        .extend_ttl(key, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+    env.storage().persistent().extend_ttl(
+        key,
+        PERSISTENT_LIFETIME_THRESHOLD,
+        PERSISTENT_BUMP_AMOUNT,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -118,9 +120,7 @@ fn bump_persistent(env: &Env, key: &DataKey) {
 /// Persistent storage survives instance-entry TTL expiry, preventing an
 /// attacker from calling `__constructor` again after the instance expires.
 pub fn set_factory_initialized(env: &Env) {
-    env.storage()
-        .persistent()
-        .set(&DataKey::Initialized, &true);
+    env.storage().persistent().set(&DataKey::Initialized, &true);
     env.storage().persistent().extend_ttl(
         &DataKey::Initialized,
         FACTORY_INIT_PERSISTENT_LIFETIME_THRESHOLD,
@@ -133,9 +133,7 @@ pub fn set_factory_initialized(env: &Env) {
 /// Checks the **persistent** `Initialized` flag so that expiry of the
 /// instance entry cannot be exploited to re-run `__constructor`.
 pub fn is_factory_initialized(env: &Env) -> bool {
-    env.storage()
-        .persistent()
-        .has(&DataKey::Initialized)
+    env.storage().persistent().has(&DataKey::Initialized)
 }
 
 // ---------------------------------------------------------------------------

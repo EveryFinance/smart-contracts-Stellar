@@ -39,9 +39,9 @@ use soroban_sdk::{
 };
 
 use storage::{
-    get_asset, get_factory, get_manager, get_name, get_paused, get_protocol, get_vault,
-    is_initialized, set_asset, set_factory, set_initialized, set_manager, set_name,
-    set_paused, set_protocol, set_vault, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
+    get_asset, get_factory, get_name, get_protocol, get_vault, is_initialized, set_asset,
+    set_factory, set_initialized, set_name, set_protocol, set_vault, INSTANCE_BUMP_AMOUNT,
+    INSTANCE_LIFETIME_THRESHOLD,
 };
 
 // ---------------------------------------------------------------------------
@@ -55,6 +55,15 @@ pub const REQUEST_WITHDRAW: u32 = 3;
 
 /// Fixed-point precision matching AssetHandler (10^7).
 const PRICE_PRECISION: i128 = 10_000_000;
+
+fn checked_mul_div(env: &Env, a: i128, b: i128, denominator: i128) -> i128 {
+    if denominator <= 0 {
+        panic_with_error!(env, BlendStrategyError::InvalidAmount);
+    }
+    a.checked_mul(b)
+        .map(|v| v / denominator)
+        .unwrap_or_else(|| panic_with_error!(env, BlendStrategyError::Overflow))
+}
 
 // ---------------------------------------------------------------------------
 // Blend cross-contract client (minimal interface)
@@ -123,12 +132,10 @@ impl BlendStrategy {
     /// * `vault`    – The vault contract that owns this strategy.
     /// * `asset`    – The token to supply to Blend (e.g. USDC).
     /// * `protocol` – The Blend pool contract address.
-    /// * `manager`  – Address allowed to pause / unpause this strategy.
     /// * `name`     – Human-readable label (e.g. `"Blend USDC"`).
     ///
     /// # Auth
-    /// Both the vault's current on-chain manager **and** the designated
-    /// strategy `manager` must authorise this call.
+    /// The vault's current on-chain manager must authorise this call.
     ///
     /// The vault manager auth is derived by cross-calling `vault.get_manager()`
     /// so it cannot be spoofed by a user-supplied argument.  This prevents an
@@ -139,32 +146,18 @@ impl BlendStrategy {
     ///
     /// # Errors
     /// * [`BlendStrategyError::AlreadyInitialized`] if called more than once.
-    pub fn initialize(
-        env: Env,
-        vault: Address,
-        asset: Address,
-        protocol: Address,
-        manager: Address,
-        name: String,
-    ) {
+    pub fn initialize(env: Env, vault: Address, asset: Address, protocol: Address, name: String) {
         if is_initialized(&env) {
             panic_with_error!(&env, BlendStrategyError::AlreadyInitialized);
         }
 
         // Fetch the vault's actual manager from on-chain state — this address
         // cannot be manipulated by the caller — and require their signature.
-        // This binds initialization to the vault's trusted authority and
-        // closes the front-running window that `manager.require_auth()` alone
-        // leaves open (an attacker can always sign as their own manager).
-        let vault_manager: Address = env.invoke_contract(
-            &vault,
-            &Symbol::new(&env, "get_manager"),
-            ().into_val(&env),
-        );
+        // This binds initialization to the vault's trusted authority.
+        let vault_manager: Address =
+            env.invoke_contract(&vault, &Symbol::new(&env, "get_manager"), ().into_val(&env));
         vault_manager.require_auth();
 
-        // The designated strategy manager also consents to taking on the role.
-        manager.require_auth();
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
@@ -172,18 +165,13 @@ impl BlendStrategy {
         set_vault(&env, &vault);
         set_asset(&env, &asset);
         set_protocol(&env, &protocol);
-        set_manager(&env, &manager);
         set_name(&env, &name);
-        set_paused(&env, false);
 
         // Cache the factory address locally so get_total_value can reach the
         // AssetHandler without calling back into the vault (which would re-enter
         // since the vault calls get_total_value from within nav()).
-        let factory_opt: Option<Address> = env.invoke_contract(
-            &vault,
-            &Symbol::new(&env, "get_factory"),
-            ().into_val(&env),
-        );
+        let factory_opt: Option<Address> =
+            env.invoke_contract(&vault, &Symbol::new(&env, "get_factory"), ().into_val(&env));
         if let Some(ref factory) = factory_opt {
             set_factory(&env, factory);
         }
@@ -214,7 +202,6 @@ impl BlendStrategy {
     /// # Errors
     /// * [`BlendStrategyError::NotInitialized`]
     /// * [`BlendStrategyError::NotVault`]       if `from` ≠ registered vault.
-    /// * [`BlendStrategyError::Paused`]
     /// * [`BlendStrategyError::InvalidAmount`]  if `amount ≤ 0`.
     /// * [`BlendStrategyError::Overflow`]
     pub fn deposit(env: Env, amount: i128, from: Address) -> i128 {
@@ -224,9 +211,6 @@ impl BlendStrategy {
 
         if amount <= 0 {
             panic_with_error!(&env, BlendStrategyError::InvalidAmount);
-        }
-        if get_paused(&env) {
-            panic_with_error!(&env, BlendStrategyError::Paused);
         }
 
         from.require_auth();
@@ -292,7 +276,6 @@ impl BlendStrategy {
     ///
     /// # Errors
     /// * [`BlendStrategyError::NotVault`]           if `from` ≠ registered vault.
-    /// * [`BlendStrategyError::Paused`]
     /// * [`BlendStrategyError::InvalidAmount`]      if `amount ≤ 0`.
     /// * [`BlendStrategyError::InsufficientPosition`] if `amount` > position.
     pub fn withdraw(env: Env, amount: i128, from: Address, to: Address) -> i128 {
@@ -302,9 +285,6 @@ impl BlendStrategy {
 
         if amount <= 0 {
             panic_with_error!(&env, BlendStrategyError::InvalidAmount);
-        }
-        if get_paused(&env) {
-            panic_with_error!(&env, BlendStrategyError::Paused);
         }
 
         from.require_auth();
@@ -410,13 +390,6 @@ impl BlendStrategy {
     }
 
     /// Return `true` if the strategy is currently paused.
-    pub fn is_paused(env: Env) -> bool {
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-        get_paused(&env)
-    }
-
     // -----------------------------------------------------------------------
     // Multi-asset guard interface v2
     // -----------------------------------------------------------------------
@@ -463,7 +436,7 @@ impl BlendStrategy {
                 &Symbol::new(&env, "get_price"),
                 (lending_asset,).into_val(&env),
             );
-            position.saturating_mul(price) / PRICE_PRECISION
+            checked_mul_div(&env, position, price, PRICE_PRECISION)
         } else {
             // No AssetHandler configured — return raw position (backwards compatible).
             position
@@ -504,7 +477,7 @@ impl BlendStrategy {
             return;
         }
 
-        let amount = position * numerator / denominator;
+        let amount = checked_mul_div(&env, position, numerator, denominator);
         if amount == 0 {
             return;
         }
@@ -518,7 +491,14 @@ impl BlendStrategy {
                 amount,
             }
         ];
-        blend_submit(&env, &protocol, &strategy_addr, &strategy_addr, &to, requests);
+        blend_submit(
+            &env,
+            &protocol,
+            &strategy_addr,
+            &strategy_addr,
+            &to,
+            requests,
+        );
     }
 
     /// Return `true` if this strategy has an active position for `vault` that
@@ -551,9 +531,8 @@ impl BlendStrategy {
     // these functions.  The caller (manager/trader) cannot substitute a
     // different address, so funds can only flow from the registered vault.
     //
-    // Production note: `supply` uses `transfer_from(strategy, vault, strategy)`
-    // which requires the vault to have pre-approved this strategy contract for
-    // the token amount.  In tests `mock_all_auths()` bypasses this check.
+    // `supply` uses vault-scoped contract authorization prepared by
+    // vault.execute_op, avoiding standing token approvals.
     // -----------------------------------------------------------------------
 
     /// Supply `amount` of the configured asset to Blend on behalf of `vault`.
@@ -569,9 +548,6 @@ impl BlendStrategy {
         if amount <= 0 {
             panic_with_error!(&env, BlendStrategyError::InvalidAmount);
         }
-        if get_paused(&env) {
-            panic_with_error!(&env, BlendStrategyError::Paused);
-        }
         if vault != get_vault(&env) {
             panic_with_error!(&env, BlendStrategyError::NotVault);
         }
@@ -580,14 +556,9 @@ impl BlendStrategy {
         let protocol = get_protocol(&env);
         let strategy_addr = env.current_contract_address();
 
-        // Pull tokens from vault into this strategy.
-        // Requires vault to have pre-approved this strategy (or mock_all_auths in tests).
-        token::Client::new(&env, &asset).transfer_from(
-            &strategy_addr,
-            &vault,
-            &strategy_addr,
-            &amount,
-        );
+        // Pull tokens from vault into this strategy using the vault's scoped
+        // contract authorization prepared by vault.execute_op.
+        token::Client::new(&env, &asset).transfer(&vault, &strategy_addr, &amount);
 
         // Approve to Blend and supply.
         let expiry = env.ledger().sequence() + 100;
@@ -625,9 +596,6 @@ impl BlendStrategy {
         if amount <= 0 {
             panic_with_error!(&env, BlendStrategyError::InvalidAmount);
         }
-        if get_paused(&env) {
-            panic_with_error!(&env, BlendStrategyError::Paused);
-        }
         if vault != get_vault(&env) {
             panic_with_error!(&env, BlendStrategyError::NotVault);
         }
@@ -658,48 +626,6 @@ impl BlendStrategy {
             &vault,
             requests,
         );
-    }
-
-    // -----------------------------------------------------------------------
-    // Emergency controls
-    // -----------------------------------------------------------------------
-
-    /// Pause the strategy, blocking all deposits and withdrawals.
-    ///
-    /// # Auth
-    /// Manager must authorize this call.
-    ///
-    /// # Errors
-    /// * [`BlendStrategyError::NotManager`] if caller ≠ registered manager.
-    pub fn pause(env: Env, caller: Address) {
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-        caller.require_auth();
-        let manager = get_manager(&env);
-        if caller != manager {
-            panic_with_error!(&env, BlendStrategyError::NotManager);
-        }
-        set_paused(&env, true);
-    }
-
-    /// Resume the strategy after a pause.
-    ///
-    /// # Auth
-    /// Manager must authorize this call.
-    ///
-    /// # Errors
-    /// * [`BlendStrategyError::NotManager`] if caller ≠ registered manager.
-    pub fn unpause(env: Env, caller: Address) {
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-        caller.require_auth();
-        let manager = get_manager(&env);
-        if caller != manager {
-            panic_with_error!(&env, BlendStrategyError::NotManager);
-        }
-        set_paused(&env, false);
     }
 }
 

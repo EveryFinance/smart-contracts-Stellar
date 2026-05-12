@@ -39,12 +39,8 @@ pub enum DataKey {
     Asset,
     /// Address of the Blend lending-pool contract.
     Protocol,
-    /// Address of the manager account allowed to pause/unpause.
-    Manager,
     /// Human-readable name for this strategy instance.
     Name,
-    /// Whether the strategy is currently paused.
-    Paused,
     /// Persistent initialization flag.
     ///
     /// Stored in **persistent** storage (not instance) so it survives instance
@@ -75,9 +71,7 @@ fn bump(env: &Env) {
 /// Persistent storage survives instance-entry TTL expiry, which prevents an
 /// attacker from re-initializing the strategy after the instance expires.
 pub fn set_initialized(env: &Env) {
-    env.storage()
-        .persistent()
-        .set(&DataKey::Initialized, &true);
+    env.storage().persistent().set(&DataKey::Initialized, &true);
     env.storage().persistent().extend_ttl(
         &DataKey::Initialized,
         PERSISTENT_LIFETIME_THRESHOLD,
@@ -91,9 +85,7 @@ pub fn set_initialized(env: &Env) {
 /// `Vault` key so that expiry of the instance entry cannot be exploited to
 /// re-run `initialize`.
 pub fn is_initialized(env: &Env) -> bool {
-    env.storage()
-        .persistent()
-        .has(&DataKey::Initialized)
+    env.storage().persistent().has(&DataKey::Initialized)
 }
 
 // ---- vault -----------------------------------------------------------------
@@ -151,23 +143,6 @@ pub fn get_protocol(env: &Env) -> Address {
         .unwrap_or_else(|| panic_with_error!(env, BlendStrategyError::NotInitialized))
 }
 
-// ---- manager ---------------------------------------------------------------
-
-/// Persist the manager address.
-pub fn set_manager(env: &Env, manager: &Address) {
-    bump(env);
-    env.storage().instance().set(&DataKey::Manager, manager);
-}
-
-/// Read the manager address.
-pub fn get_manager(env: &Env) -> Address {
-    bump(env);
-    env.storage()
-        .instance()
-        .get(&DataKey::Manager)
-        .unwrap_or_else(|| panic_with_error!(env, BlendStrategyError::NotInitialized))
-}
-
 // ---- name ------------------------------------------------------------------
 
 /// Persist the strategy name.
@@ -185,23 +160,6 @@ pub fn get_name(env: &Env) -> String {
         .unwrap_or_else(|| panic_with_error!(env, BlendStrategyError::NotInitialized))
 }
 
-// ---- paused flag -----------------------------------------------------------
-
-/// Write the paused flag.
-pub fn set_paused(env: &Env, paused: bool) {
-    bump(env);
-    env.storage().instance().set(&DataKey::Paused, &paused);
-}
-
-/// Read the paused flag (defaults to `false` if not yet set).
-pub fn get_paused(env: &Env) -> bool {
-    bump(env);
-    env.storage()
-        .instance()
-        .get(&DataKey::Paused)
-        .unwrap_or(false)
-}
-
 // ---- factory ---------------------------------------------------------------
 
 /// Persist the factory address (optional, fetched from vault during initialize).
@@ -215,4 +173,3 @@ pub fn get_factory(env: &Env) -> Option<Address> {
     bump(env);
     env.storage().instance().get(&DataKey::Factory)
 }
-

@@ -29,6 +29,10 @@ Reference script: `scripts/deploy_testnet.sh`
 5. Vault mints user shares and treasury fee shares.
 6. Vault pulls asset from user into vault; updates `LastDepositTs`.
 
+By default, the minted shares cannot be transferred. This keeps
+`LastDepositTs(user)` and `UserPosition(user)` aligned with the account that
+owns and later withdraws the shares.
+
 ---
 
 ## 3) Withdraw Flow
@@ -42,9 +46,34 @@ Reference script: `scripts/deploy_testnet.sh`
 7. For each guard ∈ `ActiveGuards`: calls `guard.withdraw_fraction(vault, num, denom, to)`.
 8. Checks `min_base_out` slippage guard.
 
+The cooldown is a hard account-level control only while share transfers are
+disabled. If a vault admin enables share transfers, withdrawals still check the
+`from` account's cooldown, but transferred shares may carry economic exposure
+without carrying the original depositor's cooldown or cost-basis history.
+
 ---
 
-## 3.1) Fee-Increase Timelock Flow (Manager)
+## 3.1) Share Transfer Mode (Admin)
+
+Default:
+1. `share_transfers_enabled() == false`.
+2. `exit_cooldown_is_hard_control() == true`.
+3. `pnl_tracking_is_accurate() == true`.
+4. `share_token.transfer` and `share_token.transfer_from` revert with
+   `TransfersDisabled`.
+
+Optional transfer mode:
+1. Vault admin calls `vault.set_share_transfers_enabled(admin, true)`.
+2. Share transfers become possible.
+3. `exit_cooldown_is_hard_control() == false`.
+4. `pnl_tracking_is_accurate() == false`.
+
+This mode is suitable only when the vault accepts cooldown as same-address
+friction and PnL as approximate / informational reporting.
+
+---
+
+## 3.2) Fee-Increase Timelock Flow (Manager)
 
 1. Manager calls `announce_fee_increase(entry, exit, mgmt, perf)`.
 2. Vault stores pending fees and `activation_ts = now + 86400`.
@@ -78,7 +107,7 @@ The vault always injects its own address as the first argument — traders canno
 ```
 AssetHandler::get_price(asset)
   1. Per-asset oracle override (if set via set_asset_oracle)
-     → invoke_contract; returns price or falls through on 0
+     → try_invoke_contract; catches reverts gracefully
   2. Primary oracle (ReflectorAdapter)
      → try_invoke_contract; catches reverts gracefully
   3. Fallback oracle (DIAAdapter)

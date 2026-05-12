@@ -3,7 +3,7 @@
 use soroban_sdk::{
     contract, contractimpl, contracttype,
     testutils::{Address as _, Ledger as _},
-    vec, Address, Env, IntoVal, String, Symbol, Val, Vec,
+    vec, Address, Env, String, Symbol, Val, Vec,
 };
 
 use crate::{Vault, VaultClient, VaultParams};
@@ -328,7 +328,17 @@ fn setup_with_factory() -> (T, Address) {
     let vault: VaultClient<'static> = unsafe { core::mem::transmute(vault) };
     let vault_addr = vid;
 
-    let t = T { env, vault, vault_addr, base, share, manager, trader, user, user2 };
+    let t = T {
+        env,
+        vault,
+        vault_addr,
+        base,
+        share,
+        manager,
+        trader,
+        user,
+        user2,
+    };
     (t, factory_id)
 }
 
@@ -506,7 +516,8 @@ fn test_withdraw_insufficient_shares_panics() {
 #[should_panic]
 fn test_withdraw_paused_panics() {
     let t = setup();
-    t.vault.deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
+    t.vault
+        .deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
     t.vault.pause_deposits(&t.manager);
     t.vault.withdraw(&1i128, &t.user, &t.user, &0i128);
 }
@@ -515,7 +526,8 @@ fn test_withdraw_paused_panics() {
 #[should_panic]
 fn test_withdraw_zero_panics() {
     let t = setup();
-    t.vault.deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
+    t.vault
+        .deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
     t.vault.withdraw(&0i128, &t.user, &t.user, &0i128);
 }
 
@@ -548,7 +560,10 @@ fn test_share_price_floor_prevents_zero_price() {
     //       = 10_000_000_000_000_000 / (10_000_000_000 + 10^17) ≈ 0 (naive)
     // With floor: price = 1.
     let price = t.vault.get_share_price();
-    assert!(price >= 1, "share price must be at least 1 even under extreme dilution");
+    assert!(
+        price >= 1,
+        "share price must be at least 1 even under extreme dilution"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -612,7 +627,12 @@ fn test_full_lifecycle() {
     assert_eq!(t.vault.get_nav(), dep1 + dep2);
 
     // Manager dispatches "noop" through the guard — NAV unchanged.
-    t.vault.execute_op(&t.manager, &guard_id, &Symbol::new(&t.env, "noop"), &no_args);
+    t.vault.execute_op(
+        &t.manager,
+        &guard_id,
+        &Symbol::new(&t.env, "noop"),
+        &no_args,
+    );
     assert_eq!(t.vault.get_nav(), dep1 + dep2);
 
     // User 1 withdraws all.
@@ -845,7 +865,8 @@ fn test_set_perf_fee_bps_too_high_panics() {
 fn test_deposit_cap_allows_deposit_below_cap() {
     let t = setup();
     t.vault.set_deposit_cap(&t.manager, &100_000_0000000i128);
-    t.vault.deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
+    t.vault
+        .deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
 }
 
 #[test]
@@ -853,15 +874,18 @@ fn test_deposit_cap_allows_deposit_below_cap() {
 fn test_deposit_cap_exceeded_panics() {
     let t = setup();
     t.vault.set_deposit_cap(&t.manager, &500_0000000i128);
-    t.vault.deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
+    t.vault
+        .deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
 }
 
 #[test]
 fn test_deposit_cap_zero_means_uncapped() {
     let t = setup();
     t.vault.set_deposit_cap(&t.manager, &0i128);
-    t.vault.deposit(&10_000_0000000i128, &t.user, &t.base, &0i128);
-    t.vault.deposit(&10_000_0000000i128, &t.user2, &t.base, &0i128);
+    t.vault
+        .deposit(&10_000_0000000i128, &t.user, &t.base, &0i128);
+    t.vault
+        .deposit(&10_000_0000000i128, &t.user2, &t.base, &0i128);
 }
 
 #[test]
@@ -871,7 +895,6 @@ fn test_set_deposit_cap_not_manager_panics() {
     let rogue = Address::generate(&t.env);
     t.vault.set_deposit_cap(&rogue, &1_000_0000000i128);
 }
-
 
 // ---------------------------------------------------------------------------
 // Oracle mock (used by multi-asset portfolio and NAV tests below)
@@ -909,16 +932,19 @@ use mock_oracle_mod::MockOracle;
 fn test_private_pool_blocks_non_member_deposit() {
     let t = setup();
     t.vault.set_private_pool(&t.manager, &true); // manager == admin in test setup
-    t.vault.deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
+    t.vault
+        .deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
 }
 
 #[test]
 fn test_private_pool_allows_manager_and_member() {
     let t = setup();
     t.vault.set_private_pool(&t.manager, &true);
-    t.vault.deposit(&1_000_0000000i128, &t.manager, &t.base, &0i128);
+    t.vault
+        .deposit(&1_000_0000000i128, &t.manager, &t.base, &0i128);
     t.vault.add_member(&t.manager, &t.user);
-    t.vault.deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
+    t.vault
+        .deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
     assert!(shares(&t, &t.user) > 0);
 }
 
@@ -936,7 +962,8 @@ fn test_add_remove_member_updates_allowlist() {
 fn test_withdraw_respects_exit_cooldown() {
     let t = setup();
     t.vault.set_exit_cooldown_secs(&t.manager, &120u64);
-    t.vault.deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
+    t.vault
+        .deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
     let user_shares = shares(&t, &t.user);
     t.vault.withdraw(&user_shares, &t.user, &t.user, &0i128);
 }
@@ -945,7 +972,8 @@ fn test_withdraw_respects_exit_cooldown() {
 fn test_withdraw_after_cooldown_succeeds() {
     let t = setup();
     t.vault.set_exit_cooldown_secs(&t.manager, &120u64);
-    t.vault.deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
+    t.vault
+        .deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
     assert!(t.vault.get_exit_remaining_cooldown(&t.user) > 0);
     advance_time(&t, 121);
     let user_shares = shares(&t, &t.user);
@@ -998,7 +1026,8 @@ fn test_renounce_fee_increase_clears_pending() {
 fn test_value_guard_same_ledger_operation_type_mismatch_panics() {
     let t = setup();
     t.vault.set_value_guard_enabled(&t.manager, &true);
-    t.vault.deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
+    t.vault
+        .deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
     let user_shares = shares(&t, &t.user);
     // Same ledger + same actor but different op type (deposit -> withdraw).
     t.vault.withdraw(&user_shares, &t.user, &t.user, &0i128);
@@ -1009,11 +1038,13 @@ fn test_value_guard_same_ledger_operation_type_mismatch_panics() {
 fn test_value_guard_same_ledger_nav_mismatch_panics() {
     let t = setup();
     t.vault.set_value_guard_enabled(&t.manager, &true);
-    t.vault.deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
+    t.vault
+        .deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
     // External NAV mutation in same ledger (simulated mint to vault).
     MockTokenClient::new(&t.env, &t.base).mint(&t.vault_addr, &1i128);
     // Same op type (deposit), same ledger, but nav_before != expected_nav_after.
-    t.vault.deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
+    t.vault
+        .deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
 }
 
 // ---------------------------------------------------------------------------
@@ -1072,10 +1103,7 @@ impl MockGuard {
         env.storage().instance().set(&GKey::TotalValue, &value);
     }
     pub fn get_total_value(env: Env, _vault: Address) -> i128 {
-        env.storage()
-            .instance()
-            .get(&GKey::TotalValue)
-            .unwrap_or(0)
+        env.storage().instance().get(&GKey::TotalValue).unwrap_or(0)
     }
     pub fn set_loss_bps(env: Env, bps: u32) {
         env.storage().instance().set(&GKey::LossBps, &bps);
@@ -1190,6 +1218,22 @@ fn test_add_portfolio_asset_with_factory_unauthorized_panics() {
     // asset not whitelisted in factory → must panic
 
     t.vault.add_portfolio_asset(&t.manager, &asset);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #30)")]
+fn test_deposit_rejects_factory_deauthorized_asset() {
+    let (t, factory_id) = setup_with_factory();
+    let factory = MockFactoryClient::new(&t.env, &factory_id);
+    factory.set_asset(&t.base, &true);
+    t.vault.add_portfolio_asset(&t.manager, &t.base);
+    t.vault.add_deposit_asset(&t.manager, &t.base);
+
+    // Factory revocation after vault setup must stop new deposits that use the
+    // stale vault-local deposit asset entry.
+    factory.set_asset(&t.base, &false);
+    t.vault
+        .deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
 }
 
 #[test]
@@ -1366,6 +1410,29 @@ fn test_add_active_guard_with_factory_unauthorized_panics() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #36)")]
+fn test_execute_op_rejects_factory_deauthorized_guard() {
+    let (t, factory_id) = setup_with_factory();
+    let factory = MockFactoryClient::new(&t.env, &factory_id);
+    let guard_id = t.env.register(MockGuard, ());
+    factory.set_guard(&guard_id, &true);
+    t.vault.add_active_guard(&t.manager, &guard_id);
+    let ops: Vec<Symbol> = vec![&t.env, Symbol::new(&t.env, "noop")];
+    t.vault.set_authorized_ops(&t.manager, &guard_id, &ops);
+
+    // Factory revocation after vault setup must stop new operations that use
+    // the stale vault-local active guard entry.
+    factory.set_guard(&guard_id, &false);
+    let no_args: Vec<Val> = Vec::new(&t.env);
+    t.vault.execute_op(
+        &t.manager,
+        &guard_id,
+        &Symbol::new(&t.env, "noop"),
+        &no_args,
+    );
+}
+
+#[test]
 fn test_remove_active_guard_zero_position() {
     let t = setup();
     let guard_id = t.env.register(MockGuard, ());
@@ -1421,11 +1488,12 @@ fn test_factory_set_atomically_via_vault_params() {
 #[test]
 fn test_set_and_get_authorized_ops() {
     let t = setup();
-    let guard = Address::generate(&t.env);
+    let guard = t.env.register(MockGuard, ());
+    t.vault.add_active_guard(&t.manager, &guard);
     let ops = soroban_sdk::vec![
         &t.env,
         Symbol::new(&t.env, "supply"),
-        Symbol::new(&t.env, "withdraw"),
+        Symbol::new(&t.env, "withdraw_from_lending"),
         Symbol::new(&t.env, "swap"),
     ];
 
@@ -1434,7 +1502,10 @@ fn test_set_and_get_authorized_ops() {
     let stored = t.vault.get_authorized_ops(&guard);
     assert_eq!(stored.len(), 3);
     assert_eq!(stored.get(0).unwrap(), Symbol::new(&t.env, "supply"));
-    assert_eq!(stored.get(1).unwrap(), Symbol::new(&t.env, "withdraw"));
+    assert_eq!(
+        stored.get(1).unwrap(),
+        Symbol::new(&t.env, "withdraw_from_lending")
+    );
     assert_eq!(stored.get(2).unwrap(), Symbol::new(&t.env, "swap"));
 }
 
@@ -1443,9 +1514,29 @@ fn test_set_and_get_authorized_ops() {
 fn test_set_authorized_ops_not_manager_panics() {
     let t = setup();
     let rogue = Address::generate(&t.env);
-    let guard = Address::generate(&t.env);
+    let guard = t.env.register(MockGuard, ());
+    t.vault.add_active_guard(&t.manager, &guard);
     let ops = soroban_sdk::vec![&t.env, Symbol::new(&t.env, "supply")];
     t.vault.set_authorized_ops(&rogue, &guard, &ops);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_set_authorized_ops_inactive_guard_panics() {
+    let t = setup();
+    let guard = t.env.register(MockGuard, ());
+    let ops = soroban_sdk::vec![&t.env, Symbol::new(&t.env, "noop")];
+    t.vault.set_authorized_ops(&t.manager, &guard, &ops);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #9)")]
+fn test_set_authorized_ops_reserved_fn_panics() {
+    let t = setup();
+    let guard = t.env.register(MockGuard, ());
+    t.vault.add_active_guard(&t.manager, &guard);
+    let ops = soroban_sdk::vec![&t.env, Symbol::new(&t.env, "deposit_liquidity")];
+    t.vault.set_authorized_ops(&t.manager, &guard, &ops);
 }
 
 // ---------------------------------------------------------------------------
@@ -1476,10 +1567,16 @@ fn test_execute_op_noop_by_manager() {
     let t = setup();
     let (guard_id, _) = setup_with_execute_op(&t);
     let no_args: Vec<Val> = Vec::new(&t.env);
-    t.vault.deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
+    t.vault
+        .deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
 
     let nav_before = t.vault.get_nav();
-    t.vault.execute_op(&t.manager, &guard_id, &Symbol::new(&t.env, "noop"), &no_args);
+    t.vault.execute_op(
+        &t.manager,
+        &guard_id,
+        &Symbol::new(&t.env, "noop"),
+        &no_args,
+    );
     assert_eq!(t.vault.get_nav(), nav_before);
 }
 
@@ -1488,10 +1585,12 @@ fn test_execute_op_noop_by_trader() {
     let t = setup();
     let (guard_id, _) = setup_with_execute_op(&t);
     let no_args: Vec<Val> = Vec::new(&t.env);
-    t.vault.deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
+    t.vault
+        .deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
 
     // Trader can also call execute_op.
-    t.vault.execute_op(&t.trader, &guard_id, &Symbol::new(&t.env, "noop"), &no_args);
+    t.vault
+        .execute_op(&t.trader, &guard_id, &Symbol::new(&t.env, "noop"), &no_args);
 }
 
 #[test]
@@ -1501,7 +1600,8 @@ fn test_execute_op_not_manager_or_trader_panics() {
     let (guard_id, _) = setup_with_execute_op(&t);
     let no_args: Vec<Val> = Vec::new(&t.env);
     let rogue = Address::generate(&t.env);
-    t.vault.execute_op(&rogue, &guard_id, &Symbol::new(&t.env, "noop"), &no_args);
+    t.vault
+        .execute_op(&rogue, &guard_id, &Symbol::new(&t.env, "noop"), &no_args);
 }
 
 #[test]
@@ -1510,7 +1610,12 @@ fn test_execute_op_guard_not_active_panics() {
     let t = setup();
     let no_args: Vec<Val> = Vec::new(&t.env);
     let guard_id = t.env.register(MockGuard, ()); // NOT added to active guards
-    t.vault.execute_op(&t.manager, &guard_id, &Symbol::new(&t.env, "noop"), &no_args);
+    t.vault.execute_op(
+        &t.manager,
+        &guard_id,
+        &Symbol::new(&t.env, "noop"),
+        &no_args,
+    );
 }
 
 #[test]
@@ -1520,7 +1625,27 @@ fn test_execute_op_unauthorized_fn_panics() {
     let (guard_id, _) = setup_with_execute_op(&t);
     let no_args: Vec<Val> = Vec::new(&t.env);
     // "reject_op" is not in authorized_ops (only "noop" and "simulate_loss" are).
-    t.vault.execute_op(&t.manager, &guard_id, &Symbol::new(&t.env, "reject_op"), &no_args);
+    t.vault.execute_op(
+        &t.manager,
+        &guard_id,
+        &Symbol::new(&t.env, "reject_op"),
+        &no_args,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #9)")]
+fn test_execute_op_reserved_fn_panics() {
+    let t = setup();
+    let guard_id = t.env.register(MockGuard, ());
+    t.vault.add_active_guard(&t.manager, &guard_id);
+    let no_args: Vec<Val> = Vec::new(&t.env);
+    t.vault.execute_op(
+        &t.manager,
+        &guard_id,
+        &Symbol::new(&t.env, "withdraw"),
+        &no_args,
+    );
 }
 
 #[test]
@@ -1528,7 +1653,8 @@ fn test_execute_op_updates_guard_state() {
     let t = setup();
     let (guard_id, _) = setup_with_execute_op(&t);
     let no_args: Vec<Val> = Vec::new(&t.env);
-    t.vault.deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
+    t.vault
+        .deposit(&1_000_0000000i128, &t.user, &t.base, &0i128);
 
     // Seed guard with a position value.
     MockGuardClient::new(&t.env, &guard_id).set_total_value(&500_0000000i128);
@@ -1536,7 +1662,12 @@ fn test_execute_op_updates_guard_state() {
     assert_eq!(t.vault.get_nav(), 1_500_0000000i128);
 
     // simulate_loss with 0 loss_bps = identity. NAV unchanged.
-    t.vault.execute_op(&t.manager, &guard_id, &Symbol::new(&t.env, "simulate_loss"), &no_args);
+    t.vault.execute_op(
+        &t.manager,
+        &guard_id,
+        &Symbol::new(&t.env, "simulate_loss"),
+        &no_args,
+    );
     assert_eq!(t.vault.get_nav(), 1_500_0000000i128);
 }
 
@@ -1560,9 +1691,9 @@ fn test_set_max_loss_bps_not_manager_panics() {
 }
 
 #[test]
-fn test_set_max_loss_bps_zero_disables_guard() {
+#[should_panic]
+fn test_set_max_loss_bps_zero_panics() {
     let t = setup();
-    // 0 means "TVL guard disabled" — must be accepted without panic.
     t.vault.set_max_loss_bps(&t.manager, &0u32);
 }
 
@@ -1570,7 +1701,7 @@ fn test_set_max_loss_bps_zero_disables_guard() {
 #[should_panic]
 fn test_set_max_loss_bps_above_denominator_panics() {
     let t = setup();
-    t.vault.set_max_loss_bps(&t.manager, &10_001u32);
+    t.vault.set_max_loss_bps(&t.manager, &10_000u32);
 }
 
 /// TVL guard passes when execute_op NAV loss is within tolerance.
@@ -1584,7 +1715,12 @@ fn test_tvl_guard_passes_within_tolerance() {
     MockGuardClient::new(&t.env, &guard_id).set_loss_bps(&100u32); // 1% loss
     t.vault.set_max_loss_bps(&t.manager, &200u32); // 2% tolerance → passes
 
-    t.vault.execute_op(&t.manager, &guard_id, &Symbol::new(&t.env, "simulate_loss"), &no_args);
+    t.vault.execute_op(
+        &t.manager,
+        &guard_id,
+        &Symbol::new(&t.env, "simulate_loss"),
+        &no_args,
+    );
 
     let guard_val = MockGuardClient::new(&t.env, &guard_id).get_total_value(&t.vault_addr);
     assert_eq!(guard_val, 990_0000000i128);
@@ -1602,7 +1738,12 @@ fn test_tvl_guard_trips_when_loss_exceeds_tolerance() {
     MockGuardClient::new(&t.env, &guard_id).set_loss_bps(&1_000u32); // 10% loss
     t.vault.set_max_loss_bps(&t.manager, &500u32); // 5% tolerance — 10% > 5% → trips
 
-    t.vault.execute_op(&t.manager, &guard_id, &Symbol::new(&t.env, "simulate_loss"), &no_args);
+    t.vault.execute_op(
+        &t.manager,
+        &guard_id,
+        &Symbol::new(&t.env, "simulate_loss"),
+        &no_args,
+    );
 }
 
 /// Default TVL guard (10%) trips on a 50% loss.
@@ -1615,8 +1756,13 @@ fn test_tvl_guard_enabled_by_default() {
 
     MockGuardClient::new(&t.env, &guard_id).set_total_value(&1_000_0000000i128);
     MockGuardClient::new(&t.env, &guard_id).set_loss_bps(&5_000u32); // 50% loss
-    // Default max_loss_bps = 1000 (10%). 50% > 10% → trips.
-    t.vault.execute_op(&t.manager, &guard_id, &Symbol::new(&t.env, "simulate_loss"), &no_args);
+                                                                     // Default max_loss_bps = 1000 (10%). 50% > 10% → trips.
+    t.vault.execute_op(
+        &t.manager,
+        &guard_id,
+        &Symbol::new(&t.env, "simulate_loss"),
+        &no_args,
+    );
 }
 
 /// Very permissive TVL guard (100%) allows even 50% loss.
@@ -1628,9 +1774,14 @@ fn test_tvl_guard_very_permissive_value() {
 
     MockGuardClient::new(&t.env, &guard_id).set_total_value(&1_000_0000000i128);
     MockGuardClient::new(&t.env, &guard_id).set_loss_bps(&5_000u32); // 50% loss
-    t.vault.set_max_loss_bps(&t.manager, &10_000u32); // 100% tolerance — should not panic
+    t.vault.set_max_loss_bps(&t.manager, &9_999u32); // Very permissive, but not total-loss.
 
-    t.vault.execute_op(&t.manager, &guard_id, &Symbol::new(&t.env, "simulate_loss"), &no_args);
+    t.vault.execute_op(
+        &t.manager,
+        &guard_id,
+        &Symbol::new(&t.env, "simulate_loss"),
+        &no_args,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1652,10 +1803,9 @@ fn test_set_oracle_not_manager_panics() {
 
 #[test]
 fn test_seed_deposit_mints_to_burn_address() {
-    let t = setup();
-    // seed_deposit is normally called by the factory after deploying the vault.
-    // Here we call directly (mocked auth).
-    t.vault.seed_deposit(&1_000i128);
+    let (t, factory_id) = setup_with_factory();
+    MockTokenClient::new(&t.env, &t.base).mint(&t.vault_addr, &1_000i128);
+    t.vault.seed_deposit(&factory_id, &1_000i128);
 
     // Burn address should hold 1_000 shares.
     let burn_addr = soroban_sdk::Address::from_str(
@@ -1669,9 +1819,18 @@ fn test_seed_deposit_mints_to_burn_address() {
 #[test]
 #[should_panic(expected = "Error(Contract, #38)")]
 fn test_seed_deposit_twice_panics() {
-    let t = setup();
-    t.vault.seed_deposit(&1_000i128);
-    t.vault.seed_deposit(&1_000i128);
+    let (t, factory_id) = setup_with_factory();
+    MockTokenClient::new(&t.env, &t.base).mint(&t.vault_addr, &2_000i128);
+    t.vault.seed_deposit(&factory_id, &1_000i128);
+    t.vault.seed_deposit(&factory_id, &1_000i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #45)")]
+fn test_seed_deposit_not_factory_panics() {
+    let (t, _factory_id) = setup_with_factory();
+    MockTokenClient::new(&t.env, &t.base).mint(&t.vault_addr, &1_000i128);
+    t.vault.seed_deposit(&t.manager, &1_000i128);
 }
 
 // ---------------------------------------------------------------------------

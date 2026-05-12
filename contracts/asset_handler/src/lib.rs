@@ -9,10 +9,10 @@
 //!   │      Any contract implementing get_price(asset: Address) -> i128.
 //!   │      Admin sets this for assets that need a custom feed
 //!   │      (e.g. not listed on Reflector, or requiring a dedicated adapter).
-//!   │      → invoke_contract directly; if it reverts the tx fails.
+//!   │      → try_invoke_contract: reverts are caught, 0 treated as unavailable.
 //!   │
 //!   ├─ 2. Primary global oracle  (e.g. Reflector adapter)
-//!   │      Used when no per-asset oracle is set.
+//!   │      Used when no per-asset oracle price is available.
 //!   │      → try_invoke_contract: reverts are caught, 0 treated as unavailable.
 //!   │
 //!   ├─ 3. Fallback global oracle  (e.g. DIA adapter)
@@ -35,7 +35,9 @@ mod storage;
 
 pub use error::AssetHandlerError;
 
-use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, IntoVal, Symbol, Val, Vec};
+use soroban_sdk::{
+    contract, contractimpl, panic_with_error, Address, Env, IntoVal, Symbol, Val, Vec,
+};
 
 use storage::{
     clear_pending_admin, get_admin, get_asset_oracle, get_fallback_oracle, get_pending_admin,
@@ -203,12 +205,16 @@ impl AssetHandler {
 
         // --- Tier 1: per-asset oracle (if set) ---
         if let Some(oracle) = get_asset_oracle(&env, &asset) {
-            let price: i128 =
-                env.invoke_contract(&oracle, &get_price_sym, args.clone());
-            if price > 0 {
-                return price;
+            if let Ok(Ok(price)) = env.try_invoke_contract::<i128, AssetHandlerError>(
+                &oracle,
+                &get_price_sym,
+                args.clone(),
+            ) {
+                if price > 0 {
+                    return price;
+                }
             }
-            // Per-asset oracle returned 0 — fall through to global oracles.
+            // Per-asset oracle reverted or returned 0 — fall through to globals.
         }
 
         // --- Tier 2: primary global oracle (Reflector) ---
@@ -216,7 +222,9 @@ impl AssetHandler {
             .unwrap_or_else(|| panic_with_error!(&env, AssetHandlerError::NoPrimaryOracle));
 
         if let Ok(Ok(price)) = env.try_invoke_contract::<i128, AssetHandlerError>(
-            &primary, &get_price_sym, args.clone(),
+            &primary,
+            &get_price_sym,
+            args.clone(),
         ) {
             if price > 0 {
                 return price;

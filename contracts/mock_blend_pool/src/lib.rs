@@ -128,7 +128,9 @@ impl MockBlendPool {
                 let new_total = total
                     .checked_add(req.amount)
                     .unwrap_or_else(|| panic_with_error!(&env, PoolError::InvalidAmount));
-                env.storage().persistent().set(&DataKey::TotalSupply, &new_total);
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::TotalSupply, &new_total);
                 env.storage().persistent().extend_ttl(
                     &DataKey::TotalSupply,
                     PERSISTENT_LIFETIME_THRESHOLD,
@@ -169,7 +171,9 @@ impl MockBlendPool {
                 if new_total == 0 {
                     env.storage().persistent().remove(&DataKey::TotalSupply);
                 } else {
-                    env.storage().persistent().set(&DataKey::TotalSupply, &new_total);
+                    env.storage()
+                        .persistent()
+                        .set(&DataKey::TotalSupply, &new_total);
                     env.storage().persistent().extend_ttl(
                         &DataKey::TotalSupply,
                         PERSISTENT_LIFETIME_THRESHOLD,

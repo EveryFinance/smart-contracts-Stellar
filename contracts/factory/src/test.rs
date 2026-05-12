@@ -23,10 +23,10 @@ impl MockVault {
     pub fn get_manager(env: Env) -> Address {
         env.storage().instance().get(&VKey::Manager).unwrap()
     }
-    pub fn set_manager(env: Env, new_manager: Address) {
+    pub fn set_manager(env: Env, _caller: Address, new_manager: Address) {
         env.storage().instance().set(&VKey::Manager, &new_manager);
     }
-    pub fn seed_deposit(env: Env, _amount: i128) {
+    pub fn seed_deposit(env: Env, _caller: Address, _amount: i128) {
         if env
             .storage()
             .instance()
@@ -35,9 +35,7 @@ impl MockVault {
         {
             panic!("already seeded");
         }
-        env.storage()
-            .instance()
-            .set(&VKey::SeedDeposited, &true);
+        env.storage().instance().set(&VKey::SeedDeposited, &true);
     }
 }
 

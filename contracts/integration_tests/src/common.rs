@@ -206,9 +206,7 @@ impl MockBlendPool {
             if req.request_type == 2 {
                 // Supply — pull tokens from `from` into the pool, record position.
                 // This mirrors the real Blend pool using the strategy's pre-approved allowance.
-                MockTokenClient::new(&env, &token).transfer_from(
-                    &pool, &from, &pool, &req.amount,
-                );
+                MockTokenClient::new(&env, &token).transfer_from(&pool, &from, &pool, &req.amount);
                 let bal: i128 = env
                     .storage()
                     .persistent()
@@ -315,7 +313,10 @@ impl MockSoroswapRouter {
         to.require_auth();
         assert!(path.len() >= 2, "swap: path must have at least 2 tokens");
         let amount_out = amount_in; // 1:1 rate for tests
-        assert!(amount_out >= amount_out_min, "swap: insufficient output amount");
+        assert!(
+            amount_out >= amount_out_min,
+            "swap: insufficient output amount"
+        );
         let out_token = path.get(path.len() - 1).unwrap();
         MockTokenClient::new(&env, &out_token).mint(&to, &amount_out);
         soroban_sdk::vec![&env, amount_in, amount_out]
@@ -380,7 +381,10 @@ impl MockPhoenixPool {
         depositor.require_auth();
         let amount_a = desired_a.unwrap_or(0);
         let amount_b = desired_b.unwrap_or(0);
-        assert!(amount_a >= 0 && amount_b >= 0, "provide_liquidity: negative amount");
+        assert!(
+            amount_a >= 0 && amount_b >= 0,
+            "provide_liquidity: negative amount"
+        );
         if let Some(min) = min_a {
             assert!(amount_a >= min, "provide_liquidity: amount_a below min");
         }
@@ -493,10 +497,8 @@ impl MockPhoenixPool {
             .instance()
             .get(&PhoenixKey::ShareToken)
             .unwrap();
-        let depositor_opt: Option<Address> = env
-            .storage()
-            .instance()
-            .get(&PhoenixKey::LastDepositor);
+        let depositor_opt: Option<Address> =
+            env.storage().instance().get(&PhoenixKey::LastDepositor);
         if let Some(depositor) = depositor_opt {
             let pool = env.current_contract_address();
             MockTokenClient::new(&env, &share_token).transfer_from(

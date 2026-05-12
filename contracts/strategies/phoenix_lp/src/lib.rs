@@ -23,19 +23,35 @@ mod storage;
 
 pub use error::PhoenixLpError;
 
-use soroban_sdk::{contract, contractimpl, panic_with_error, token, Address, Env, IntoVal, String, Symbol};
+use soroban_sdk::{
+    contract, contractimpl, panic_with_error, token, Address, Env, IntoVal, String, Symbol,
+};
 
 use interfaces::{PhoenixPoolAdapter, Sep41TokenAdapter};
 
 use storage::{
-    get_asset_a, get_asset_b, get_factory, get_name, get_paused, get_phoenix_pool,
-    get_share_token, get_total_shares, get_vault, is_initialized, set_asset_a, set_asset_b,
-    set_factory, set_manager, set_name, set_paused, set_phoenix_pool, set_share_token,
-    set_total_shares, set_vault, INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
+    get_asset_a, get_asset_b, get_factory, get_name, get_phoenix_pool, get_share_token,
+    get_total_shares, get_vault, is_initialized, set_asset_a, set_asset_b, set_factory,
+    set_initialized, set_name, set_phoenix_pool, set_share_token, set_total_shares, set_vault,
+    INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
 };
 
 /// Fixed-point precision matching the vault and oracle (7 decimal places).
 const PRICE_PRECISION: i128 = 10_000_000;
+
+fn checked_mul_div(env: &Env, a: i128, b: i128, denominator: i128) -> i128 {
+    if denominator <= 0 {
+        panic_with_error!(env, PhoenixLpError::InvalidAmount);
+    }
+    a.checked_mul(b)
+        .map(|v| v / denominator)
+        .unwrap_or_else(|| panic_with_error!(env, PhoenixLpError::Overflow))
+}
+
+fn checked_add(env: &Env, a: i128, b: i128) -> i128 {
+    a.checked_add(b)
+        .unwrap_or_else(|| panic_with_error!(env, PhoenixLpError::Overflow))
+}
 
 // ---------------------------------------------------------------------------
 // Contract
@@ -60,18 +76,10 @@ impl PhoenixLpStrategy {
     /// * `asset_a`      – First token in the pair.
     /// * `asset_b`      – Second token in the pair.
     /// * `phoenix_pool` – Phoenix pool contract address.
-    /// * `manager`      – Address required **at initialization only** to prevent
-    ///                    front-running.  All post-initialization admin operations
-    ///                    (`pause`, `unpause`, `set_oracle`) are authorized by the
-    ///                    vault's live on-chain manager, not this stored address.
     /// * `name`         – Human-readable strategy name.
     ///
     /// # Auth
-    /// Both the vault's current on-chain manager and the designated strategy
-    /// `manager` must authorise this call.  The `manager` parameter is required
-    /// at initialization only to prevent front-running; after initialization the
-    /// vault's live on-chain manager (from `vault.get_manager()`) controls all
-    /// admin operations on this strategy.
+    /// The vault's current on-chain manager must authorise this call.
     ///
     /// # Errors
     /// * [`PhoenixLpError::AlreadyInitialized`]
@@ -81,7 +89,6 @@ impl PhoenixLpStrategy {
         asset_a: Address,
         asset_b: Address,
         phoenix_pool: Address,
-        manager: Address,
         name: String,
     ) {
         if is_initialized(&env) {
@@ -97,13 +104,9 @@ impl PhoenixLpStrategy {
 
         // Derive the vault's manager from on-chain state and require their
         // signature to prevent front-running initialization.
-        let vault_manager: Address = env.invoke_contract(
-            &vault,
-            &Symbol::new(&env, "get_manager"),
-            ().into_val(&env),
-        );
+        let vault_manager: Address =
+            env.invoke_contract(&vault, &Symbol::new(&env, "get_manager"), ().into_val(&env));
         vault_manager.require_auth();
-        manager.require_auth();
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
@@ -116,21 +119,17 @@ impl PhoenixLpStrategy {
         set_asset_b(&env, &asset_b);
         set_phoenix_pool(&env, &phoenix_pool);
         set_share_token(&env, &share_token);
-        set_manager(&env, &manager);
         set_name(&env, &name);
-        set_paused(&env, false);
         set_total_shares(&env, 0);
 
         // Cache factory locally: get_total_value must not call back into vault
         // (re-entry), so we resolve vault → factory once during initialization.
-        let factory_opt: Option<Address> = env.invoke_contract(
-            &vault,
-            &Symbol::new(&env, "get_factory"),
-            ().into_val(&env),
-        );
+        let factory_opt: Option<Address> =
+            env.invoke_contract(&vault, &Symbol::new(&env, "get_factory"), ().into_val(&env));
         if let Some(ref factory) = factory_opt {
             set_factory(&env, factory);
         }
+        set_initialized(&env);
     }
 
     // -----------------------------------------------------------------------
@@ -146,8 +145,7 @@ impl PhoenixLpStrategy {
     /// Phoenix share tokens credited to this strategy.
     ///
     /// # Errors
-    /// * [`PhoenixLpError::NotVault`] / [`PhoenixLpError::Paused`] /
-    ///   [`PhoenixLpError::InvalidAmount`]
+    /// * [`PhoenixLpError::NotVault`] / [`PhoenixLpError::InvalidAmount`]
     pub fn deposit_liquidity(
         env: Env,
         amount_a: i128,
@@ -160,13 +158,9 @@ impl PhoenixLpStrategy {
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
-        if amount_a <= 0 || amount_b <= 0 {
+        if amount_a <= 0 || amount_b <= 0 || min_a < 0 || min_b < 0 {
             panic_with_error!(&env, PhoenixLpError::InvalidAmount);
         }
-        if get_paused(&env) {
-            panic_with_error!(&env, PhoenixLpError::Paused);
-        }
-
         from.require_auth();
         if from != get_vault(&env) {
             panic_with_error!(&env, PhoenixLpError::NotVault);
@@ -249,8 +243,8 @@ impl PhoenixLpStrategy {
     /// `(amount_a, amount_b)` delivered to `to`.
     ///
     /// # Errors
-    /// * [`PhoenixLpError::NotVault`] / [`PhoenixLpError::Paused`] /
-    ///   [`PhoenixLpError::InvalidAmount`] / [`PhoenixLpError::InsufficientShares`]
+    /// * [`PhoenixLpError::NotVault`] / [`PhoenixLpError::InvalidAmount`] /
+    ///   [`PhoenixLpError::InsufficientShares`]
     pub fn withdraw(
         env: Env,
         share_amount: i128,
@@ -263,13 +257,9 @@ impl PhoenixLpStrategy {
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
-        if share_amount <= 0 {
+        if share_amount <= 0 || min_a < 0 || min_b < 0 {
             panic_with_error!(&env, PhoenixLpError::InvalidAmount);
         }
-        if get_paused(&env) {
-            panic_with_error!(&env, PhoenixLpError::Paused);
-        }
-
         from.require_auth();
         if from != get_vault(&env) {
             panic_with_error!(&env, PhoenixLpError::NotVault);
@@ -359,13 +349,6 @@ impl PhoenixLpStrategy {
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         get_name(&env)
     }
-    pub fn is_paused(env: Env) -> bool {
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-        get_paused(&env)
-    }
-
     // -----------------------------------------------------------------------
     // Multi-asset guard interface v2
     // -----------------------------------------------------------------------
@@ -405,20 +388,24 @@ impl PhoenixLpStrategy {
         if vault != get_vault(&env) {
             panic_with_error!(&env, PhoenixLpError::NotVault);
         }
-        if numerator <= 0 || denominator <= 0 {
+        if numerator <= 0 || denominator <= 0 || numerator > denominator {
             panic_with_error!(&env, PhoenixLpError::InvalidAmount);
         }
 
         let share_token = get_share_token(&env);
         let strategy = env.current_contract_address();
+        let tracked = get_total_shares(&env);
         let live_balance = token::Client::new(&env, &share_token).balance(&strategy);
-        if live_balance == 0 {
+        if tracked == 0 {
             return;
         }
 
-        let share_amount = live_balance * numerator / denominator;
+        let share_amount = checked_mul_div(&env, tracked, numerator, denominator);
         if share_amount == 0 {
             return;
+        }
+        if share_amount > live_balance {
+            panic_with_error!(&env, PhoenixLpError::InsufficientShares);
         }
 
         let pool = get_phoenix_pool(&env);
@@ -426,10 +413,20 @@ impl PhoenixLpStrategy {
         let deadline = env.ledger().timestamp() + 300;
 
         token::Client::new(&env, &share_token).approve(&strategy, &pool, &share_amount, &expiry);
-        PhoenixPoolAdapter::new(&env, &pool)
-            .withdraw_liquidity(to, share_amount, 0, 0, Some(deadline));
+        PhoenixPoolAdapter::new(&env, &pool).withdraw_liquidity(
+            to,
+            share_amount,
+            0,
+            0,
+            Some(deadline),
+        );
         let now = env.ledger().sequence();
         token::Client::new(&env, &share_token).approve(&strategy, &pool, &0i128, &now);
+
+        let new_total = tracked
+            .checked_sub(share_amount)
+            .unwrap_or_else(|| panic_with_error!(&env, PhoenixLpError::Overflow));
+        set_total_shares(&env, new_total);
     }
 
     /// Return `true` if this strategy has a non-zero position for `vault`
@@ -457,9 +454,8 @@ impl PhoenixLpStrategy {
     // cannot substitute a different source address, so funds only flow
     // from the registered vault.
     //
-    // Production note: `add_liquidity` uses `transfer_from` which requires
-    // the vault to have pre-approved this strategy for each token amount.
-    // In tests `mock_all_auths()` bypasses the approval check.
+    // `add_liquidity` and `swap` use vault-scoped contract authorization
+    // prepared by vault.execute_op, avoiding standing token approvals.
     //
     // Fees on Phoenix V2-style pools are compounded into share token value —
     // no separate collect_fees step is required.
@@ -481,11 +477,8 @@ impl PhoenixLpStrategy {
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
-        if amount_a <= 0 || amount_b <= 0 {
+        if amount_a <= 0 || amount_b <= 0 || min_a < 0 || min_b < 0 {
             panic_with_error!(&env, PhoenixLpError::InvalidAmount);
-        }
-        if get_paused(&env) {
-            panic_with_error!(&env, PhoenixLpError::Paused);
         }
         if vault != get_vault(&env) {
             panic_with_error!(&env, PhoenixLpError::NotVault);
@@ -499,13 +492,10 @@ impl PhoenixLpStrategy {
         let expiry = env.ledger().sequence() + 100;
         let deadline = env.ledger().timestamp() + 300;
 
-        // Pull both tokens from vault into strategy.
-        token::Client::new(&env, &asset_a).transfer_from(
-            &strategy, &vault, &strategy, &amount_a,
-        );
-        token::Client::new(&env, &asset_b).transfer_from(
-            &strategy, &vault, &strategy, &amount_b,
-        );
+        // Pull both tokens from vault into strategy using the vault's scoped
+        // contract authorization prepared by vault.execute_op.
+        token::Client::new(&env, &asset_a).transfer(&vault, &strategy, &amount_a);
+        token::Client::new(&env, &asset_b).transfer(&vault, &strategy, &amount_b);
 
         // Approve to pool.
         token::Client::new(&env, &asset_a).approve(&strategy, &pool, &amount_a, &expiry);
@@ -571,11 +561,8 @@ impl PhoenixLpStrategy {
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
-        if share_amount <= 0 {
+        if share_amount <= 0 || min_a < 0 || min_b < 0 {
             panic_with_error!(&env, PhoenixLpError::InvalidAmount);
-        }
-        if get_paused(&env) {
-            panic_with_error!(&env, PhoenixLpError::Paused);
         }
         if vault != get_vault(&env) {
             panic_with_error!(&env, PhoenixLpError::NotVault);
@@ -620,13 +607,7 @@ impl PhoenixLpStrategy {
     ///
     /// Called via `vault.execute_op(caller, strategy, "swap",
     ///   [sell_a, amount_in, min_out])`.
-    pub fn swap(
-        env: Env,
-        vault: Address,
-        sell_a: bool,
-        amount_in: i128,
-        min_out: i128,
-    ) {
+    pub fn swap(env: Env, vault: Address, sell_a: bool, amount_in: i128, min_out: i128) {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
@@ -636,9 +617,6 @@ impl PhoenixLpStrategy {
         }
         if min_out < 0 {
             panic_with_error!(&env, PhoenixLpError::InvalidAmount);
-        }
-        if get_paused(&env) {
-            panic_with_error!(&env, PhoenixLpError::Paused);
         }
         if vault != get_vault(&env) {
             panic_with_error!(&env, PhoenixLpError::NotVault);
@@ -652,10 +630,9 @@ impl PhoenixLpStrategy {
         let expiry = env.ledger().sequence() + 100;
         let deadline = env.ledger().timestamp() + 300;
 
-        // Pull offer token from vault into strategy.
-        token::Client::new(&env, &offer_asset).transfer_from(
-            &strategy, &vault, &strategy, &amount_in,
-        );
+        // Pull offer token from vault into strategy using the vault's scoped
+        // contract authorization prepared by vault.execute_op.
+        token::Client::new(&env, &offer_asset).transfer(&vault, &strategy, &amount_in);
         token::Client::new(&env, &offer_asset).approve(&strategy, &pool, &amount_in, &expiry);
 
         // Swap; ask token goes directly to vault.
@@ -675,54 +652,10 @@ impl PhoenixLpStrategy {
     }
 
     // -----------------------------------------------------------------------
-    // Emergency controls
-    // -----------------------------------------------------------------------
-
-    /// Pause the strategy.
-    ///
-    /// **Vault manager only** — authorized via `vault.get_manager()` on-chain.
-    pub fn pause(env: Env, caller: Address) {
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-        caller.require_auth();
-        let vault = get_vault(&env);
-        let vault_manager: Address = env.invoke_contract(
-            &vault,
-            &Symbol::new(&env, "get_manager"),
-            ().into_val(&env),
-        );
-        if caller != vault_manager {
-            panic_with_error!(&env, PhoenixLpError::NotManager);
-        }
-        set_paused(&env, true);
-    }
-
-    /// Unpause the strategy.
-    ///
-    /// **Vault manager only** — authorized via `vault.get_manager()` on-chain.
-    pub fn unpause(env: Env, caller: Address) {
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-        caller.require_auth();
-        let vault = get_vault(&env);
-        let vault_manager: Address = env.invoke_contract(
-            &vault,
-            &Symbol::new(&env, "get_manager"),
-            ().into_val(&env),
-        );
-        if caller != vault_manager {
-            panic_with_error!(&env, PhoenixLpError::NotManager);
-        }
-        set_paused(&env, false);
-    }
-
-    // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
 
-    fn compute_lp_value(env: &Env, vault: &Address) -> i128 {
+    fn compute_lp_value(env: &Env, _vault: &Address) -> i128 {
         let pool = get_phoenix_pool(env);
         let asset_a = get_asset_a(env);
         let asset_b = get_asset_b(env);
@@ -743,15 +676,13 @@ impl PhoenixLpStrategy {
                 ().into_val(env),
             )
         });
-        let asset_handler = match asset_handler_opt {
-            Some(ah) => ah,
-            None => return 0,
-        };
+        let asset_handler = asset_handler_opt
+            .unwrap_or_else(|| panic_with_error!(env, PhoenixLpError::InvalidOraclePrice));
 
         let (reserve_a, reserve_b) = PhoenixPoolAdapter::new(env, &pool).get_reserves();
         let total_shares = Sep41TokenAdapter::new(env, &share_token).total_supply();
         if total_shares == 0 || (reserve_a == 0 && reserve_b == 0) {
-            return 0;
+            panic_with_error!(env, PhoenixLpError::InvalidOraclePrice);
         }
 
         let price_a: i128 = env.invoke_contract(
@@ -765,13 +696,13 @@ impl PhoenixLpStrategy {
             (asset_b,).into_val(env),
         );
         if price_a <= 0 || price_b <= 0 {
-            return 0;
+            panic_with_error!(env, PhoenixLpError::InvalidOraclePrice);
         }
 
-        let pool_value_a = reserve_a.saturating_mul(price_a) / PRICE_PRECISION;
-        let pool_value_b = reserve_b.saturating_mul(price_b) / PRICE_PRECISION;
-        let pool_value = pool_value_a.saturating_add(pool_value_b);
-        pool_value.saturating_mul(shares) / total_shares
+        let pool_value_a = checked_mul_div(env, reserve_a, price_a, PRICE_PRECISION);
+        let pool_value_b = checked_mul_div(env, reserve_b, price_b, PRICE_PRECISION);
+        let pool_value = checked_add(env, pool_value_a, pool_value_b);
+        checked_mul_div(env, pool_value, shares, total_shares)
     }
 }
 

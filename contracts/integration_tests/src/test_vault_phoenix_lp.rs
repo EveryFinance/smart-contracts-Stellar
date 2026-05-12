@@ -4,12 +4,76 @@
 
 use phoenix_lp_strategy::{PhoenixLpStrategy, PhoenixLpStrategyClient};
 use share_token::ShareTokenContract;
-use soroban_sdk::{testutils::Address as _, Address, Env, IntoVal, String, Symbol, Val, Vec};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, testutils::Address as _, Address, Env, IntoVal, String,
+    Symbol, Val, Vec,
+};
 use vault::{Vault, VaultClient, VaultParams};
 
 use crate::common::{
     token_balance, MockPhoenixPool, MockPhoenixPoolClient, MockToken, MockTokenClient,
 };
+
+const PRICE_PRECISION: i128 = 10_000_000;
+
+#[contract]
+struct MockLpAssetHandler;
+
+#[contractimpl]
+impl MockLpAssetHandler {
+    pub fn get_price(_env: Env, _asset: Address) -> i128 {
+        PRICE_PRECISION
+    }
+}
+
+#[contracttype]
+enum LpFactoryKey {
+    AssetHandler,
+    Asset(Address),
+    Guard(Address),
+}
+
+#[contract]
+struct MockLpFactory;
+
+#[contractimpl]
+impl MockLpFactory {
+    pub fn init(env: Env, asset_handler: Address) {
+        env.storage()
+            .instance()
+            .set(&LpFactoryKey::AssetHandler, &asset_handler);
+    }
+
+    pub fn authorize_asset(env: Env, asset: Address) {
+        env.storage()
+            .instance()
+            .set(&LpFactoryKey::Asset(asset), &true);
+    }
+
+    pub fn is_authorized_asset(env: Env, asset: Address) -> bool {
+        env.storage()
+            .instance()
+            .get(&LpFactoryKey::Asset(asset))
+            .unwrap_or(false)
+    }
+
+    pub fn authorize_guard(env: Env, guard: Address) {
+        env.storage()
+            .instance()
+            .set(&LpFactoryKey::Guard(guard), &true);
+    }
+
+    pub fn is_authorized_guard(env: Env, guard: Address) -> bool {
+        env.storage()
+            .instance()
+            .get(&LpFactoryKey::Guard(guard))
+            .unwrap_or(false)
+    }
+
+    pub fn get_asset_handler(env: Env) -> Option<Address> {
+        env.storage().instance().get(&LpFactoryKey::AssetHandler)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // World fixture
@@ -50,6 +114,12 @@ fn setup_phoenix() -> PhoenixWorld {
     let share_token = env.register(MockToken, ());
     MockTokenClient::new(&env, &share_token).initialize(&manager);
 
+    let asset_handler = env.register(MockLpAssetHandler, ());
+    let factory_id = env.register(MockLpFactory, ());
+    MockLpFactoryClient::new(&env, &factory_id).init(&asset_handler);
+    MockLpFactoryClient::new(&env, &factory_id).authorize_asset(&asset_a);
+    MockLpFactoryClient::new(&env, &factory_id).authorize_asset(&asset_b);
+
     // Use asset_a as the vault's base asset.
     let vault_share_id = env.register(
         ShareTokenContract,
@@ -76,7 +146,7 @@ fn setup_phoenix() -> PhoenixWorld {
             exit_fee_bps: 0,
             mgmt_fee_bps: 0,
             perf_fee_bps: 0,
-            factory: None,
+            factory: Some(factory_id.clone()),
             is_private: false,
         },),
     );
@@ -93,13 +163,14 @@ fn setup_phoenix() -> PhoenixWorld {
         &asset_a,
         &asset_b,
         &pool_id,
-        &manager,
         &String::from_str(&env, "Phoenix USDC-XLM"),
     );
+    MockLpFactoryClient::new(&env, &factory_id).authorize_guard(&strategy_id);
 
-    // Whitelist asset_a (base) in portfolio.  LP positions require an oracle for
-    // accurate NAV; we disable the TVL guard in these dispatch-focused tests.
+    // Whitelist both pool assets in portfolio. LP positions and idle balances
+    // are valued through the factory's AssetHandler, matching production.
     vault.add_portfolio_asset(&manager, &asset_a);
+    vault.add_portfolio_asset(&manager, &asset_b);
 
     vault.add_active_guard(&manager, &strategy_id);
     let ops: Vec<Symbol> = soroban_sdk::vec![
@@ -109,8 +180,8 @@ fn setup_phoenix() -> PhoenixWorld {
     ];
     vault.set_authorized_ops(&manager, &strategy_id, &ops);
 
-    // Disable TVL guard: LP oracle not configured in these dispatch tests.
-    vault.set_max_loss_bps(&manager, &0u32);
+    // Use a permissive but non-zero TVL guard for dispatch-focused tests.
+    vault.set_max_loss_bps(&manager, &9_999u32);
 
     // Fund vault with both underlying assets.
     MockTokenClient::new(&env, &asset_a).mint(&vault_id, &50_000_0000000i128);
@@ -150,30 +221,14 @@ fn setup_phoenix() -> PhoenixWorld {
 ///
 /// MockPhoenixPool.provide_liquidity pulls tokens from the strategy via
 /// transfer_from(pool, strategy, pool) after the strategy approves pool.
-/// The strategy first pulls tokens from vault via transfer_from(strategy, vault, strategy).
+/// The strategy first pulls tokens from vault via vault-scoped contract auth.
 #[test]
 fn test_phoenix_add_liquidity_via_execute_op() {
     let w = setup_phoenix();
     let amount_a = 1_000_0000000i128;
     let amount_b = 1_000_0000000i128;
 
-    // Strategy pulls from vault → vault must approve strategy.
-    MockTokenClient::new(&w.env, &w.asset_a).approve(
-        &w.vault_addr,
-        &w.strategy_addr,
-        &amount_a,
-        &1000u32,
-    );
-    MockTokenClient::new(&w.env, &w.asset_b).approve(
-        &w.vault_addr,
-        &w.strategy_addr,
-        &amount_b,
-        &1000u32,
-    );
     // Pool pulls from strategy → strategy approves pool (done inside add_liquidity).
-    // We also need vault → pool approvals for the mock's transfer_from(pool, strategy, pool).
-    // The strategy sets approve(strategy, pool) before calling provide_liquidity,
-    // so no extra setup is needed here.
 
     let args: Vec<Val> = soroban_sdk::vec![
         &w.env,
@@ -218,18 +273,6 @@ fn test_phoenix_remove_liquidity_via_execute_op() {
     let amount_b = 2_000_0000000i128;
 
     // --- add liquidity first ---
-    MockTokenClient::new(&w.env, &w.asset_a).approve(
-        &w.vault_addr,
-        &w.strategy_addr,
-        &amount_a,
-        &1000u32,
-    );
-    MockTokenClient::new(&w.env, &w.asset_b).approve(
-        &w.vault_addr,
-        &w.strategy_addr,
-        &amount_b,
-        &1000u32,
-    );
     let add_args: Vec<Val> = soroban_sdk::vec![
         &w.env,
         amount_a.into_val(&w.env),
@@ -297,18 +340,6 @@ fn test_phoenix_asset_in_use_after_add_liquidity() {
     assert!(!w.strategy.asset_in_use(&w.vault_addr, &w.asset_a));
     assert!(!w.strategy.asset_in_use(&w.vault_addr, &w.asset_b));
 
-    MockTokenClient::new(&w.env, &w.asset_a).approve(
-        &w.vault_addr,
-        &w.strategy_addr,
-        &amount,
-        &1000u32,
-    );
-    MockTokenClient::new(&w.env, &w.asset_b).approve(
-        &w.vault_addr,
-        &w.strategy_addr,
-        &amount,
-        &1000u32,
-    );
     let args: Vec<Val> = soroban_sdk::vec![
         &w.env,
         amount.into_val(&w.env),
@@ -327,26 +358,13 @@ fn test_phoenix_asset_in_use_after_add_liquidity() {
     assert!(w.strategy.asset_in_use(&w.vault_addr, &w.asset_b));
 }
 
-/// get_total_value returns 0 when no oracle is configured.
+/// get_total_value returns 0 before a position and positive value after LP entry.
 #[test]
-fn test_phoenix_get_total_value_without_oracle_returns_zero() {
+fn test_phoenix_get_total_value_with_asset_handler() {
     let w = setup_phoenix();
     assert_eq!(w.strategy.get_total_value(&w.vault_addr), 0);
 
-    // After adding liquidity, still 0 without an oracle.
     let amount = 1_000_0000000i128;
-    MockTokenClient::new(&w.env, &w.asset_a).approve(
-        &w.vault_addr,
-        &w.strategy_addr,
-        &amount,
-        &1000u32,
-    );
-    MockTokenClient::new(&w.env, &w.asset_b).approve(
-        &w.vault_addr,
-        &w.strategy_addr,
-        &amount,
-        &1000u32,
-    );
     let args: Vec<Val> = soroban_sdk::vec![
         &w.env,
         amount.into_val(&w.env),
@@ -361,5 +379,5 @@ fn test_phoenix_get_total_value_without_oracle_returns_zero() {
         &args,
     );
 
-    assert_eq!(w.strategy.get_total_value(&w.vault_addr), 0);
+    assert!(w.strategy.get_total_value(&w.vault_addr) > 0);
 }

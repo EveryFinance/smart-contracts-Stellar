@@ -202,10 +202,7 @@ impl MockVault {
         env.storage().instance().set(&VaultKey::Manager, &manager);
     }
     pub fn get_manager(env: Env) -> Address {
-        env.storage()
-            .instance()
-            .get(&VaultKey::Manager)
-            .unwrap()
+        env.storage().instance().get(&VaultKey::Manager).unwrap()
     }
     pub fn get_factory(_env: Env) -> Option<Address> {
         None
@@ -222,7 +219,6 @@ struct TestEnv {
     token_id: Address,
     blend_pool: Address,
     vault: Address,
-    manager: Address,
     user: Address,
 }
 
@@ -254,7 +250,6 @@ fn setup() -> TestEnv {
         &vault,
         &token_id,
         &blend_pool,
-        &manager,
         &String::from_str(&env, "Blend USDC Strategy"),
     );
 
@@ -270,7 +265,6 @@ fn setup() -> TestEnv {
         token_id,
         blend_pool,
         vault,
-        manager,
         user,
     }
 }
@@ -284,7 +278,6 @@ fn test_initialize() {
     let t = setup();
     assert_eq!(t.strategy.asset(), t.token_id);
     assert_eq!(t.strategy.get_protocol_address(), t.blend_pool);
-    assert!(!t.strategy.is_paused());
     assert_eq!(t.strategy.get_value(&t.vault), 0i128);
 }
 
@@ -296,7 +289,6 @@ fn test_double_initialize_panics() {
         &t.vault,
         &t.token_id,
         &t.blend_pool,
-        &t.manager,
         &String::from_str(&t.env, "x"),
     );
 }
@@ -343,14 +335,6 @@ fn test_deposit_negative_panics() {
     t.strategy.deposit(&-1i128, &t.vault);
 }
 
-#[test]
-#[should_panic(expected = "Error(Contract, #5)")]
-fn test_deposit_when_paused_panics() {
-    let t = setup();
-    t.strategy.pause(&t.manager);
-    t.strategy.deposit(&100i128, &t.vault);
-}
-
 // ---------------------------------------------------------------------------
 // Withdraw tests
 // ---------------------------------------------------------------------------
@@ -381,37 +365,6 @@ fn test_withdraw_not_vault_panics() {
     t.strategy.deposit(&100i128, &t.vault);
     let rogue = Address::generate(&t.env);
     t.strategy.withdraw(&50i128, &rogue, &t.user);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #5)")]
-fn test_withdraw_when_paused_panics() {
-    let t = setup();
-    t.strategy.deposit(&100i128, &t.vault);
-    t.strategy.pause(&t.manager);
-    t.strategy.withdraw(&50i128, &t.vault, &t.user);
-}
-
-// ---------------------------------------------------------------------------
-// Pause / unpause
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_pause_unpause() {
-    let t = setup();
-    assert!(!t.strategy.is_paused());
-    t.strategy.pause(&t.manager);
-    assert!(t.strategy.is_paused());
-    t.strategy.unpause(&t.manager);
-    assert!(!t.strategy.is_paused());
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #4)")]
-fn test_pause_not_manager_panics() {
-    let t = setup();
-    let rogue = Address::generate(&t.env);
-    t.strategy.pause(&rogue);
 }
 
 // ---------------------------------------------------------------------------
@@ -478,19 +431,6 @@ fn test_not_initialized_withdraw_panics() {
 }
 
 // ---------------------------------------------------------------------------
-// NotManager — unpause requires manager
-// ---------------------------------------------------------------------------
-
-#[test]
-#[should_panic]
-fn test_unpause_not_manager_panics() {
-    let t = setup();
-    t.strategy.pause(&t.manager);
-    let rogue = Address::generate(&t.env);
-    t.strategy.unpause(&rogue);
-}
-
-// ---------------------------------------------------------------------------
 // Withdraw edge cases
 // ---------------------------------------------------------------------------
 
@@ -511,7 +451,7 @@ fn test_withdraw_negative_panics() {
 }
 
 // ---------------------------------------------------------------------------
-// View functions — name, is_paused
+// View functions — name
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -522,12 +462,6 @@ fn test_get_name() {
         name,
         soroban_sdk::String::from_str(&t.env, "Blend USDC Strategy")
     );
-}
-
-#[test]
-fn test_is_paused_false_initially() {
-    let t = setup();
-    assert!(!t.strategy.is_paused());
 }
 
 // ---------------------------------------------------------------------------

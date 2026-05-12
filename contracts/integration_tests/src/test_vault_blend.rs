@@ -7,7 +7,9 @@ use share_token::{ShareTokenContract, ShareTokenContractClient};
 use soroban_sdk::{testutils::Address as _, Address, Env, IntoVal, String, Symbol, Val, Vec};
 use vault::{Vault, VaultClient, VaultParams};
 
-use crate::common::{token_balance, MockBlendPool, MockBlendPoolClient, MockToken, MockTokenClient};
+use crate::common::{
+    token_balance, MockBlendPool, MockBlendPoolClient, MockToken, MockTokenClient,
+};
 
 // ---------------------------------------------------------------------------
 // World fixture
@@ -82,7 +84,6 @@ fn setup_blend() -> BlendWorld {
         &vault_id,
         &base,
         &pool_id,
-        &manager,
         &String::from_str(&env, "Blend USDC"),
     );
 
@@ -138,18 +139,13 @@ fn test_blend_supply_via_execute_op() {
     w.vault.deposit(&deposit, &w.user, &w.base, &0i128);
     assert_eq!(token_balance(&w.env, &w.base, &w.vault_addr), deposit);
 
-    // strategy.supply calls transfer_from(strategy, vault, strategy, amount)
-    // → vault must pre-approve strategy as spender.
-    MockTokenClient::new(&w.env, &w.base).approve(
-        &w.vault_addr,
-        &w.strategy_addr,
-        &supply_amount,
-        &1000u32,
-    );
-
     let args: Vec<Val> = soroban_sdk::vec![&w.env, supply_amount.into_val(&w.env)];
-    w.vault
-        .execute_op(&w.trader, &w.strategy_addr, &Symbol::new(&w.env, "supply"), &args);
+    w.vault.execute_op(
+        &w.trader,
+        &w.strategy_addr,
+        &Symbol::new(&w.env, "supply"),
+        &args,
+    );
 
     // Blend pool records strategy's position.
     assert_eq!(w.blend_pool.get_supply(&w.strategy_addr), supply_amount);
@@ -170,12 +166,6 @@ fn test_blend_withdraw_from_lending_via_execute_op() {
     let supply_amount = 500_0000000i128;
 
     w.vault.deposit(&deposit, &w.user, &w.base, &0i128);
-    MockTokenClient::new(&w.env, &w.base).approve(
-        &w.vault_addr,
-        &w.strategy_addr,
-        &supply_amount,
-        &1000u32,
-    );
     let supply_args: Vec<Val> = soroban_sdk::vec![&w.env, supply_amount.into_val(&w.env)];
     w.vault.execute_op(
         &w.trader,
@@ -211,15 +201,13 @@ fn test_blend_get_total_value_reflects_position() {
     assert_eq!(w.strategy.get_total_value(&w.vault_addr), 0);
 
     w.vault.deposit(&deposit, &w.user, &w.base, &0i128);
-    MockTokenClient::new(&w.env, &w.base).approve(
-        &w.vault_addr,
-        &w.strategy_addr,
-        &supply_amount,
-        &1000u32,
-    );
     let args: Vec<Val> = soroban_sdk::vec![&w.env, supply_amount.into_val(&w.env)];
-    w.vault
-        .execute_op(&w.trader, &w.strategy_addr, &Symbol::new(&w.env, "supply"), &args);
+    w.vault.execute_op(
+        &w.trader,
+        &w.strategy_addr,
+        &Symbol::new(&w.env, "supply"),
+        &args,
+    );
 
     assert_eq!(w.strategy.get_total_value(&w.vault_addr), supply_amount);
 
@@ -238,15 +226,13 @@ fn test_blend_asset_in_use() {
     assert!(!w.strategy.asset_in_use(&w.vault_addr, &w.base));
 
     w.vault.deposit(&deposit, &w.user, &w.base, &0i128);
-    MockTokenClient::new(&w.env, &w.base).approve(
-        &w.vault_addr,
-        &w.strategy_addr,
-        &supply_amount,
-        &1000u32,
-    );
     let args: Vec<Val> = soroban_sdk::vec![&w.env, supply_amount.into_val(&w.env)];
-    w.vault
-        .execute_op(&w.trader, &w.strategy_addr, &Symbol::new(&w.env, "supply"), &args);
+    w.vault.execute_op(
+        &w.trader,
+        &w.strategy_addr,
+        &Symbol::new(&w.env, "supply"),
+        &args,
+    );
 
     assert!(w.strategy.asset_in_use(&w.vault_addr, &w.base));
 }
@@ -260,13 +246,6 @@ fn test_blend_proportional_withdrawal_with_active_guard() {
     let supply_amount = 500_0000000i128;
 
     w.vault.deposit(&deposit, &w.user, &w.base, &0i128);
-
-    MockTokenClient::new(&w.env, &w.base).approve(
-        &w.vault_addr,
-        &w.strategy_addr,
-        &supply_amount,
-        &1000u32,
-    );
     let supply_args: Vec<Val> = soroban_sdk::vec![&w.env, supply_amount.into_val(&w.env)];
     w.vault.execute_op(
         &w.trader,
@@ -299,8 +278,12 @@ fn test_blend_proportional_withdrawal_with_active_guard() {
 fn test_blend_execute_op_rejects_unauthorized_fn() {
     let w = setup_blend();
     let args: Vec<Val> = soroban_sdk::vec![&w.env, 100i128.into_val(&w.env)];
-    w.vault
-        .execute_op(&w.trader, &w.strategy_addr, &Symbol::new(&w.env, "deposit"), &args);
+    w.vault.execute_op(
+        &w.trader,
+        &w.strategy_addr,
+        &Symbol::new(&w.env, "deposit"),
+        &args,
+    );
 }
 
 /// execute_op rejects callers that are neither manager nor trader.
@@ -310,6 +293,10 @@ fn test_blend_execute_op_rejects_non_trader_caller() {
     let w = setup_blend();
     let stranger = Address::generate(&w.env);
     let args: Vec<Val> = soroban_sdk::vec![&w.env, 100i128.into_val(&w.env)];
-    w.vault
-        .execute_op(&stranger, &w.strategy_addr, &Symbol::new(&w.env, "supply"), &args);
+    w.vault.execute_op(
+        &stranger,
+        &w.strategy_addr,
+        &Symbol::new(&w.env, "supply"),
+        &args,
+    );
 }

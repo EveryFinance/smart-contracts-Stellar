@@ -5,7 +5,8 @@ use soroban_sdk::contracterror;
 #[repr(u32)]
 pub enum DiaAdapterError {
     AlreadyInitialized = 1,
-    NotInitialized     = 2,
-    NotAdmin           = 3,
-    NoPendingAdmin     = 4,
+    NotInitialized = 2,
+    NotAdmin = 3,
+    NoPendingAdmin = 4,
+    InvalidMaxAge = 5,
 }
