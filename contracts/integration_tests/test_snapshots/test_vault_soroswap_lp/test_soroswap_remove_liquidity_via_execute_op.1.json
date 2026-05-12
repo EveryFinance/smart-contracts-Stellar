@@ -2062,7 +2062,11 @@
                           ]
                         },
                         "val": {
-                          "vec": []
+                          "vec": [
+                            {
+                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYRE5"
+                            }
+                          ]
                         }
                       },
                       {
