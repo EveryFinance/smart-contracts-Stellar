@@ -53,8 +53,8 @@ mod storage;
 pub use error::VaultError;
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, panic_with_error, token, Address, Env, IntoVal, String,
-    Symbol, TryFromVal, Val, Vec,
+    contract, contractimpl, contracttype, panic_with_error, token, Address, Env, IntoVal, Map,
+    String, Symbol, TryFromVal, Val, Vec,
 };
 
 use storage::{
@@ -423,6 +423,54 @@ fn reported_add_liquidity_guard_value(
         previous_guard_value,
         checked_add(env, value_a, value_b),
     ))
+}
+
+/// Avoid re-calling `strategy.get_total_value` after remove_liquidity.
+///
+/// The strategy returned `(amount_a, amount_b)` — the actual underlying tokens
+/// sent back to the vault. We estimate the new guard value as:
+///   `guard_value_before - value(amount_a) - value(amount_b)`
+///
+/// This is correct to within AMM rounding and is cheaper than a full
+/// deep re-valuation of the LP position.
+fn reported_remove_liquidity_guard_value(
+    env: &Env,
+    base_asset: &Address,
+    assets: &Vec<Address>,
+    previous_guard_value: i128,
+    result: &Val,
+) -> Option<i128> {
+    if assets.len() != 2 {
+        return None;
+    }
+    let Ok((amount_a, amount_b)) = <(i128, i128)>::try_from_val(env, result) else {
+        return None;
+    };
+    if amount_a < 0 || amount_b < 0 {
+        panic_with_error!(env, VaultError::InvalidAmount);
+    }
+    let asset_handler_opt = asset_handler(env);
+    let oracle_opt = get_oracle(env);
+    let asset_a = assets.get(0).unwrap();
+    let asset_b = assets.get(1).unwrap();
+    let value_a = price_asset_to_base(
+        env,
+        &asset_a,
+        base_asset,
+        amount_a,
+        &asset_handler_opt,
+        &oracle_opt,
+    );
+    let value_b = price_asset_to_base(
+        env,
+        &asset_b,
+        base_asset,
+        amount_b,
+        &asset_handler_opt,
+        &oracle_opt,
+    );
+    let removed_value = checked_add(env, value_a, value_b);
+    Some(previous_guard_value.saturating_sub(removed_value).max(0))
 }
 
 fn asset_handler(env: &Env) -> Option<Address> {
@@ -1194,6 +1242,16 @@ impl Vault {
             let reported_guard_value =
                 if fn_name == Symbol::new(&env, "add_liquidity") && touched_assets.len() == 2 {
                     reported_add_liquidity_guard_value(
+                        &env,
+                        &base_asset,
+                        &touched_assets,
+                        guard_value_before,
+                        &result,
+                    )
+                } else if fn_name == Symbol::new(&env, "remove_liquidity")
+                    && touched_assets.len() == 2
+                {
+                    reported_remove_liquidity_guard_value(
                         &env,
                         &base_asset,
                         &touched_assets,
@@ -2460,29 +2518,76 @@ impl Vault {
             let bal = token::Client::new(env, base_asset).balance(vault);
             total = checked_add(env, total, bal);
         } else {
-            // AssetHandler lives in the factory; it is the preferred
-            // dHedge-style per-asset price source. The vault-wide oracle is
-            // kept as fallback.
+            // Resolve AssetHandler once; used for batch pricing below.
             let asset_handler_opt = asset_handler(env);
             let oracle_opt = get_oracle(env);
             let tracked_assets = get_tracked_assets(env);
+
+            // Pass 1: collect non-base assets with non-zero balances.
+            // Base asset is counted directly (price = 1:1).
+            let mut non_base_assets: Vec<Address> = Vec::new(env);
+            let mut non_base_bals: Vec<i128> = Vec::new(env);
             for asset in tracked_assets.iter() {
                 if !portfolio.contains(asset.clone()) {
                     continue;
                 }
                 let bal = token::Client::new(env, &asset).balance(vault);
-                total = checked_add(
-                    env,
-                    total,
-                    price_asset_to_base(
-                        env,
-                        &asset,
-                        base_asset,
-                        bal,
-                        &asset_handler_opt,
-                        &oracle_opt,
-                    ),
-                );
+                if bal == 0 {
+                    continue;
+                }
+                if asset == *base_asset {
+                    total = checked_add(env, total, bal);
+                } else {
+                    non_base_assets.push_back(asset);
+                    non_base_bals.push_back(bal);
+                }
+            }
+
+            // Pass 2: price non-base assets — one batch call to AssetHandler
+            // instead of one call per asset.
+            if !non_base_assets.is_empty() {
+                if let Some(ref ah) = asset_handler_opt {
+                    let prices: Map<Address, i128> = env.invoke_contract(
+                        ah,
+                        &Symbol::new(env, "get_prices"),
+                        (non_base_assets.clone(),).into_val(env),
+                    );
+                    let n = non_base_assets.len();
+                    for i in 0..n {
+                        let asset = non_base_assets.get(i).unwrap();
+                        let bal = non_base_bals.get(i).unwrap();
+                        let price = prices.get(asset).unwrap_or_else(|| {
+                            panic_with_error!(env, VaultError::InvalidOraclePrice)
+                        });
+                        if price <= 0 {
+                            panic_with_error!(env, VaultError::InvalidOraclePrice);
+                        }
+                        total = checked_add(
+                            env,
+                            total,
+                            checked_mul_div(env, bal, price, PRICE_PRECISION),
+                        );
+                    }
+                } else {
+                    // No AssetHandler — fall back to per-asset oracle pricing.
+                    let n = non_base_assets.len();
+                    for i in 0..n {
+                        let asset = non_base_assets.get(i).unwrap();
+                        let bal = non_base_bals.get(i).unwrap();
+                        total = checked_add(
+                            env,
+                            total,
+                            price_asset_to_base(
+                                env,
+                                &asset,
+                                base_asset,
+                                bal,
+                                &None,
+                                &oracle_opt,
+                            ),
+                        );
+                    }
+                }
             }
         }
 
