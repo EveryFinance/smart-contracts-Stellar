@@ -145,11 +145,25 @@ BTC_ID="${BTC_ID:-CAO7DDJNGMOYQPRYDY5JVZ5YEK4UQBSMGLAEWRCUOTRMDSBMGWSAATDZ}"
 #   Factory: CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2
 SOROSWAP_ROUTER_ID="${SOROSWAP_ROUTER_ID:-CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH}"
 
-# Blend lending pools (pass as execute_op arg at runtime, not needed here)
-#   V2 Pool Factory: CDSYOAVXFY7SM5S64IZPPPYB4GVGGLMQVFREPSQQEZVIWXX5R23G4QSU
-#   V1 Fixed XLM-USDC pool: CDVQVKOY2YSXS2IC7KN6MNASSHPAO7UN2UR2ON4OI2SKMFJNVAMDX6DP
-#   ⚠ V1 YieldBlox pool EXPLOITED (Feb 2026) — do NOT use: CBP7NO6F7FRDHSOFQBT2L2UWYIZ2PU76JKVRYAQTG3KZSQLYAOKIF2WB
-BLEND_USDC_POOL_ID="${BLEND_USDC_POOL_ID:-}"   # look up current V2 pool via mainnet.blend.capital
+# Blend lending pools (pass as execute_op arg at runtime, not needed at deploy time)
+#   Source: https://docs.blend.capital/mainnet-deployments
+#                  https://docs-v1.blend.capital/mainnet-deployments
+#
+#   V1 Pool Factory:          CCZD6ESMOGMPWH2KRO4O7RGTAPGTUPFWFQBELQSS7ZUK63V3TZWETGAG
+#   V1 Backstop:              CAO3AGAMZVRMHITL36EJ2VZQWKYRPWMQAPDQD5YEOF3GIF7T44U4JAL3
+#   V1 Fixed XLM-USDC pool:  CDVQVKOY2YSXS2IC7KN6MNASSHPAO7UN2UR2ON4OI2SKMFJNVAMDX6DP
+#   ⚠ V1 YieldBlox EXPLOITED (Feb 2026) — do NOT use: CBP7NO6F7FRDHSOFQBT2L2UWYIZ2PU76JKVRYAQTG3KZSQLYAOKIF2WB
+#
+#   V2 Pool Factory:          CDSYOAVXFY7SM5S64IZPPPYB4GVGGLMQVFREPSQQEZVIWXX5R23G4QSU
+#   V2 Backstop:              CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7
+#   V2 Fixed XLM-USDC pool:  CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD
+#   V2 YieldBlox pool:        CCCCIQSDILITHMM7PBSLVDT5MISSY7R26MNZXCX4H7J5JQ5FPIYOGYFS
+#
+# Compatible with V1 and V2. Default to V2 Fixed pool (XLM/USDC).
+# Override with BLEND_POOL_ID env var to target a different pool.
+BLEND_V1_FIXED_POOL_ID="CDVQVKOY2YSXS2IC7KN6MNASSHPAO7UN2UR2ON4OI2SKMFJNVAMDX6DP"
+BLEND_V2_FIXED_POOL_ID="CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD"
+BLEND_POOL_ID="${BLEND_POOL_ID:-$BLEND_V2_FIXED_POOL_ID}"
 
 # Phoenix DEX pools (pass as execute_op arg at runtime, not needed here)
 #   Check https://app.phoenix-hub.io for current pool addresses
@@ -428,7 +442,9 @@ write_env_file() {
     printf "\n# External protocol addresses (runtime reference)\n"
     printf "REFLECTOR_CONTRACT_ID=%s\n" "$REFLECTOR_CONTRACT_ID"
     printf "SOROSWAP_ROUTER_ID=%s\n"    "$SOROSWAP_ROUTER_ID"
-    printf "BLEND_USDC_POOL_ID=%s\n"    "${BLEND_USDC_POOL_ID:-}"
+    printf "BLEND_V1_FIXED_POOL_ID=%s\n" "$BLEND_V1_FIXED_POOL_ID"
+    printf "BLEND_V2_FIXED_POOL_ID=%s\n" "$BLEND_V2_FIXED_POOL_ID"
+    printf "BLEND_POOL_ID=%s\n"          "$BLEND_POOL_ID"
     printf "PHOENIX_ALPHA_POOL_ID=%s\n" "${PHOENIX_ALPHA_POOL_ID:-}"
     printf "PHOENIX_BETA_POOL_ID=%s\n"  "${PHOENIX_BETA_POOL_ID:-}"
     printf "\n# Vault stacks\n"
@@ -516,12 +532,17 @@ write_report() {
     printf "== External Protocol Reference\n\n"
     printf "These addresses are NOT deployed by this script. Pass them as args to execute_op.\n\n"
     printf "[cols=\"1,1\"]\n|===\n| Protocol | Address\n"
-    printf '| Soroswap Router       | `%s`\n' "$SOROSWAP_ROUTER_ID"
-    printf '| Blend V2 Pool Factory | `CDSYOAVXFY7SM5S64IZPPPYB4GVGGLMQVFREPSQQEZVIWXX5R23G4QSU`\n'
-    printf '| Blend V1 XLM-USDC Pool| `CDVQVKOY2YSXS2IC7KN6MNASSHPAO7UN2UR2ON4OI2SKMFJNVAMDX6DP`\n'
-    printf '| Blend USDC Pool (V2)  | `%s` (verify via mainnet.blend.capital)\n' "${BLEND_USDC_POOL_ID:-TBD}"
-    printf '| Phoenix Alpha Pool    | `%s` (verify via app.phoenix-hub.io)\n' "${PHOENIX_ALPHA_POOL_ID:-TBD}"
-    printf '| Phoenix Beta Pool     | `%s` (verify via app.phoenix-hub.io)\n' "${PHOENIX_BETA_POOL_ID:-TBD}"
+    printf '| Soroswap Router          | `%s`\n' "$SOROSWAP_ROUTER_ID"
+    printf '| Blend V1 Factory         | `CCZD6ESMOGMPWH2KRO4O7RGTAPGTUPFWFQBELQSS7ZUK63V3TZWETGAG`\n'
+    printf '| Blend V1 Backstop        | `CAO3AGAMZVRMHITL36EJ2VZQWKYRPWMQAPDQD5YEOF3GIF7T44U4JAL3`\n'
+    printf '| Blend V1 Fixed XLM-USDC  | `%s`\n' "$BLEND_V1_FIXED_POOL_ID"
+    printf '| Blend V2 Factory         | `CDSYOAVXFY7SM5S64IZPPPYB4GVGGLMQVFREPSQQEZVIWXX5R23G4QSU`\n'
+    printf '| Blend V2 Backstop        | `CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7`\n'
+    printf '| Blend V2 Fixed XLM-USDC  | `%s`\n' "$BLEND_V2_FIXED_POOL_ID"
+    printf '| Blend V2 YieldBlox pool  | `CCCCIQSDILITHMM7PBSLVDT5MISSY7R26MNZXCX4H7J5JQ5FPIYOGYFS`\n'
+    printf '| Active Blend pool (default V2 Fixed) | `%s`\n' "$BLEND_POOL_ID"
+    printf '| Phoenix Alpha Pool       | `%s`\n' "${PHOENIX_ALPHA_POOL_ID:-TBD — check app.phoenix-hub.io}"
+    printf '| Phoenix Beta Pool        | `%s`\n' "${PHOENIX_BETA_POOL_ID:-TBD — check app.phoenix-hub.io}"
     printf "|===\n\n"
 
     printf "WARNING: Blend V1 YieldBlox pool (CBP7NO6F7...) was exploited in February 2026.\n"
@@ -531,7 +552,6 @@ write_report() {
     printf "* [ ] Verify all asset SAC addresses on stellar.expert/explorer/public\n"
     printf "* [ ] Confirm Reflector has price feeds for EURC, AQUA, BTC on mainnet\n"
     printf "* [ ] Confirm Soroswap router address at docs.soroswap.finance\n"
-    printf "* [ ] Identify safe Blend V2 USDC pool via mainnet.blend.capital\n"
     printf "* [ ] Identify Phoenix pool addresses via app.phoenix-hub.io\n"
     printf "* [ ] Seed deposit made to each vault (factory seed_deposit)\n"
     printf "* [ ] Test execute_op with small amounts before opening to users\n"
