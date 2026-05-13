@@ -1,0 +1,1064 @@
+= Stellar Testnet Protocol Deployment and Testing Report
+:toc:
+:sectnums:
+
+Generated at `2026-05-13T03:44:40Z UTC` on `testnet`.
+
+== Deployment Information
+
+[cols="1,1",options="header"]
+|===
+| Item | Address
+| AssetHandler | `CBGDGW2NIBDSIDMRZCPDLOPBDXU72DLRAIYYFH6VUNRAKGSAB3MFD2PD`
+| Oracle | `CAQYFGRF2PNTQX3HZOAK2J5C4NOTSDVV2PUGBJATTBIU3ZO5O2GYVACN`
+| Factory | `CA2NYGK45UOI3OHA6VRAYRJQ3GRJY7FRYXBY7NCUMQYTBBPS2UZNE3R4`
+| Manager | `GB2HC2NLXR7LHKXGS2IZL4F5LZVQVKRBKCWONQQW4WIYUXDILHORWQPZ`
+| Trader | `GB2HC2NLXR7LHKXGS2IZL4F5LZVQVKRBKCWONQQW4WIYUXDILHORWQPZ`
+| Treasury | `GB2HC2NLXR7LHKXGS2IZL4F5LZVQVKRBKCWONQQW4WIYUXDILHORWQPZ`
+| User 1 | `GDZJOQKGD2NQ5NWSOBOYASOOJYJN7G55ZT2JNBNYBVK7CHQQC7KMNTIH`
+| User 2 | `GADIJZVLHY7JG2LKGZRHEVBNLN6PH4ITUHFIPICNHSZPH3GSOO4CHPIU`
+| User 3 | `GBHTQ63MRNNYMNHGFEZJU6D7KEMYQWZ2D5NPZ4OHWZK6WRVOURRYMJI4`
+| User 4 | `GA3QJPDHBYKBOJXRCN4IKR5I4TKDCI2PS3KYPJY6XBB6IV5SZOCPGEQ5`
+| User 5 | `GBRX7XEGLWY5FONMWZET6MNMXCWTI2Z3DNFPWZIIPW7YX6I4JQUHVUVO`
+|===
+
+=== Mock Assets
+
+[cols="1,1,1",options="header"]
+|===
+| Asset | Contract | Initial price, 1e7 scale
+| USDC | `CAEORPWP3QTSGIOPXTWMCQ5SJMB22PYV5WPFR6UU663EXK2KXDFCISSB` | `10000000`
+| XLM | `CBKYXKXYLLHGD3H3V2G5TRIQC3VSMSAY6WN7WPKAJJQ44KQLYL4ZQNQA` | `1700000`
+| BTC | `CDVEOT44NXZQ4NEIZIS7YLGSLVZA42L4TBOBKOEIY5QKMVINKSWLHXRN` | `816844300000`
+| PYUSD | `CDZ6CCI37TJG2CNEMHDBP5F4QDWTTO2PLEE3NW3JBINN6TBITPFVFP6F` | `10000000`
+| EURC | `CCCQCPUT4OLIIIX3VXV34TM7QYBWJBXYAXNZ77HMSMT7JLKZQFJOHZFY` | `10800000`
+| AQUA | `CC62ZRFW5Y3MJDD4EYTHRKMRNMYH3F6BE64FUGZK45CGZFIOROF2WHKX` | `4500`
+| USTRY | `CBHW6G32KBFYC5A3HTO6X5E74ZCDUFZAS72WLHXWXZLZ5OO4KOEZNCMW` | `10300000`
+|===
+
+USDC is the only user deposit asset for every vault. Other assets are manager-listed portfolio assets.
+
+=== Vaults and Strategies
+
+[cols="1,1,1,1,1,1",options="header"]
+|===
+| Vault | Vault Address | Share Token | Blend Strategy | Soroswap Strategy | Phoenix Strategy
+| ALPHA | `` | `` | `` | `` | ``
+| BETA | `CCOM44V4MXXPOK2IOLAI46QUAMKBKP47MYGQFKXQQVPNLOGSEIDTHBXX` | `CAKJIATXZMTE5SWZQP6GWOTAUVSQBMJPIMJHHXGS2OGKHKLJAN33KHV4` | `CALOZLGGJ5PLYNN75XAAZ37ZFBCFEQGRKJ64AJ2NR2CGREM5746PLBD6` | `CCCNBP6MMAE7PRX5Z24VCRUMWB5DT5SBWJBM3BJVE2SAIMM66V2DCGY3` | `CB4AOKQMOBT5CTDZC6CUWGWD5HOUWX4YYRFLIYW25E2ZJLOITN3IKMVZ`
+| GAMMA | `` | `` | `` | `` | ``
+|===
+
+== Vault Configuration
+
+* Entry fee: `0` bps
+* Withdraw fee: `0` bps
+* Management fee: `200` bps
+* Performance fee: `1000` bps
+* Share transferability: `false` for every vault
+* Cooldown: `60` seconds for every vault
+
+NOTE: Beta is deployed and tested first. Alpha and Gamma are deployed only when DEPLOY_ALPHA_GAMMA_AFTER_BETA=true and the Beta flow succeeds.
+
+=== Initial Portfolio Configuration
+
+[cols="1,1,1",options="header"]
+|===
+| Vault | Supported portfolio assets | Strategy allocation at deployment
+| Alpha | `` | Blend, Soroswap LP, Phoenix LP deployed and active; initial position value `0`
+| Beta | `USDC,XLM,PYUSD,EURC,AQUA,USTRY` | Blend, Soroswap LP, Phoenix LP deployed and active; initial position value `0`
+| Gamma | `` | Blend deployed and active; initial position value `0`
+|===
+
+== Transaction Tracking
+
+
+==== Initial Beta state
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `0`
+| Share token price | `10000000`
+| Share token supply | `0`
+| User USDC balance | `100000000000`
+| User share balance | `0`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `0`
+| XLM | `0`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `0`
+|===
+
+==== Phase 1 Beta before user deposit
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `0`
+| Share token price | `10000000`
+| Share token supply | `0`
+| User USDC balance | `100000000000`
+| User share balance | `0`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `0`
+| XLM | `0`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `0`
+|===
+
+.Transaction
+[cols="1,2",options="header"]
+|===
+| Field | Value
+| Phase | Phase 1
+| Vault | Beta
+| Action | User deposit 1000000000 USDC units
+| Result | https://stellar.expert/explorer/testnet/tx/4fce236e776522f58d89d0bd456156ec41b8f7c7aa1c36d34ed831679a481745
+|===
+
+==== Phase 1 Beta after user deposit
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `1000000000`
+| Share token price | `10000000`
+| Share token supply | `1000000000`
+| User USDC balance | `99000000000`
+| User share balance | `1000000000`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `1000000000`
+| XLM | `0`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `0`
+|===
+
+==== Phase 1 Beta before user withdrawal
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `1000000000`
+| Share token price | `10000000`
+| Share token supply | `1000000000`
+| User USDC balance | `99000000000`
+| User share balance | `1000000000`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `1000000000`
+| XLM | `0`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `0`
+|===
+
+.Transaction
+[cols="1,2",options="header"]
+|===
+| Field | Value
+| Phase | Phase 1
+| Vault | Beta
+| Action | User withdraw 200000000 shares
+| Result | https://stellar.expert/explorer/testnet/tx/f7dd08b8e2ac358fe353e4f7c97b9a4a0f33cb40945ba6dbfa5142e2a4d915f1
+|===
+
+==== Phase 1 Beta after user withdrawal
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `800000014`
+| Share token price | `9999999`
+| Share token supply | `800000066`
+| User USDC balance | `99199999986`
+| User share balance | `800000000`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `800000014`
+| XLM | `0`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `0`
+|===
+
+==== Phase 2 Beta before manager actions
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `800000014`
+| Share token price | `9999999`
+| Share token supply | `800000066`
+| User USDC balance | `99199999986`
+| User share balance | `800000000`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `800000014`
+| XLM | `0`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `0`
+|===
+
+.Transaction
+[cols="1,2",options="header"]
+|===
+| Field | Value
+| Phase | Phase 2
+| Vault | Beta
+| Action | Manager Soroswap mock swap USDC to XLM
+| Result | https://stellar.expert/explorer/testnet/tx/378cd11ac238f0d10311d68717f4f90a6f8caef24786294001bbc83f1bcdbc19
+|===
+
+.Transaction
+[cols="1,2",options="header"]
+|===
+| Field | Value
+| Phase | Phase 2
+| Vault | Beta
+| Action | Manager lending supply
+| Result | https://stellar.expert/explorer/testnet/tx/564b491896a3b084eb9ce16d968aeb59315d988ca135ebbd7fdc7a3a7ca7a010
+|===
+
+.Transaction
+[cols="1,2",options="header"]
+|===
+| Field | Value
+| Phase | Phase 2
+| Vault | Beta
+| Action | Manager lending withdrawal
+| Result | https://stellar.expert/explorer/testnet/tx/7dd329e6a3274fa391796bfcfc634edc6b949a2d7a4f136a295965ffeac4e8ad
+|===
+
+.Transaction
+[cols="1,2",options="header"]
+|===
+| Field | Value
+| Phase | Phase 2
+| Vault | Beta
+| Action | Manager add Soroswap LP liquidity
+| Result | https://stellar.expert/explorer/testnet/tx/3d6778909afbd7e1fad43215ccc74ee17964d995a30b4867397ea71fabda1ffa
+|===
+
+.Transaction
+[cols="1,2",options="header"]
+|===
+| Field | Value
+| Phase | Phase 2
+| Vault | Beta
+| Action | Manager remove Soroswap LP liquidity
+| Result | https://stellar.expert/explorer/testnet/tx/1f55b46f19c0bcbdbb9a852c40460f8c1a492e40050c963954816da43c9ed7b9
+|===
+
+.Transaction
+[cols="1,2",options="header"]
+|===
+| Field | Value
+| Phase | Phase 2
+| Vault | Beta
+| Action | Manager Phoenix mock swap USDC to USTRY
+| Result | https://stellar.expert/explorer/testnet/tx/cc6f0d9283e0d9e0f5f597d3257db463361640c33f95d710e0149cdd4641381f
+|===
+
+.Transaction
+[cols="1,2",options="header"]
+|===
+| Field | Value
+| Phase | Phase 2
+| Vault | Beta
+| Action | Manager adds mock lending yield
+| Result | https://stellar.expert/explorer/testnet/tx/0edd419a4d50b7e896d53eb42ed681f4a79eb3a533e661affd7a060b474a19e9
+|===
+
+==== Phase 2 Beta after manager actions
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `801500013`
+| Share token price | `10018749`
+| Share token supply | `800000066`
+| User USDC balance | `99199999986`
+| User share balance | `800000000`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `650000014`
+| XLM | `588235294`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `50000000`
+|===
+
+==== Phase 3 Beta before user deposit
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `801500013`
+| Share token price | `10018749`
+| Share token supply | `800000066`
+| User USDC balance | `100000000000`
+| User share balance | `0`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `650000014`
+| XLM | `588235294`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `50000000`
+|===
+
+.Transaction
+[cols="1,2",options="header"]
+|===
+| Field | Value
+| Phase | Phase 3
+| Vault | Beta
+| Action | User deposit 1000000000 USDC units
+| Result | https://stellar.expert/explorer/testnet/tx/730a5fa4f54b637d9de37ac39a5ada03ee7f978d464716ea798222e1dd61765a
+|===
+
+==== Phase 3 Beta after user deposit
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `1801500013`
+| Share token price | `10016874`
+| Share token supply | `1798465260`
+| User USDC balance | `99000000000`
+| User share balance | `998315442`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `1650000014`
+| XLM | `588235294`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `50000000`
+|===
+
+==== Phase 3 Beta before user withdrawal
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `1801500013`
+| Share token price | `10016874`
+| Share token supply | `1798465260`
+| User USDC balance | `99000000000`
+| User share balance | `998315442`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `1650000014`
+| XLM | `588235294`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `50000000`
+|===
+
+.Transaction
+[cols="1,2",options="header"]
+|===
+| Field | Value
+| Phase | Phase 3
+| Vault | Beta
+| Action | User withdraw 200000000 shares
+| Result | https://stellar.expert/explorer/testnet/tx/ff0224a16013bae42c2fbb0e44f036fd7e289d3d42582a31532224b0b27599e9
+|===
+
+==== Phase 3 Beta after user withdrawal
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `1601162544`
+| Share token price | `10016873`
+| Share token supply | `1598465378`
+| User USDC balance | `99183489772`
+| User share balance | `798315442`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `1466510242`
+| XLM | `522820046`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `44439704`
+|===
+
+==== Phase 4 Beta before user deposit
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `1601162544`
+| Share token price | `10016873`
+| Share token supply | `1598465378`
+| User USDC balance | `100000000000`
+| User share balance | `0`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `1466510242`
+| XLM | `522820046`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `44439704`
+|===
+
+.Transaction
+[cols="1,2",options="header"]
+|===
+| Field | Value
+| Phase | Phase 4
+| Vault | Beta
+| Action | User deposit 500000000 USDC units
+| Result | https://stellar.expert/explorer/testnet/tx/04d5e5d647fb3aef7854d980d339789494dcbebd0afa77a74899ad648d897cfe
+|===
+
+==== Phase 4 Beta after user deposit
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `2101162544`
+| Share token price | `10016873`
+| Share token supply | `2097623183`
+| User USDC balance | `99500000000`
+| User share balance | `499157771`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `1966510242`
+| XLM | `522820046`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `44439704`
+|===
+
+==== Phase 4 Beta before user deposit
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `2101162544`
+| Share token price | `10016873`
+| Share token supply | `2097623183`
+| User USDC balance | `100000000000`
+| User share balance | `0`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `1966510242`
+| XLM | `522820046`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `44439704`
+|===
+
+.Transaction
+[cols="1,2",options="header"]
+|===
+| Field | Value
+| Phase | Phase 4
+| Vault | Beta
+| Action | User deposit 2000000000 USDC units
+| Result | https://stellar.expert/explorer/testnet/tx/184bc41dd2beea683b8fe9e9707ca21447a72c5d580f83b5256f7ebc2a78a1f2
+|===
+
+==== Phase 4 Beta after user deposit
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `4101162544`
+| Share token price | `10016872`
+| Share token supply | `4094254511`
+| User USDC balance | `98000000000`
+| User share balance | `1996631283`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `3966510242`
+| XLM | `522820046`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `44439704`
+|===
+
+==== Phase 4 Beta before user deposit
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `4101162544`
+| Share token price | `10016872`
+| Share token supply | `4094254511`
+| User USDC balance | `100000000000`
+| User share balance | `0`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `3966510242`
+| XLM | `522820046`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `44439704`
+|===
+
+.Transaction
+[cols="1,2",options="header"]
+|===
+| Field | Value
+| Phase | Phase 4
+| Vault | Beta
+| Action | User deposit 750000000 USDC units
+| Result | https://stellar.expert/explorer/testnet/tx/183d2307b842aa71f06ca8374b4c480a1a6b25780e07ebe275fffb258ecd9805
+|===
+
+==== Phase 4 Beta after user deposit
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `4851162544`
+| Share token price | `10016872`
+| Share token supply | `4842991319`
+| User USDC balance | `99250000000`
+| User share balance | `748736731`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `4716510242`
+| XLM | `522820046`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `44439704`
+|===
+
+==== Phase 4 Beta before user deposit
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `4851162544`
+| Share token price | `10016872`
+| Share token supply | `4842991319`
+| User USDC balance | `99199999986`
+| User share balance | `800000000`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `4716510242`
+| XLM | `522820046`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `44439704`
+|===
+
+.Transaction
+[cols="1,2",options="header"]
+|===
+| Field | Value
+| Phase | Phase 4
+| Vault | Beta
+| Action | User deposit 1500000000 USDC units
+| Result | https://stellar.expert/explorer/testnet/tx/a9e1fefebfead5819b4c44a1fd51d7cce3ab7e74318217f35e21f7dcdebe9df2
+|===
+
+==== Phase 4 Beta after user deposit
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `6351162544`
+| Share token price | `10016872`
+| Share token supply | `6340464872`
+| User USDC balance | `97699999986`
+| User share balance | `2297473462`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `6216510242`
+| XLM | `522820046`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `44439704`
+|===
+
+==== Phase 4 Beta before user withdrawal
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `6351162544`
+| Share token price | `10016872`
+| Share token supply | `6340464872`
+| User USDC balance | `99500000000`
+| User share balance | `499157771`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `6216510242`
+| XLM | `522820046`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `44439704`
+|===
+
+.Transaction
+[cols="1,2",options="header"]
+|===
+| Field | Value
+| Phase | Phase 4
+| Vault | Beta
+| Action | User withdraw 100000000 shares
+| Result | https://stellar.expert/explorer/testnet/tx/5c0c78612214aa6ec642338ca0c3cbcc375b2438425b8cee87b795061c5cab90
+|===
+
+==== Phase 4 Beta after user withdrawal
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `6250993831`
+| Share token price | `10016871`
+| Share token supply | `6240465297`
+| User USDC balance | `99598045016`
+| User share balance | `399157771`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `6118465226`
+| XLM | `514574279`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `43738814`
+|===
+
+==== Phase 4 Beta before user withdrawal
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `6250993831`
+| Share token price | `10016871`
+| Share token supply | `6240465297`
+| User USDC balance | `98000000000`
+| User share balance | `1996631283`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `6118465226`
+| XLM | `514574279`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `43738814`
+|===
+
+.Transaction
+[cols="1,2",options="header"]
+|===
+| Field | Value
+| Phase | Phase 4
+| Vault | Beta
+| Action | User withdraw 800000000 shares
+| Result | https://stellar.expert/explorer/testnet/tx/2100184d19aa0e2b577cff7ef8d023fc660bcc00e464595f232644c98d16ae5d
+|===
+
+==== Phase 4 Beta after user withdrawal
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `5449644140`
+| Share token price | `10016871`
+| Share token supply | `5440465454`
+| User USDC balance | `98784360111`
+| User share balance | `1196631283`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `5334105115`
+| XLM | `448608139`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `38131692`
+|===
+
+==== Phase 4 Beta before user withdrawal
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `5449644140`
+| Share token price | `10016871`
+| Share token supply | `5440465454`
+| User USDC balance | `99250000000`
+| User share balance | `748736731`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `5334105115`
+| XLM | `448608139`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `38131692`
+|===
+
+.Transaction
+[cols="1,2",options="header"]
+|===
+| Field | Value
+| Phase | Phase 4
+| Vault | Beta
+| Action | User withdraw 300000000 shares
+| Result | https://stellar.expert/explorer/testnet/tx/1990ed5e3c257306ef5f037c871ce640c784047af7310b32485170d02a475a87
+|===
+
+==== Phase 4 Beta after user withdrawal
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `5149138014`
+| Share token price | `10016870`
+| Share token supply | `5140465573`
+| User USDC balance | `99544135035`
+| User share balance | `448736731`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `5039970080`
+| XLM | `423870837`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `36029022`
+|===
+
+==== Phase 4 Beta before user withdrawal
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `5149138014`
+| Share token price | `10016870`
+| Share token supply | `5140465573`
+| User USDC balance | `97699999986`
+| User share balance | `2297473462`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `5039970080`
+| XLM | `423870837`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `36029022`
+|===
+
+.Transaction
+[cols="1,2",options="header"]
+|===
+| Field | Value
+| Phase | Phase 4
+| Vault | Beta
+| Action | User withdraw 500000000 shares
+| Result | https://stellar.expert/explorer/testnet/tx/062c43bc61c9b4187f24ec9385aa41b026e0cbde4426966aae4d180f1ec4073d
+|===
+
+==== Phase 4 Beta after user withdrawal
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| NAV | `4648294480`
+| Share token price | `10016870`
+| Share token supply | `4640465686`
+| User USDC balance | `98190225034`
+| User share balance | `1797473462`
+| Blend strategy value | `0`
+| Soroswap LP strategy value | `0`
+| Phoenix LP strategy value | `0`
+|===
+
+.Idle vault balances
+[cols="1,1",options="header"]
+|===
+| Asset | Balance
+| USDC | `4549745032`
+| XLM | `382642001`
+| BTC | `0`
+| PYUSD | `0`
+| EURC | `0`
+| AQUA | `0`
+| USTRY | `32524571`
+|===
+
+== Testing Instructions
+
+Source deployment variables:
+
+[source,bash]
+----
+source /home/mohamed/smart-contracts-Stellar/deployments/testnet-protocol-environment-20260513-033555.env
+----
+
+Mint test USDC freely for any user:
+
+[source,bash]
+----
+stellar contract invoke --network testnet --source-account <payer> --id "CAEORPWP3QTSGIOPXTWMCQ5SJMB22PYV5WPFR6UU663EXK2KXDFCISSB" -- mint --to <G...USER> --amount 1000000000
+----
+
+Deposit USDC into a vault:
+
+[source,bash]
+----
+stellar contract invoke --network testnet --source-account <user-key> --id "CCOM44V4MXXPOK2IOLAI46QUAMKBKP47MYGQFKXQQVPNLOGSEIDTHBXX" -- deposit --amount 1000000000 --from <G...USER> --asset "CAEORPWP3QTSGIOPXTWMCQ5SJMB22PYV5WPFR6UU663EXK2KXDFCISSB" --min-shares-out 0
+----
+
+Withdraw shares after the 1 minute cooldown:
+
+[source,bash]
+----
+stellar contract invoke --network testnet --source-account <user-key> --id "CCOM44V4MXXPOK2IOLAI46QUAMKBKP47MYGQFKXQQVPNLOGSEIDTHBXX" -- withdraw --share_amount <shares> --from <G...USER> --to <G...USER> --min-base-out 0
+----
+
+Manager lending supply example:
+
+[source,bash]
+----
+stellar contract invoke --network testnet --source-account "deployer" --id "CCOM44V4MXXPOK2IOLAI46QUAMKBKP47MYGQFKXQQVPNLOGSEIDTHBXX" -- execute_op --caller "GB2HC2NLXR7LHKXGS2IZL4F5LZVQVKRBKCWONQQW4WIYUXDILHORWQPZ" --guard "CALOZLGGJ5PLYNN75XAAZ37ZFBCFEQGRKJ64AJ2NR2CGREM5746PLBD6" --fn-name supply --args '[{"i128":"300000000"}]'
+----
+
+Verify NAV and share price:
+
+[source,bash]
+----
+stellar contract invoke --network testnet --source-account "deployer" --id "CCOM44V4MXXPOK2IOLAI46QUAMKBKP47MYGQFKXQQVPNLOGSEIDTHBXX" -- get_nav
+stellar contract invoke --network testnet --source-account "deployer" --id "CCOM44V4MXXPOK2IOLAI46QUAMKBKP47MYGQFKXQQVPNLOGSEIDTHBXX" -- get_share_price
+----
