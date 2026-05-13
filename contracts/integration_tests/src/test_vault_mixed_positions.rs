@@ -490,17 +490,21 @@ fn entry_and_exit_fees_are_applied_to_user_deposit_and_withdraw() {
     let user_before = token_balance(&w.env, &w.base, &w.user);
     let withdrawn = w.vault.withdraw(&990_0000000i128, &w.user, &w.user, &0i128);
 
+    // 2% exit fee on 990 shares → fee_shares=19.8, net_shares=970.2
+    // user receives 970.2 / 1000 × 1000 USDC = 970.2 USDC
     assert_eq!(withdrawn, 970_2000000i128);
     assert_eq!(
         token_balance(&w.env, &w.base, &w.user) - user_before,
         970_2000000i128
     );
+    // vault retains the 29.8 USDC backed by treasury's fee shares
     assert_eq!(
         token_balance(&w.env, &w.base, &w.vault_addr),
         29_8000000i128
     );
     assert_eq!(shares.balance(&w.user), 0);
-    assert_eq!(shares.balance(&w.manager), 10_0000000i128);
+    // treasury holds entry fee shares (10) + exit fee shares (19.8) = 29.8
+    assert_eq!(shares.balance(&w.manager), 29_8000000i128);
 }
 
 #[test]

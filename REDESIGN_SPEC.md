@@ -133,22 +133,30 @@ share_price = NAV × PRICE_PRECISION / total_supply
 ## 6. Withdrawal Flow (Proportional Multi-Asset — dHedge V2 Model)
 
 ```
-1. shares_burned  = requested_amount
-2. total_supply   = share_token.total_supply()
-3. numerator      = shares_burned
-4. denominator    = total_supply
+1. share_amount  = requested_amount
+2. total_supply  = share_token.total_supply()
 
-5. BURN SHARES FIRST (reentrancy protection)
-   share_token.burn(user, shares_burned)
+3. Exit fee:
+   fee_shares = floor(share_amount × exit_fee_bps / 10_000)
+   net_shares = share_amount − fee_shares
+   numerator  = net_shares
+   denominator = total_supply
 
-6. Compute realized PnL before transfer:
-   avg_cost_per_share = user.cost_basis / (total_supply + shares_burned)
-   withdrawal_cost    = avg_cost_per_share × shares_burned
-   current_share_price = NAV_before × PRICE_PRECISION / total_supply
-   withdrawal_value   = shares_burned × current_share_price / PRICE_PRECISION
-   realized_gain      = withdrawal_value - withdrawal_cost
+4. Compute slippage estimate:
+   net_base = net_shares × share_price / PRICE_PRECISION
+   assert net_base >= min_base_out
+
+5. Compute realized PnL before share movements:
+   avg_cost_per_share = user.cost_basis / share_balance
+   withdrawal_cost    = avg_cost_per_share × share_amount
+   withdrawal_value   = net_base
+   realized_gain      = withdrawal_value − withdrawal_cost
    user.realized_pnl += realized_gain
    user.cost_basis   -= withdrawal_cost
+
+6. SHARE MOVEMENTS FIRST (reentrancy protection):
+   if fee_shares > 0: share_token.transfer(user → treasury, fee_shares)
+   share_token.burn(user, net_shares)
 
 7. For each asset ∈ PortfolioAssets:
       amount = floor(token_balance(vault, asset) × numerator / denominator)
@@ -158,10 +166,10 @@ share_price = NAV × PRICE_PRECISION / total_supply
       guard.withdraw_fraction(vault, numerator, denominator, user)
       // guard sends underlying tokens directly to user
 
-9. Apply exit fee (deducted from each asset proportionally or in base_asset)
-
-10. Emit WithdrawEvent
+9. Emit WithdrawEvent(shares_burned=net_shares, base_received=net_base)
 ```
+
+**Exit fee invariant:** fee shares remain in circulation held by treasury — they can be redeemed later at the prevailing share price. The share price is unchanged immediately after withdrawal because both supply and NAV decrease by exactly `net_shares / total_supply`.
 
 **No swaps. No auto-unwind. User receives native tokens from every position.**
 

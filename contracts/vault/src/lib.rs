@@ -1002,30 +1002,25 @@ impl Vault {
         Self::op_guard_pre_check(&env, &from, OP_WITHDRAW, nav);
         let share_price = Self::share_price(&env, nav, total_supply);
 
-        // Gross value and exit fee (fee fraction stays in vault).
+        // Exit fee: fee_shares go to treasury as explicit shares; user burns net_shares.
         let exit_fee_bps = get_exit_fee_bps(&env) as i128;
-        // Effective numerator after exit fee: shares_burned × (1 − fee).
-        // We apply this to each asset transfer individually.
-        let numerator = checked_mul_div(
+        let fee_shares = checked_mul_div(
             &env,
             share_amount,
-            FEE_DENOMINATOR as i128 - exit_fee_bps,
+            exit_fee_bps,
             FEE_DENOMINATOR as i128,
         );
+        let net_shares = checked_sub(&env, share_amount, fee_shares);
+        // numerator/denominator drive proportional asset transfers.
+        let numerator = net_shares;
         let denominator = total_supply;
 
-        if numerator <= 0 {
+        if net_shares <= 0 {
             panic_with_error!(&env, VaultError::InvalidAmount);
         }
 
         // Slippage: approximate base-asset value to be received.
-        let gross_base = checked_mul_div(&env, share_amount, share_price, PRICE_PRECISION);
-        let net_base = checked_mul_div(
-            &env,
-            gross_base,
-            FEE_DENOMINATOR as i128 - exit_fee_bps,
-            FEE_DENOMINATOR as i128,
-        );
+        let net_base = checked_mul_div(&env, net_shares, share_price, PRICE_PRECISION);
         if min_base_out > 0 && net_base < min_base_out {
             panic_with_error!(&env, VaultError::SlippageTooHigh);
         }
@@ -1046,8 +1041,13 @@ impl Vault {
             set_user_position(&env, &from, &pos);
         }
 
-        // BURN SHARES FIRST (reentrancy protection).
+        // Burn full share_amount from user; mint fee_shares to treasury (reentrancy protection).
+        // Using burn+mint avoids requiring share transfers to be enabled.
+        let treasury = get_treasury(&env);
         share::burn(&env, &share_token, &from, share_amount);
+        if fee_shares > 0 {
+            share::mint(&env, &share_token, &treasury, fee_shares);
+        }
 
         let portfolio = get_portfolio_assets(&env);
 
@@ -1102,7 +1102,7 @@ impl Vault {
             Self::op_guard_post_checkpoint(&env, &from, OP_WITHDRAW, nav_after);
         }
 
-        withdraw_event(&env, &to, share_amount, net_base);
+        withdraw_event(&env, &to, net_shares, net_base);
 
         net_base
     }

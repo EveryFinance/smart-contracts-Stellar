@@ -72,10 +72,35 @@ Security-critical behavior:
 - `remove_active_guard(caller, guard)`
 - `set_authorized_ops(caller, guard, ops)`
 
+### Fee model
+
+**Entry fee** (`entry_fee_bps`, max 500 bps): charged on deposit.
+- `fee_shares = total_shares_minted × bps / 10_000`
+- `user_shares = total_shares − fee_shares`
+- `fee_shares` minted directly to treasury; `user_shares` minted to depositor.
+- Share price is unchanged immediately after deposit.
+
+**Exit fee** (`exit_fee_bps`, max 500 bps): charged on withdrawal.
+- `fee_shares = share_amount × bps / 10_000`
+- `net_shares = share_amount − fee_shares`
+- `fee_shares` transferred from user to treasury (stays in circulation).
+- `net_shares` burned from user.
+- Proportional asset transfers use `net_shares / total_supply` as the redemption ratio.
+- Share price is unchanged immediately after withdrawal.
+
+**Management fee** (`mgmt_fee_bps`, max 300 bps): streaming annual fee accrued on every NAV snapshot.
+- `fee_value = NAV × bps × elapsed_seconds / (10_000 × SECONDS_PER_YEAR)`
+- Converted to shares at current share price and minted to treasury.
+
+**Performance fee** (`perf_fee_bps`, max 3000 bps): high-water mark fee on share-price gains.
+- Only charged when share price exceeds the all-time high stored at last accrual.
+- `fee_value = total_supply × price_gain × bps / (PRICE_PRECISION × 10_000)`
+- Minted to treasury as shares; high-water mark updated to current price.
+
 ### Fee configuration (manager)
 
 - `set_entry_fee_bps`, `set_exit_fee_bps`, `set_mgmt_fee_bps`, `set_perf_fee_bps` — decrease-only direct setters
-- `announce_fee_increase(entry, exit, mgmt, perf)`, `commit_fee_increase`, `renounce_fee_increase` — timelock flow for increases
+- `announce_fee_increase(entry, exit, mgmt, perf)`, `commit_fee_increase`, `renounce_fee_increase` — timelock flow for increases (86 400 s delay)
 
 ### Fee settlement (permissionless)
 

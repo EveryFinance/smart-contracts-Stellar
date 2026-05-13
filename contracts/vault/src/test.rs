@@ -772,18 +772,25 @@ fn test_withdraw_burns_shares_returns_base() {
 fn test_withdraw_with_exit_fee() {
     let t = setup_with_fees(0, 100, 0, 0); // 1% exit
     let amount = 1_000_0000000i128;
-    let before_mgr_base = base(&t, &t.manager);
     t.vault.deposit(&amount, &t.user, &t.base, &0i128);
 
     let user_shares = shares(&t, &t.user);
+    let total_supply_before = user_shares; // no other holders yet
     let returned = t.vault.withdraw(&user_shares, &t.user, &t.user, &0i128);
 
-    // User gets (1 − 1%) of gross value.
-    let expected_net = amount * (10_000 - 100) / 10_000;
+    // fee_shares = user_shares × 100 / 10_000  (1%)
+    let fee_shares = user_shares * 100 / 10_000;
+    let net_shares = user_shares - fee_shares;
+
+    // User receives net_shares / total_supply × deposited_amount.
+    let expected_net = net_shares * amount / total_supply_before;
     assert_eq!(returned, expected_net);
-    // Fee stays in vault — manager's base balance is unchanged.
-    assert_eq!(base(&t, &t.manager), before_mgr_base);
-    // Fee residual (1%) remains in vault.
+
+    // Treasury (= manager in test setup) holds fee_shares as share tokens.
+    assert_eq!(shares(&t, &t.manager), fee_shares);
+
+    // Vault base balance equals the fee-share-backed residual (fee_shares / total_supply × amount).
+    // After burning net_shares the remaining supply = fee_shares, value = amount - expected_net.
     assert_eq!(base(&t, &t.vault_addr), amount - expected_net);
 }
 
