@@ -165,10 +165,28 @@ BLEND_V1_FIXED_POOL_ID="CDVQVKOY2YSXS2IC7KN6MNASSHPAO7UN2UR2ON4OI2SKMFJNVAMDX6DP
 BLEND_V2_FIXED_POOL_ID="CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD"
 BLEND_POOL_ID="${BLEND_POOL_ID:-$BLEND_V2_FIXED_POOL_ID}"
 
-# Phoenix DEX pools (pass as execute_op arg at runtime, not needed here)
-#   Check https://app.phoenix-hub.io for current pool addresses
-PHOENIX_ALPHA_POOL_ID="${PHOENIX_ALPHA_POOL_ID:-}"   # recommended: XLM/USDC pool
-PHOENIX_BETA_POOL_ID="${PHOENIX_BETA_POOL_ID:-}"     # recommended: EURC/USDC pool
+# Phoenix DEX pools (pass as execute_op arg at runtime, not needed at deploy time)
+#   Source: https://github.com/Phoenix-Protocol-Group/phoenix-contracts/blob/main/scripts/upgrade_mainnet.sh
+#
+#   Factory:    CB4SVAWJA6TSRNOJZ7W2AWFW46D5VR4ZMFZKDIKXEINZCZEGZCJZCKMI
+#   Multihop:   CCLZRD4E72T7JCZCN3P7KNPYNXFYKQCL64ECLX7WP5GNVYPYJGU2IO2G
+#
+#   XLM/USDC:   CBHCRSVX3ZZ7EGTSYMKPEFGZNWRVCSESQR3UABET4MIW52N4EVU6BIZX
+#   XLM/EURC:   CBISULYO5ZGS32WTNCBMEFCNKNSLFXCQ4Z3XHVDP4X4FLPSEALGSY3PS
+#   PHO/USDC:   CD5XNKK3B6BEF2N7ULNHHGAMOKZ7P6456BFNIHRF4WNTEDKBRWAE7IAA
+#   XLM/PHO:    CBCZGGNOEUZG4CAAE7TGTQQHETZMKUT4OIPFHHPKEUX46U4KXBBZ3GLH
+#   USDC/VEUR:  CDQLKNH3725BUP4HPKQKMM7OO62FDVXVTO7RCYPID527MZHJG2F3QBJW
+#   USDC/VCHF:  CBW5G5SO5SDYUGQVU7RMZ2KJ34POM3AMODOBIV2RQYG4KJDUUBVC3P2T
+#   XLM/USDX:   CDMXKSLG5GITGFYERUW2MRYOBUQCMRT2QE5Y4PU3QZ53EBFWUXAXUTBC
+#   EURX/USDC:  CC6MJZN3HFOJKXN42ANTSCLRFOMHLFXHWPNAX64DQNUEBDMUYMPHASAV
+#   XLM/EURX:   CB5QUVK5GS3IU23TMFZQ3P5J24YBBZP5PHUQAEJ2SP5K55PFTJRUQG2L
+#   XLM/GBPX:   CCKOC2LJTPDBKDHTL3M5UO7HFZ2WFIHSOKCELMKQP3TLCIVUBKOQL4HB
+#   GBPX/USDC:  CCUCE5H5CKW3S7JBESGCES6ZGDMWLNRY3HOFET3OH33MXZWKXNJTKSM3
+#
+# Alpha vault uses XLM/USDC; Beta vault uses XLM/EURC.
+# Override with PHOENIX_ALPHA_POOL_ID / PHOENIX_BETA_POOL_ID env vars.
+PHOENIX_ALPHA_POOL_ID="${PHOENIX_ALPHA_POOL_ID:-CBHCRSVX3ZZ7EGTSYMKPEFGZNWRVCSESQR3UABET4MIW52N4EVU6BIZX}"
+PHOENIX_BETA_POOL_ID="${PHOENIX_BETA_POOL_ID:-CBISULYO5ZGS32WTNCBMEFCNKNSLFXCQ4Z3XHVDP4X4FLPSEALGSY3PS}"
 
 # ---------------------------------------------------------------------------
 # Output files
@@ -541,8 +559,10 @@ write_report() {
     printf '| Blend V2 Fixed XLM-USDC  | `%s`\n' "$BLEND_V2_FIXED_POOL_ID"
     printf '| Blend V2 YieldBlox pool  | `CCCCIQSDILITHMM7PBSLVDT5MISSY7R26MNZXCX4H7J5JQ5FPIYOGYFS`\n'
     printf '| Active Blend pool (default V2 Fixed) | `%s`\n' "$BLEND_POOL_ID"
-    printf '| Phoenix Alpha Pool       | `%s`\n' "${PHOENIX_ALPHA_POOL_ID:-TBD — check app.phoenix-hub.io}"
-    printf '| Phoenix Beta Pool        | `%s`\n' "${PHOENIX_BETA_POOL_ID:-TBD — check app.phoenix-hub.io}"
+    printf '| Phoenix Factory          | `CB4SVAWJA6TSRNOJZ7W2AWFW46D5VR4ZMFZKDIKXEINZCZEGZCJZCKMI`\n'
+    printf '| Phoenix Multihop         | `CCLZRD4E72T7JCZCN3P7KNPYNXFYKQCL64ECLX7WP5GNVYPYJGU2IO2G`\n'
+    printf '| Phoenix Alpha Pool (XLM/USDC)  | `%s`\n' "$PHOENIX_ALPHA_POOL_ID"
+    printf '| Phoenix Beta Pool (XLM/EURC)   | `%s`\n' "$PHOENIX_BETA_POOL_ID"
     printf "|===\n\n"
 
     printf "WARNING: Blend V1 YieldBlox pool (CBP7NO6F7...) was exploited in February 2026.\n"
@@ -552,7 +572,7 @@ write_report() {
     printf "* [ ] Verify all asset SAC addresses on stellar.expert/explorer/public\n"
     printf "* [ ] Confirm Reflector has price feeds for EURC, AQUA, BTC on mainnet\n"
     printf "* [ ] Confirm Soroswap router address at docs.soroswap.finance\n"
-    printf "* [ ] Identify Phoenix pool addresses via app.phoenix-hub.io\n"
+    printf "* [ ] Verify Phoenix pool addresses still current at app.phoenix-hub.io\n"
     printf "* [ ] Seed deposit made to each vault (factory seed_deposit)\n"
     printf "* [ ] Test execute_op with small amounts before opening to users\n"
     printf "* [ ] ReflectorAdapter freshness window (%s s) matches Reflector update rate\n" "$REFLECTOR_MAX_AGE_SECS"
