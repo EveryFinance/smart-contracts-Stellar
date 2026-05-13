@@ -352,7 +352,7 @@ deploy_vault_stack() {
     exit 1
   fi
 
-  invoke "$MANAGER_SIGNER" --id "$vault_id" -- set_oracle --caller "$MANAGER_ADDR" --oracle "$ORACLE_ID" >/dev/null
+  invoke "$ADMIN_SIGNER" --id "$vault_id" -- set_oracle --caller "$ADMIN_ADDR" --oracle "$ORACLE_ID" >/dev/null
   invoke "$MANAGER_SIGNER" --id "$vault_id" -- set_exit_cooldown_secs --caller "$MANAGER_ADDR" --secs "$COOLDOWN_SECS" >/dev/null
   invoke "$ADMIN_SIGNER" --id "$vault_id" -- set_share_transfers_enabled --caller "$ADMIN_ADDR" --enabled false >/dev/null
   invoke "$ADMIN_SIGNER" --id "$FACTORY_ID" -- verify_and_register_vault --caller "$ADMIN_ADDR" --vault "$vault_id" >/dev/null

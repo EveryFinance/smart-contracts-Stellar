@@ -1758,14 +1758,14 @@ impl Vault {
     /// strategy that has a price token registered via [`set_strategy_oracle_token`].
     ///
     /// # Errors
-    /// * [`VaultError::NotManager`]
+    /// * [`VaultError::NotAdmin`]
     pub fn set_oracle(env: Env, caller: Address, oracle: Address) {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         caller.require_auth();
-        if caller != get_manager(&env) {
-            panic_with_error!(&env, VaultError::NotManager);
+        if caller != get_admin(&env) {
+            panic_with_error!(&env, VaultError::NotAdmin);
         }
         set_oracle(&env, &oracle);
     }
