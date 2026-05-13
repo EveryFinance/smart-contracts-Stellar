@@ -467,12 +467,11 @@ impl PhoenixLpStrategy {
             panic_with_error!(&env, PhoenixLpError::NotVault);
         }
 
-        let position = get_position(&env, &pool)
-            .unwrap_or_else(|| panic_with_error!(&env, PhoenixLpError::NotInitialized));
+        let (pool_token_a, pool_token_b) = PhoenixPoolAdapter::new(&env, &pool).query_pool_assets();
 
-        let sell_a = if asset_in == position.asset_a && asset_out == position.asset_b {
+        let sell_a = if asset_in == pool_token_a && asset_out == pool_token_b {
             true
-        } else if asset_in == position.asset_b && asset_out == position.asset_a {
+        } else if asset_in == pool_token_b && asset_out == pool_token_a {
             false
         } else {
             panic_with_error!(&env, PhoenixLpError::InvalidAmount)

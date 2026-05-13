@@ -73,6 +73,13 @@ impl MockPhoenixPool {
         env.storage().instance().get(&DataKey::ShareToken).unwrap()
     }
 
+    pub fn query_pool_assets(env: Env) -> (Address, Address) {
+        require_initialized(&env);
+        let token_a: Address = env.storage().instance().get(&DataKey::TokenA).unwrap();
+        let token_b: Address = env.storage().instance().get(&DataKey::TokenB).unwrap();
+        (token_a, token_b)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn provide_liquidity(
         env: Env,

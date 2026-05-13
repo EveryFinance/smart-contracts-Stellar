@@ -22,8 +22,8 @@ COOLDOWN_SECS="${COOLDOWN_SECS:-60}"
 COOLDOWN_SLEEP_SECS="${COOLDOWN_SLEEP_SECS:-70}"
 WAIT_FOR_COOLDOWN="${WAIT_FOR_COOLDOWN:-true}"
 DEPLOY_ALPHA_GAMMA_AFTER_BETA="${DEPLOY_ALPHA_GAMMA_AFTER_BETA:-false}"
-STELLAR_RETRY_ATTEMPTS="${STELLAR_RETRY_ATTEMPTS:-4}"
-STELLAR_RETRY_SLEEP_SECS="${STELLAR_RETRY_SLEEP_SECS:-8}"
+STELLAR_RETRY_ATTEMPTS="${STELLAR_RETRY_ATTEMPTS:-6}"
+STELLAR_RETRY_SLEEP_SECS="${STELLAR_RETRY_SLEEP_SECS:-20}"
 
 USER1_KEY="${USER1_KEY:-protocol_demo_user_1}"
 USER2_KEY="${USER2_KEY:-protocol_demo_user_2}"
@@ -76,7 +76,7 @@ stellar_retry() {
     status=$?
     cat "$err_file" >&2
     if [[ "$attempt" -lt "$STELLAR_RETRY_ATTEMPTS" ]] &&
-      rg -qi 'request timeout|timeout|temporarily unavailable|rate limit|connection reset|deadline' "$err_file"; then
+      rg -qi 'request timeout|timeout|temporarily unavailable|rate limit|connection reset|deadline|dns error|name resolution|failed to lookup|network.*error|low-level protocol' "$err_file"; then
       log "Retrying Stellar CLI command after transient RPC error (attempt $attempt/$STELLAR_RETRY_ATTEMPTS)"
       sleep "$STELLAR_RETRY_SLEEP_SECS"
       : >"$out_file"
@@ -136,7 +136,8 @@ deploy_pkg_salted() {
 
 contract_id_for_salt() {
   local salt="$1"
-  stellar_retry contract id wasm --network "$NETWORK" --source-account "$SOURCE_ACCOUNT" --salt "$salt"
+  # Computed locally from deployer pubkey + salt — no network round-trip needed.
+  stellar contract id wasm --source-account "$SOURCE_ACCOUNT" --salt "$salt"
 }
 
 salt_for() {
@@ -332,6 +333,10 @@ deploy_vault_stack() {
   share_id="$(deploy_pkg "share-token" "${lower}-share-${TS}" --admin "$MANAGER_ADDR" --name "$label Vault Share" --symbol "${upper}SH" --decimals 7)"
   vault_salt="$(salt_for "${NETWORK}:${SOURCE_ACCOUNT}:${TS}:${lower}:vault")"
   predicted_vault_id="$(contract_id_for_salt "$vault_salt")"
+  if [[ -z "$predicted_vault_id" ]]; then
+    echo "Failed to predict vault id — contract_id_for_salt returned empty" >&2
+    exit 1
+  fi
   invoke "$MANAGER_SIGNER" --id "$share_id" -- set_admin --new-admin "$predicted_vault_id" >/dev/null
   params="$(vault_params_json "$label" "$share_id" "$predicted_vault_id")"
   vault_id="$(deploy_pkg_salted "vault" "${lower}-vault-${TS}" "$vault_salt" --params "$params")"
@@ -356,7 +361,7 @@ deploy_vault_stack() {
   blend_pool_id="$(deploy_pkg "mock-blend-pool" "${lower}-blend-pool-${TS}")"
   invoke "$MANAGER_SIGNER" --id "$blend_pool_id" -- initialize --admin "$MANAGER_ADDR" --token "$USDC_ID" >/dev/null
   blend_id="$(deploy_pkg "blend-strategy" "${lower}-blend-${TS}")"
-  invoke "$MANAGER_SIGNER" --id "$blend_id" -- initialize --vault "$vault_id" --asset "$USDC_ID" --protocol "$blend_pool_id" --name "$label USDC Lending" >/dev/null
+  invoke "$MANAGER_SIGNER" --id "$blend_id" -- initialize --vault "$vault_id" --name "$label USDC Lending" >/dev/null
 
   if [[ "$strategy_mode" == "all" ]]; then
     local pair_var="${pair_asset}_ID"
@@ -365,9 +370,6 @@ deploy_vault_stack() {
     soroswap_id="$(deploy_pkg "soroswap-lp-strategy" "${lower}-soroswap-lp-${TS}")"
     invoke "$MANAGER_SIGNER" --id "$soroswap_id" -- initialize \
       --vault "$vault_id" \
-      --asset-a "$USDC_ID" \
-      --asset-b "${!pair_var}" \
-      --lp-token "$soroswap_router_id" \
       --router "$soroswap_router_id" \
       --name "$label Soroswap LP" >/dev/null
 
@@ -377,9 +379,6 @@ deploy_vault_stack() {
     phoenix_id="$(deploy_pkg "phoenix-lp-strategy" "${lower}-phoenix-lp-${TS}")"
     invoke "$MANAGER_SIGNER" --id "$phoenix_id" -- initialize \
       --vault "$vault_id" \
-      --asset-a "$USDC_ID" \
-      --asset-b "${!rwa_var}" \
-      --phoenix-pool "$phoenix_pool_id" \
       --name "$label Phoenix LP" >/dev/null
   else
     soroswap_router_id=""
@@ -476,7 +475,9 @@ run_manager_actions() {
   local blend_var="${upper}_BLEND_ID"
   local pool_var="${upper}_BLEND_POOL_ID"
   local soroswap_var="${upper}_SOROSWAP_ID"
+  local soroswap_router_var="${upper}_SOROSWAP_ROUTER_ID"
   local phoenix_var="${upper}_PHOENIX_ID"
+  local phoenix_pool_var="${upper}_PHOENIX_POOL_ID"
   local pair_var="${upper}_PAIR_ASSET"
   local rwa_var="${upper}_RWA_ASSET"
   local pair_id_var="${!pair_var}_ID"
@@ -490,28 +491,31 @@ run_manager_actions() {
     append_tx_row "Phase 2" "$label" "Manager Soroswap mock swap USDC to ${!pair_var}" "$tx"
   fi
 
-  invoke_tx tx "$MANAGER_SIGNER" --id "${!vault_var}" -- execute_op --caller "$MANAGER_ADDR" --guard "${!blend_var}" --fn-name supply --args "[$(val_i128 300000000)]"
+  # supply/withdraw_from_lending: args [pool, asset, amount] — vault injects vault at front
+  invoke_tx tx "$MANAGER_SIGNER" --id "${!vault_var}" -- execute_op --caller "$MANAGER_ADDR" --guard "${!blend_var}" --fn-name supply --args "[$(val_address "${!pool_var}"),$(val_address "$USDC_ID"),$(val_i128 300000000)]"
   append_tx_row "Phase 2" "$label" "Manager lending supply" "$tx"
 
-  invoke_tx tx "$MANAGER_SIGNER" --id "${!vault_var}" -- execute_op --caller "$MANAGER_ADDR" --guard "${!blend_var}" --fn-name withdraw_from_lending --args "[$(val_i128 100000000)]"
+  # Withdraw the full amount so Blend has no remaining position before Phase 3.
+  invoke_tx tx "$MANAGER_SIGNER" --id "${!vault_var}" -- execute_op --caller "$MANAGER_ADDR" --guard "${!blend_var}" --fn-name withdraw_from_lending --args "[$(val_address "${!pool_var}"),$(val_address "$USDC_ID"),$(val_i128 300000000)]"
   append_tx_row "Phase 2" "$label" "Manager lending withdrawal" "$tx"
 
   if [[ -n "${!soroswap_var}" ]]; then
-    invoke_tx tx "$MANAGER_SIGNER" --id "${!vault_var}" -- execute_op --caller "$MANAGER_ADDR" --guard "${!soroswap_var}" --fn-name add_liquidity --args "[$(val_i128 50000000),$(val_i128 50000000),$(val_i128 0),$(val_i128 0)]"
+    # add_liquidity: args [lp_token, asset_a, asset_b, amount_a, amount_b, min_a, min_b]
+    invoke_tx tx "$MANAGER_SIGNER" --id "${!vault_var}" -- execute_op --caller "$MANAGER_ADDR" --guard "${!soroswap_var}" --fn-name add_liquidity --args "[$(val_address "${!soroswap_router_var}"),$(val_address "$USDC_ID"),$(val_address "${!pair_id_var}"),$(val_i128 50000000),$(val_i128 50000000),$(val_i128 0),$(val_i128 0)]"
     append_tx_row "Phase 2" "$label" "Manager add Soroswap LP liquidity" "$tx"
     local lp_balance
-    lp_balance="$(invoke_clean "$SOURCE_ACCOUNT" --id "${!soroswap_var}" -- get_lp_balance)"
+    lp_balance="$(invoke_clean "$SOURCE_ACCOUNT" --id "${!soroswap_var}" -- get_lp_balance --lp-token "${!soroswap_router_var}")"
     if [[ "$lp_balance" -gt 0 ]]; then
-      local remove_lp=$((lp_balance / 2))
-      if [[ "$remove_lp" -gt 0 ]]; then
-        invoke_tx tx "$MANAGER_SIGNER" --id "${!vault_var}" -- execute_op --caller "$MANAGER_ADDR" --guard "${!soroswap_var}" --fn-name remove_liquidity --args "[$(val_i128 "$remove_lp"),$(val_i128 0),$(val_i128 0)]"
-        append_tx_row "Phase 2" "$label" "Manager remove Soroswap LP liquidity" "$tx"
-      fi
+      # Remove ALL LP so Soroswap has no remaining position before Phase 3.
+      # remove_liquidity: args [lp_token, asset_a, asset_b, lp_amount, min_a, min_b]
+      invoke_tx tx "$MANAGER_SIGNER" --id "${!vault_var}" -- execute_op --caller "$MANAGER_ADDR" --guard "${!soroswap_var}" --fn-name remove_liquidity --args "[$(val_address "${!soroswap_router_var}"),$(val_address "$USDC_ID"),$(val_address "${!pair_id_var}"),$(val_i128 "$lp_balance"),$(val_i128 0),$(val_i128 0)]"
+      append_tx_row "Phase 2" "$label" "Manager remove Soroswap LP liquidity" "$tx"
     fi
   fi
 
   if [[ -n "${!phoenix_var}" ]]; then
-    invoke_tx tx "$MANAGER_SIGNER" --id "${!vault_var}" -- execute_op --caller "$MANAGER_ADDR" --guard "${!phoenix_var}" --fn-name swap --args "[$(val_bool true),$(val_i128 50000000),$(val_i128 0)]"
+    # swap: args [pool, asset_in, asset_out, amount_in, min_out]
+    invoke_tx tx "$MANAGER_SIGNER" --id "${!vault_var}" -- execute_op --caller "$MANAGER_ADDR" --guard "${!phoenix_var}" --fn-name swap --args "[$(val_address "${!phoenix_pool_var}"),$(val_address "$USDC_ID"),$(val_address "${!rwa_id_var}"),$(val_i128 50000000),$(val_i128 0)]"
     append_tx_row "Phase 2" "$label" "Manager Phoenix mock swap USDC to ${!rwa_var}" "$tx"
   fi
 

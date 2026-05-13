@@ -25,6 +25,16 @@ impl<'a> PhoenixPoolAdapter<'a> {
         )
     }
 
+    /// Returns (token_a, token_b) for this pool — used to determine swap direction.
+    pub fn query_pool_assets(&self) -> (Address, Address) {
+        let args = ().into_val(self.env);
+        self.env.invoke_contract(
+            self.pool,
+            &Symbol::new(self.env, "query_pool_assets"),
+            args,
+        )
+    }
+
     pub fn get_reserves(&self) -> (i128, i128) {
         let args = ().into_val(self.env);
         self.env
