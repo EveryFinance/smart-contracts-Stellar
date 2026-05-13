@@ -27,6 +27,9 @@ STELLAR_RETRY_SLEEP_SECS="${STELLAR_RETRY_SLEEP_SECS:-20}"
 
 USER1_KEY="${USER1_KEY:-protocol_demo_user_1}"
 USER2_KEY="${USER2_KEY:-protocol_demo_user_2}"
+USER3_KEY="${USER3_KEY:-protocol_demo_user_3}"
+USER4_KEY="${USER4_KEY:-protocol_demo_user_4}"
+USER5_KEY="${USER5_KEY:-protocol_demo_user_5}"
 USER_MINT_AMOUNT="${USER_MINT_AMOUNT:-100000000000}"
 MANAGER_MINT_AMOUNT="${MANAGER_MINT_AMOUNT:-100000000000}"
 USER_DEPOSIT_AMOUNT="${USER_DEPOSIT_AMOUNT:-1000000000}"
@@ -554,6 +557,24 @@ run_full_vault_flow() {
   log "Running $label Phase 3 withdrawal after manager actions"
   run_user_withdraw "Phase 3" "$label" "$USER2_KEY" "$USER2_ADDR" "$USER_WITHDRAW_SHARES"
 
+  # Phase 4: concurrent multi-user deposits (varying amounts), one cooldown wait, then withdrawals.
+  log "Running $label Phase 4 multi-user deposits"
+  run_user_deposit "Phase 4" "$label" "$USER3_KEY" "$USER3_ADDR" 500000000   # 50 USDC
+  run_user_deposit "Phase 4" "$label" "$USER4_KEY" "$USER4_ADDR" 2000000000  # 200 USDC
+  run_user_deposit "Phase 4" "$label" "$USER5_KEY" "$USER5_ADDR" 750000000   # 75 USDC
+  run_user_deposit "Phase 4" "$label" "$USER1_KEY" "$USER1_ADDR" 1500000000  # 150 USDC (user 1 re-enters)
+
+  if [[ "$WAIT_FOR_COOLDOWN" == "true" ]]; then
+    log "Waiting $COOLDOWN_SLEEP_SECS seconds for $label Phase 4 withdrawal cooldown"
+    sleep "$COOLDOWN_SLEEP_SECS"
+  fi
+
+  log "Running $label Phase 4 multi-user withdrawals"
+  run_user_withdraw "Phase 4" "$label" "$USER3_KEY" "$USER3_ADDR" 100000000   # partial
+  run_user_withdraw "Phase 4" "$label" "$USER4_KEY" "$USER4_ADDR" 800000000   # partial
+  run_user_withdraw "Phase 4" "$label" "$USER5_KEY" "$USER5_ADDR" 300000000   # partial
+  run_user_withdraw "Phase 4" "$label" "$USER1_KEY" "$USER1_ADDR" 500000000   # partial
+
   if [[ "$TX_FAILURES" -gt "$before_failures" ]]; then
     log "$label flow completed with $((TX_FAILURES - before_failures)) failed transaction(s)"
     return 1
@@ -575,6 +596,12 @@ write_env_file() {
     printf "USER1_ADDR=%s\n" "$USER1_ADDR"
     printf "USER2_KEY=%s\n" "$USER2_KEY"
     printf "USER2_ADDR=%s\n" "$USER2_ADDR"
+    printf "USER3_KEY=%s\n" "$USER3_KEY"
+    printf "USER3_ADDR=%s\n" "$USER3_ADDR"
+    printf "USER4_KEY=%s\n" "$USER4_KEY"
+    printf "USER4_ADDR=%s\n" "$USER4_ADDR"
+    printf "USER5_KEY=%s\n" "$USER5_KEY"
+    printf "USER5_ADDR=%s\n" "$USER5_ADDR"
     for label in USDC XLM BTC PYUSD EURC AQUA USTRY; do
       local id_var="${label}_ID"
       local price_var="PRICE_${label}"
@@ -610,6 +637,9 @@ write_report_header() {
     printf '| Treasury | `%s`\n' "$TREASURY_ADDR"
     printf '| User 1 | `%s`\n' "$USER1_ADDR"
     printf '| User 2 | `%s`\n' "$USER2_ADDR"
+    printf '| User 3 | `%s`\n' "$USER3_ADDR"
+    printf '| User 4 | `%s`\n' "$USER4_ADDR"
+    printf '| User 5 | `%s`\n' "$USER5_ADDR"
     printf "|===\n\n"
     printf "=== Mock Assets\n\n"
     printf "[cols=\"1,1,1\",options=\"header\"]\n|===\n| Asset | Contract | Initial price, 1e7 scale\n"
@@ -704,12 +734,18 @@ require_cmd cut
 log "Resolving role addresses"
 ensure_key "$USER1_KEY"
 ensure_key "$USER2_KEY"
+ensure_key "$USER3_KEY"
+ensure_key "$USER4_KEY"
+ensure_key "$USER5_KEY"
 MANAGER_ADDR="$(resolve_addr "$MANAGER_ACCOUNT")"
 TRADER_ADDR="$(resolve_addr "$TRADER_ACCOUNT")"
 TREASURY_ADDR="$(resolve_addr "$TREASURY_ACCOUNT")"
 ADMIN_ADDR="$(resolve_addr "$ADMIN_ACCOUNT")"
 USER1_ADDR="$(resolve_addr "$USER1_KEY")"
 USER2_ADDR="$(resolve_addr "$USER2_KEY")"
+USER3_ADDR="$(resolve_addr "$USER3_KEY")"
+USER4_ADDR="$(resolve_addr "$USER4_KEY")"
+USER5_ADDR="$(resolve_addr "$USER5_KEY")"
 
 log "Building release WASM artifacts"
 cargo build --target wasm32-unknown-unknown --release >/dev/null
@@ -736,7 +772,7 @@ for label in USDC XLM BTC PYUSD EURC AQUA USTRY; do
   set_price "${!id_var}" "${!price_var}"
 done
 
-for user in "$USER1_ADDR" "$USER2_ADDR"; do
+for user in "$USER1_ADDR" "$USER2_ADDR" "$USER3_ADDR" "$USER4_ADDR" "$USER5_ADDR"; do
   invoke "$SOURCE_ACCOUNT" --id "$USDC_ID" -- mint --to "$user" --amount "$USER_MINT_AMOUNT" >/dev/null
 done
 for label in USDC XLM BTC PYUSD EURC AQUA USTRY; do
