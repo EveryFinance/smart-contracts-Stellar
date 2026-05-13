@@ -1,4 +1,4 @@
-//! Testnet-only Phoenix-compatible pool mock.
+//! Testnet-only Phoenix-compatible pool mock with oracle-priced swaps.
 
 #![no_std]
 
@@ -16,6 +16,7 @@ pub enum DataKey {
     ReserveA,
     ReserveB,
     LastDepositor,
+    Oracle,
 }
 
 #[contracterror]
@@ -27,6 +28,8 @@ pub enum MockPhoenixError {
     InvalidAmount = 3,
     Slippage = 4,
 }
+
+const PRICE_PRECISION: i128 = 10_000_000;
 
 #[contract]
 pub struct MockPhoenixPool;
@@ -53,9 +56,25 @@ fn token_total_supply(env: &Env, token_id: &Address) -> i128 {
     )
 }
 
+/// Query the registered oracle for the USD price of `asset` (1e7 scale).
+fn oracle_price(env: &Env, asset: &Address) -> i128 {
+    let oracle: Address = env.storage().instance().get(&DataKey::Oracle).unwrap();
+    env.invoke_contract::<i128>(
+        &oracle,
+        &Symbol::new(env, "get_price"),
+        (asset.clone(),).into_val(env),
+    )
+}
+
 #[contractimpl]
 impl MockPhoenixPool {
-    pub fn __constructor(env: Env, share_token: Address, token_a: Address, token_b: Address) {
+    pub fn __constructor(
+        env: Env,
+        share_token: Address,
+        token_a: Address,
+        token_b: Address,
+        oracle: Address,
+    ) {
         if env.storage().instance().has(&DataKey::ShareToken) {
             panic_with_error!(&env, MockPhoenixError::AlreadyInitialized);
         }
@@ -64,6 +83,7 @@ impl MockPhoenixPool {
             .set(&DataKey::ShareToken, &share_token);
         env.storage().instance().set(&DataKey::TokenA, &token_a);
         env.storage().instance().set(&DataKey::TokenB, &token_b);
+        env.storage().instance().set(&DataKey::Oracle, &oracle);
         env.storage().instance().set(&DataKey::ReserveA, &0_i128);
         env.storage().instance().set(&DataKey::ReserveB, &0_i128);
     }
@@ -110,7 +130,13 @@ impl MockPhoenixPool {
         token::Client::new(&env, &token_a).transfer_from(&pool, &depositor, &pool, &amount_a);
         token::Client::new(&env, &token_b).transfer_from(&pool, &depositor, &pool, &amount_b);
 
-        let shares = amount_a.min(amount_b);
+        // LP shares = total USD value deposited (1e7 scale), so 1 LP ≈ 1 USD cent of pool value.
+        let price_a = oracle_price(&env, &token_a);
+        let price_b = oracle_price(&env, &token_b);
+        let value_a = amount_a * price_a / PRICE_PRECISION;
+        let value_b = amount_b * price_b / PRICE_PRECISION;
+        let shares = value_a + value_b;
+
         let share_token: Address = env.storage().instance().get(&DataKey::ShareToken).unwrap();
         mint_asset(&env, &share_token, &depositor, shares);
         env.storage()
@@ -160,8 +186,8 @@ impl MockPhoenixPool {
             .unwrap_or(0);
         let share_token: Address = env.storage().instance().get(&DataKey::ShareToken).unwrap();
         let total_shares = token_total_supply(&env, &share_token);
-        let amount_a = reserve_a * share_amount / total_shares;
-        let amount_b = reserve_b * share_amount / total_shares;
+        let amount_a = if total_shares > 0 { reserve_a * share_amount / total_shares } else { 0 };
+        let amount_b = if total_shares > 0 { reserve_b * share_amount / total_shares } else { 0 };
         if amount_a < min_a || amount_b < min_b {
             panic_with_error!(&env, MockPhoenixError::Slippage);
         }
@@ -221,7 +247,7 @@ impl MockPhoenixPool {
         require_initialized(&env);
         let _ = (max_spread_bps, deadline);
         sender.require_auth();
-        if offer_amount <= 0 || offer_amount < min_ask {
+        if offer_amount <= 0 {
             panic_with_error!(&env, MockPhoenixError::InvalidAmount);
         }
         let token_a: Address = env.storage().instance().get(&DataKey::TokenA).unwrap();
@@ -231,8 +257,18 @@ impl MockPhoenixPool {
         } else {
             (token_b, token_a)
         };
+
+        // Price-aware output: ask = offer * price_offer / price_ask
+        let price_offer = oracle_price(&env, &offer_token);
+        let price_ask = oracle_price(&env, &ask_token);
+        let ask_amount = offer_amount * price_offer / price_ask;
+
+        if ask_amount < min_ask {
+            panic_with_error!(&env, MockPhoenixError::Slippage);
+        }
+
         let pool = env.current_contract_address();
         token::Client::new(&env, &offer_token).transfer_from(&pool, &sender, &pool, &offer_amount);
-        mint_asset(&env, &ask_token, &recipient, offer_amount);
+        mint_asset(&env, &ask_token, &recipient, ask_amount);
     }
 }

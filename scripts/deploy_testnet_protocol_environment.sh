@@ -22,6 +22,10 @@ COOLDOWN_SECS="${COOLDOWN_SECS:-60}"
 COOLDOWN_SLEEP_SECS="${COOLDOWN_SLEEP_SECS:-70}"
 WAIT_FOR_COOLDOWN="${WAIT_FOR_COOLDOWN:-true}"
 DEPLOY_ALPHA_GAMMA_AFTER_BETA="${DEPLOY_ALPHA_GAMMA_AFTER_BETA:-false}"
+# Path to an existing singleton env file (AssetHandler, Oracle, Factory, mock assets).
+# When set, singleton deployment is skipped and addresses are sourced from that file.
+# When empty, singletons are deployed fresh.
+SINGLETON_ENV="${SINGLETON_ENV:-}"
 STELLAR_RETRY_ATTEMPTS="${STELLAR_RETRY_ATTEMPTS:-6}"
 STELLAR_RETRY_SLEEP_SECS="${STELLAR_RETRY_SLEEP_SECS:-20}"
 
@@ -378,7 +382,7 @@ deploy_vault_stack() {
 
     local rwa_var="${rwa_asset}_ID"
     phoenix_share_id="$(deploy_mock_asset "${lower}-phoenix-share" "$label Phoenix LP Share" "${upper}PLP")"
-    phoenix_pool_id="$(deploy_pkg "mock-phoenix-pool" "${lower}-phoenix-pool-${TS}" --share-token "$phoenix_share_id" --token-a "$USDC_ID" --token-b "${!rwa_var}")"
+    phoenix_pool_id="$(deploy_pkg "mock-phoenix-pool" "${lower}-phoenix-pool-${TS}" --share-token "$phoenix_share_id" --token-a "$USDC_ID" --token-b "${!rwa_var}" --oracle "$ORACLE_ID")"
     phoenix_id="$(deploy_pkg "phoenix-lp-strategy" "${lower}-phoenix-lp-${TS}")"
     invoke "$MANAGER_SIGNER" --id "$phoenix_id" -- initialize \
       --vault "$vault_id" \
@@ -750,35 +754,58 @@ USER5_ADDR="$(resolve_addr "$USER5_KEY")"
 log "Building release WASM artifacts"
 cargo build --target wasm32-unknown-unknown --release >/dev/null
 
-log "Deploying core protocol contracts"
-ASSET_HANDLER_ID="$(deploy_pkg "asset_handler" "asset-handler-${TS}" --admin "$ADMIN_ADDR")"
-ORACLE_ID="$(deploy_pkg "oracle" "oracle-${TS}" --admin "$ADMIN_ADDR")"
-FACTORY_ID="$(deploy_pkg "factory" "factory-${TS}" --admin "$ADMIN_ADDR" --asset-handler "\"$ASSET_HANDLER_ID\"")"
-invoke "$ADMIN_SIGNER" --id "$ASSET_HANDLER_ID" -- set_primary_oracle --caller "$ADMIN_ADDR" --oracle "$ORACLE_ID" >/dev/null
+# ── Singletons ─────────────────────────────────────────────────────────────────
+# AssetHandler, Oracle, Factory, and all mock assets are deployed once per
+# testnet environment.  Pass SINGLETON_ENV=<path> to reuse an existing set;
+# omit it to deploy everything fresh.
+if [[ -n "$SINGLETON_ENV" ]]; then
+  if [[ ! -f "$SINGLETON_ENV" ]]; then
+    echo "SINGLETON_ENV file not found: $SINGLETON_ENV" >&2
+    exit 1
+  fi
+  log "Sourcing existing singletons from $SINGLETON_ENV"
+  # shellcheck source=/dev/null
+  source "$SINGLETON_ENV"
+  # Mint fresh USDC to users and manager so they have funds for this run.
+  log "Minting USDC to users and manager from existing asset contracts"
+  for user in "$USER1_ADDR" "$USER2_ADDR" "$USER3_ADDR" "$USER4_ADDR" "$USER5_ADDR"; do
+    invoke "$SOURCE_ACCOUNT" --id "$USDC_ID" -- mint --to "$user" --amount "$USER_MINT_AMOUNT" >/dev/null
+  done
+  for label in USDC XLM BTC PYUSD EURC AQUA USTRY; do
+    id_var="${label}_ID"
+    invoke "$SOURCE_ACCOUNT" --id "${!id_var}" -- mint --to "$MANAGER_ADDR" --amount "$MANAGER_MINT_AMOUNT" >/dev/null
+  done
+else
+  log "Deploying core protocol contracts (fresh singletons)"
+  ASSET_HANDLER_ID="$(deploy_pkg "asset_handler" "asset-handler-${TS}" --admin "$ADMIN_ADDR")"
+  ORACLE_ID="$(deploy_pkg "oracle" "oracle-${TS}" --admin "$ADMIN_ADDR")"
+  FACTORY_ID="$(deploy_pkg "factory" "factory-${TS}" --admin "$ADMIN_ADDR" --asset-handler "\"$ASSET_HANDLER_ID\"")"
+  invoke "$ADMIN_SIGNER" --id "$ASSET_HANDLER_ID" -- set_primary_oracle --caller "$ADMIN_ADDR" --oracle "$ORACLE_ID" >/dev/null
 
-log "Deploying public-mint mock assets"
-USDC_ID="$(deploy_mock_asset "USDC" "Mock USD Coin" "USDC")"
-XLM_ID="$(deploy_mock_asset "XLM" "Mock Stellar Lumens" "XLM")"
-BTC_ID="$(deploy_mock_asset "BTC" "Mock Bitcoin" "BTC")"
-PYUSD_ID="$(deploy_mock_asset "PYUSD" "Mock PayPal USD" "PYUSD")"
-EURC_ID="$(deploy_mock_asset "EURC" "Mock Euro Coin" "EURC")"
-AQUA_ID="$(deploy_mock_asset "AQUA" "Mock Aquarius" "AQUA")"
-USTRY_ID="$(deploy_mock_asset "USTRY" "Mock Etherfuse USTRY" "USTRY")"
+  log "Deploying public-mint mock assets"
+  USDC_ID="$(deploy_mock_asset "USDC" "Mock USD Coin" "USDC")"
+  XLM_ID="$(deploy_mock_asset "XLM" "Mock Stellar Lumens" "XLM")"
+  BTC_ID="$(deploy_mock_asset "BTC" "Mock Bitcoin" "BTC")"
+  PYUSD_ID="$(deploy_mock_asset "PYUSD" "Mock PayPal USD" "PYUSD")"
+  EURC_ID="$(deploy_mock_asset "EURC" "Mock Euro Coin" "EURC")"
+  AQUA_ID="$(deploy_mock_asset "AQUA" "Mock Aquarius" "AQUA")"
+  USTRY_ID="$(deploy_mock_asset "USTRY" "Mock Etherfuse USTRY" "USTRY")"
 
-for label in USDC XLM BTC PYUSD EURC AQUA USTRY; do
-  id_var="${label}_ID"
-  price_var="PRICE_${label}"
-  register_asset_everywhere "${!id_var}"
-  set_price "${!id_var}" "${!price_var}"
-done
+  for label in USDC XLM BTC PYUSD EURC AQUA USTRY; do
+    id_var="${label}_ID"
+    price_var="PRICE_${label}"
+    register_asset_everywhere "${!id_var}"
+    set_price "${!id_var}" "${!price_var}"
+  done
 
-for user in "$USER1_ADDR" "$USER2_ADDR" "$USER3_ADDR" "$USER4_ADDR" "$USER5_ADDR"; do
-  invoke "$SOURCE_ACCOUNT" --id "$USDC_ID" -- mint --to "$user" --amount "$USER_MINT_AMOUNT" >/dev/null
-done
-for label in USDC XLM BTC PYUSD EURC AQUA USTRY; do
-  id_var="${label}_ID"
-  invoke "$SOURCE_ACCOUNT" --id "${!id_var}" -- mint --to "$MANAGER_ADDR" --amount "$MANAGER_MINT_AMOUNT" >/dev/null
-done
+  for user in "$USER1_ADDR" "$USER2_ADDR" "$USER3_ADDR" "$USER4_ADDR" "$USER5_ADDR"; do
+    invoke "$SOURCE_ACCOUNT" --id "$USDC_ID" -- mint --to "$user" --amount "$USER_MINT_AMOUNT" >/dev/null
+  done
+  for label in USDC XLM BTC PYUSD EURC AQUA USTRY; do
+    id_var="${label}_ID"
+    invoke "$SOURCE_ACCOUNT" --id "${!id_var}" -- mint --to "$MANAGER_ADDR" --amount "$MANAGER_MINT_AMOUNT" >/dev/null
+  done
+fi
 
 init_vault_stack_vars
 
