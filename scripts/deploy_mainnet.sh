@@ -9,9 +9,9 @@
 # 2. Registers real mainnet asset SAC addresses in AssetHandler and Factory.
 # 3. Sets the ReflectorAdapter as the on-chain price oracle (no manual prices).
 # 4. Deploys three vault stacks:
-#      Alpha — USDC / XLM / BTC      (Blend + Soroswap + Phoenix)
-#      Beta  — USDC / XLM / EURC     (Blend + Soroswap + Phoenix)
-#      Gamma — USDC                  (Blend-only)
+#      Alpha — USDC / XLM / BTC                    (Blend + Soroswap + Phoenix)
+#      Beta  — USDC / XLM / PYUSD / EURC / AQUA   (Blend + Soroswap + Phoenix)
+#      Gamma — USDC                                (Blend-only)
 # 5. Configures each vault: oracle (Reflector adapter), fees, cooldown,
 #    portfolio assets, deposit assets, guards, authorized ops.
 # 6. Writes a deployment env file and an AsciiDoc report.
@@ -80,7 +80,7 @@ ENTRY_FEE_BPS="${ENTRY_FEE_BPS:-0}"
 EXIT_FEE_BPS="${EXIT_FEE_BPS:-0}"
 MGMT_FEE_BPS="${MGMT_FEE_BPS:-200}"       # 2% annual
 PERF_FEE_BPS="${PERF_FEE_BPS:-1000}"      # 10% of gains
-COOLDOWN_SECS="${COOLDOWN_SECS:-86400}"   # 24 h default for mainnet
+COOLDOWN_SECS="${COOLDOWN_SECS:-60}"
 
 # ---------------------------------------------------------------------------
 # Singleton reuse
@@ -136,8 +136,11 @@ XLM_ID="${XLM_ID:-CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA}"
 EURC_ID="${EURC_ID:-CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV}"
 
 # AQUA — Aquarius governance token (issuer GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA)
-# NOTE: Verify Reflector has an AQUA price feed before including in a vault portfolio.
 AQUA_ID="${AQUA_ID:-CAUIKL3IYGMERDRUN6YSCLWVAKIFG5Q4YJHUKM4S4NJZQIA3BAS6OJPK}"
+
+# PYUSD — PayPal USD via Paxos (issuer GDQE7IXJ4HUHV6RQHIUPRJSEZE4DRS5WY577O2FY6YQ5LVWZ7JZTU2V5)
+# SAC verified: stellar contract id asset --asset PYUSD:GDQE7IXJ4... --network mainnet
+PYUSD_ID="${PYUSD_ID:-CCCRWH6Q3FNP3I2I57BDLM5AFAT7O6OF6GKQOC6SSJNDAVRZ57SPHGU2}"
 
 # BTC — Ultra Capital bridge (issuer GDPJALI4AZKUU2W426U5WKMAT6CN3AJRPIIRYR2YM54TL2GDWO5O2MZM)
 # Multiple BTC issuers exist on Stellar; override BTC_ID to use a different one.
@@ -512,10 +515,11 @@ write_report() {
     printf "== Mainnet Asset Addresses\n\n"
     printf "[cols=\"1,1,1\"]\n|===\n| Asset | SAC Address | Source\n"
     printf '| USDC  | `%s` | Circle / Soroswap token list\n' "$USDC_ID"
-    printf '| XLM   | `%s` | Native SAC / Blend mainnet.contracts.json\n' "$XLM_ID"
+    printf '| XLM   | `%s` | Native SAC\n' "$XLM_ID"
     printf '| EURC  | `%s` | Circle / Soroswap token list\n' "$EURC_ID"
     printf '| AQUA  | `%s` | Aquarius / Soroswap token list\n' "$AQUA_ID"
     printf '| BTC   | `%s` | Ultra Capital bridge / Soroswap token list\n' "$BTC_ID"
+    printf '| PYUSD | `%s` | Paxos / Soroswap token list\n' "$PYUSD_ID"
     printf "|===\n\n"
 
     printf "== Oracle\n\n"
@@ -613,8 +617,9 @@ XLM_COMPUTED="$(sac_address "native")"
 EURC_COMPUTED="$(sac_address "EURC:GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP")"
 AQUA_COMPUTED="$(sac_address "AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")"
 BTC_COMPUTED="$(sac_address "BTC:GDPJALI4AZKUU2W426U5WKMAT6CN3AJRPIIRYR2YM54TL2GDWO5O2MZM")"
+PYUSD_COMPUTED="$(sac_address "PYUSD:GDQE7IXJ4HUHV6RQHIUPRJSEZE4DRS5WY577O2FY6YQ5LVWZ7JZTU2V5")"
 
-for asset in USDC XLM EURC AQUA BTC; do
+for asset in USDC XLM EURC AQUA BTC PYUSD; do
   local_var="${asset}_ID"
   computed_var="${asset}_COMPUTED"
   if [[ "${!local_var}" != "${!computed_var}" ]]; then
@@ -668,7 +673,7 @@ else
 
   # Register all mainnet assets
   log "Registering mainnet assets with AssetHandler and Factory"
-  for asset_id in "$USDC_ID" "$XLM_ID" "$EURC_ID" "$AQUA_ID" "$BTC_ID"; do
+  for asset_id in "$USDC_ID" "$XLM_ID" "$EURC_ID" "$AQUA_ID" "$BTC_ID" "$PYUSD_ID"; do
     register_asset "$asset_id"
   done
 fi
@@ -681,8 +686,8 @@ init_vault_stack_vars
 log "Deploying Alpha vault (USDC / XLM / BTC — Blend + Soroswap + Phoenix)"
 deploy_vault_stack "Alpha" "USDC,XLM,BTC" "all"
 
-log "Deploying Beta vault (USDC / XLM / EURC — Blend + Soroswap + Phoenix)"
-deploy_vault_stack "Beta" "USDC,XLM,EURC" "all"
+log "Deploying Beta vault (USDC / XLM / PYUSD / EURC / AQUA — Blend + Soroswap + Phoenix)"
+deploy_vault_stack "Beta" "USDC,XLM,PYUSD,EURC,AQUA" "all"
 
 log "Deploying Gamma vault (USDC — Blend only)"
 deploy_vault_stack "Gamma" "USDC" "blend"
