@@ -46,8 +46,8 @@ use soroban_sdk::{
 
 use storage::{
     clear_pending_admin, get_admin, get_decimals, get_max_age_secs, get_pending_admin,
-    get_reflector_contract, is_initialized, set_admin, set_decimals, set_initialized,
-    set_max_age_secs, set_pending_admin, set_reflector_contract, INSTANCE_BUMP_AMOUNT,
+    get_reflector_contract, is_initialized, set_admin, set_decimals,
+    set_max_age_secs, set_pending_admin, set_reflector_contract, DataKey, INSTANCE_BUMP_AMOUNT,
     INSTANCE_LIFETIME_THRESHOLD,
 };
 
@@ -95,26 +95,22 @@ impl ReflectorAdapter {
 
     /// Initialize the adapter.
     ///
-    /// Calls `reflector.decimals()` once and stores the result so every
-    /// subsequent `get_price` call avoids an extra cross-contract round-trip.
-    pub fn __constructor(env: Env, admin: Address, reflector: Address) {
+    /// `decimals` must match Reflector's reported precision (call `reflector.decimals()`
+    /// off-chain to confirm — mainnet Reflector returns 14). Use `refresh_decimals()`
+    /// after deployment if it ever needs updating.
+    pub fn __constructor(env: Env, admin: Address, reflector: Address, decimals: u32) {
         if is_initialized(&env) {
             panic_with_error!(&env, ReflectorAdapterError::AlreadyInitialized);
         }
         admin.require_auth();
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
-        // Query Reflector for its decimal precision.
-        let decimals: u32 =
-            env.invoke_contract(&reflector, &Symbol::new(&env, "decimals"), Vec::new(&env));
-
-        set_admin(&env, &admin);
-        set_reflector_contract(&env, &reflector);
-        set_decimals(&env, decimals);
-        set_max_age_secs(&env, DEFAULT_MAX_AGE_SECS);
-        set_initialized(&env);
+        // Write directly to avoid extend_ttl on brand-new persistent entries,
+        // which fails in a constructor (entry not yet in ledger footprint).
+        env.storage().persistent().set(&DataKey::Admin, &admin);
+        env.storage().persistent().set(&DataKey::ReflectorContract, &reflector);
+        env.storage().persistent().set(&DataKey::Decimals, &decimals);
+        env.storage().persistent().set(&DataKey::MaxAgeSecs, &DEFAULT_MAX_AGE_SECS);
+        env.storage().persistent().set(&DataKey::Initialized, &true);
     }
 
     // -----------------------------------------------------------------------

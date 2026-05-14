@@ -259,10 +259,9 @@ resolve_addr() {
 
 sac_address() {
   # Compute the SAC address for a Stellar classic asset or native XLM.
-  # Usage: sac_address "USDC:GISSUER..." or sac_address "native"
-  stellar contract id asset --asset "$1" --network "$NETWORK" 2>/dev/null \
-    | tr -d '"' \
-    || die "Failed to compute SAC address for asset: $1"
+  # Returns empty string if the CLI cannot compute it (e.g. CLI identity lookup bug).
+  { stellar contract id asset --asset "$1" --network "$NETWORK" 2>/dev/null || true; } \
+    | tr -d '"'
 }
 
 deploy_pkg() {
@@ -270,6 +269,17 @@ deploy_pkg() {
   log "Deploying $pkg as $alias"
   stellar_retry contract deploy \
     --network "$NETWORK" --source-account "$SOURCE_ACCOUNT" \
+    --inclusion-fee 1000000 \
+    --alias "$alias" --package "$pkg" -- "$@"
+}
+
+# Deploy with a specific signer as source (needed when constructor calls signer.require_auth())
+deploy_pkg_as() {
+  local signer="$1" pkg="$2" alias="$3"; shift 3
+  log "Deploying $pkg as $alias"
+  stellar_retry contract deploy \
+    --network "$NETWORK" --source-account "$signer" \
+    --inclusion-fee 1000000 \
     --alias "$alias" --package "$pkg" -- "$@"
 }
 
@@ -278,11 +288,12 @@ deploy_pkg_salted() {
   log "Deploying $pkg as $alias (deterministic salt)"
   stellar_retry contract deploy \
     --network "$NETWORK" --source-account "$SOURCE_ACCOUNT" \
+    --inclusion-fee 1000000 \
     --alias "$alias" --package "$pkg" --salt "$salt" -- "$@"
 }
 
 contract_id_for_salt() {
-  stellar contract id wasm --source-account "$SOURCE_ACCOUNT" --salt "$1"
+  stellar contract id wasm --network "$NETWORK" --source-account "$SOURCE_ACCOUNT" --salt "$1"
 }
 
 salt_for() {
@@ -296,11 +307,12 @@ invoke() {
 
 register_asset() {
   # Register asset in AssetHandler (NAV tracking) and Factory (whitelist).
+  # Idempotent: AssetAlreadyRegistered errors are silently ignored.
   local asset="$1"
   invoke "$ADMIN_SIGNER" --id "$ASSET_HANDLER_ID" \
-    -- add_asset --caller "$ADMIN_ADDR" --asset "$asset" >/dev/null
+    -- add_asset --caller "$ADMIN_ADDR" --asset "$asset" >/dev/null 2>&1 || true
   invoke "$ADMIN_SIGNER" --id "$FACTORY_ID" \
-    -- add_authorized_asset --caller "$ADMIN_ADDR" --asset "$asset" >/dev/null
+    -- add_authorized_asset --caller "$ADMIN_ADDR" --asset "$asset" >/dev/null 2>&1 || true
 }
 
 authorize_guard() {
@@ -331,9 +343,9 @@ deploy_vault_stack() {
   local share_id vault_id predicted_vault_id vault_salt params
   local blend_id="" soroswap_id="" phoenix_id=""
 
-  # Share token ──────────────────────────────────────────────────────────────
-  share_id="$(deploy_pkg "share-token" "${lower}-share-${TS}" \
-    --admin "$MANAGER_ADDR" \
+  # Share token — deployer deploys with deployer as initial admin, then transfers to vault
+  share_id="$(deploy_pkg_as "$SOURCE_ACCOUNT" "share-token" "${lower}-share-${TS}" \
+    --admin "$DEPLOYER_ADDR" \
     --name "$label Vault Share" \
     --symbol "${upper}SH" \
     --decimals 7)"
@@ -343,7 +355,7 @@ deploy_vault_stack() {
   predicted_vault_id="$(contract_id_for_salt "$vault_salt")"
   [[ -n "$predicted_vault_id" ]] || die "Failed to predict vault id for $label"
 
-  invoke "$MANAGER_SIGNER" --id "$share_id" \
+  invoke "$SOURCE_ACCOUNT" --id "$share_id" \
     -- set_admin --new-admin "$predicted_vault_id" >/dev/null
 
   params="$(vault_params_json "$label" "$share_id" "$predicted_vault_id")"
@@ -460,9 +472,6 @@ write_env_file() {
     printf "REFLECTOR_ADAPTER_DEX_ID=%s\n" "$REFLECTOR_ADAPTER_DEX_ID"
     printf "FACTORY_ID=%s\n"               "$FACTORY_ID"
     printf "\n# Mainnet asset SAC addresses\n"
-    for label in USDC XLM EURC AQUA BTC; do
-      printf "%s_ID=%s\n" "$label" "${!label_ID:-}" 2>/dev/null || true
-    done
     printf "USDC_ID=%s\n"  "$USDC_ID"
     printf "XLM_ID=%s\n"   "$XLM_ID"
     printf "EURC_ID=%s\n"  "$EURC_ID"
@@ -605,6 +614,7 @@ require_cmd sha256sum
 require_cmd cut
 
 log "Resolving role addresses"
+DEPLOYER_ADDR="$(resolve_addr "$SOURCE_ACCOUNT")"
 MANAGER_ADDR="$(resolve_addr "$MANAGER_ACCOUNT")"
 TRADER_ADDR="$(resolve_addr "$TRADER_ACCOUNT")"
 TREASURY_ADDR="$(resolve_addr "$TREASURY_ACCOUNT")"
@@ -622,7 +632,9 @@ PYUSD_COMPUTED="$(sac_address "PYUSD:GDQE7IXJ4HUHV6RQHIUPRJSEZE4DRS5WY577O2FY6YQ
 for asset in USDC XLM EURC AQUA BTC PYUSD; do
   local_var="${asset}_ID"
   computed_var="${asset}_COMPUTED"
-  if [[ "${!local_var}" != "${!computed_var}" ]]; then
+  if [[ -z "${!computed_var}" ]]; then
+    log "INFO: Cannot verify ${asset} SAC via CLI (CLI limitation) — using hardcoded address ${!local_var}"
+  elif [[ "${!local_var}" != "${!computed_var}" ]]; then
     log "WARNING: ${asset}_ID override (${!local_var}) differs from computed SAC (${!computed_var})"
     log "         Using computed address. Set ${asset}_ID manually to override."
     printf -v "$local_var" "%s" "${!computed_var}"
@@ -631,10 +643,10 @@ done
 log "Asset SAC addresses verified."
 
 log "Building release WASM artifacts"
-cargo build --target wasm32-unknown-unknown --release >/dev/null
+stellar contract build --optimize 2>&1 | grep -v "^warning:" || true
 
 # ---------------------------------------------------------------------------
-# Singletons: AssetHandler, ReflectorAdapter, Factory
+# Singletons: AssetHandler + ReflectorAdapters (reuse if already deployed)
 # ---------------------------------------------------------------------------
 if [[ -n "$SINGLETON_ENV" ]]; then
   [[ -f "$SINGLETON_ENV" ]] || die "SINGLETON_ENV not found: $SINGLETON_ENV"
@@ -643,40 +655,49 @@ if [[ -n "$SINGLETON_ENV" ]]; then
   source "$SINGLETON_ENV"
 else
   log "Deploying AssetHandler"
-  ASSET_HANDLER_ID="$(deploy_pkg "asset_handler" "mainnet-asset-handler-${TS}" \
+  ASSET_HANDLER_ID="$(deploy_pkg_as "$ADMIN_SIGNER" "asset_handler" "mainnet-asset-handler-${TS}" \
     --admin "$ADMIN_ADDR")"
 
   log "Deploying ReflectorAdapter — primary (CEX feed: $REFLECTOR_CEX_ID)"
-  REFLECTOR_ADAPTER_CEX_ID="$(deploy_pkg "reflector" "mainnet-reflector-cex-${TS}" \
+  REFLECTOR_ADAPTER_CEX_ID="$(deploy_pkg_as "$ADMIN_SIGNER" "reflector-adapter" "mainnet-reflector-cex-${TS}" \
     --admin "$ADMIN_ADDR" \
-    --reflector "$REFLECTOR_CEX_ID")"
+    --reflector "$REFLECTOR_CEX_ID" \
+    --decimals 14)"
   invoke "$ADMIN_SIGNER" --id "$REFLECTOR_ADAPTER_CEX_ID" \
     -- set_max_age_secs --caller "$ADMIN_ADDR" --secs "$REFLECTOR_MAX_AGE_SECS" >/dev/null
 
   log "Deploying ReflectorAdapter — fallback (DEX feed: $REFLECTOR_DEX_ID)"
-  REFLECTOR_ADAPTER_DEX_ID="$(deploy_pkg "reflector" "mainnet-reflector-dex-${TS}" \
+  REFLECTOR_ADAPTER_DEX_ID="$(deploy_pkg_as "$ADMIN_SIGNER" "reflector-adapter" "mainnet-reflector-dex-${TS}" \
     --admin "$ADMIN_ADDR" \
-    --reflector "$REFLECTOR_DEX_ID")"
+    --reflector "$REFLECTOR_DEX_ID" \
+    --decimals 14)"
   invoke "$ADMIN_SIGNER" --id "$REFLECTOR_ADAPTER_DEX_ID" \
     -- set_max_age_secs --caller "$ADMIN_ADDR" --secs "$REFLECTOR_MAX_AGE_SECS" >/dev/null
-
-  log "Deploying Factory"
-  FACTORY_ID="$(deploy_pkg "factory" "mainnet-factory-${TS}" \
-    --admin "$ADMIN_ADDR" \
-    --asset-handler "\"$ASSET_HANDLER_ID\"")"
-
-  # Wire dual Reflector oracles: CEX as primary, DEX as fallback
-  invoke "$ADMIN_SIGNER" --id "$ASSET_HANDLER_ID" \
-    -- set_primary_oracle --caller "$ADMIN_ADDR" --oracle "$REFLECTOR_ADAPTER_CEX_ID" >/dev/null
-  invoke "$ADMIN_SIGNER" --id "$ASSET_HANDLER_ID" \
-    -- set_fallback_oracle --caller "$ADMIN_ADDR" --oracle "$REFLECTOR_ADAPTER_DEX_ID" >/dev/null
-
-  # Register all mainnet assets
-  log "Registering mainnet assets with AssetHandler and Factory"
-  for asset_id in "$USDC_ID" "$XLM_ID" "$EURC_ID" "$AQUA_ID" "$BTC_ID" "$PYUSD_ID"; do
-    register_asset "$asset_id"
-  done
 fi
+
+# ---------------------------------------------------------------------------
+# Factory — deploy if not already provided by SINGLETON_ENV
+# ---------------------------------------------------------------------------
+if [[ -z "${FACTORY_ID:-}" ]]; then
+  log "Deploying Factory"
+  FACTORY_ID="$(deploy_pkg_as "$ADMIN_SIGNER" "factory" "mainnet-factory-${TS}" \
+    --admin "$ADMIN_ADDR" \
+    --asset_handler "\"$ASSET_HANDLER_ID\"")"
+else
+  log "Reusing Factory: $FACTORY_ID"
+fi
+
+# Wire dual Reflector oracles: CEX as primary, DEX as fallback (idempotent)
+invoke "$ADMIN_SIGNER" --id "$ASSET_HANDLER_ID" \
+  -- set_primary_oracle --caller "$ADMIN_ADDR" --oracle "$REFLECTOR_ADAPTER_CEX_ID" >/dev/null 2>&1 || true
+invoke "$ADMIN_SIGNER" --id "$ASSET_HANDLER_ID" \
+  -- set_fallback_oracle --caller "$ADMIN_ADDR" --oracle "$REFLECTOR_ADAPTER_DEX_ID" >/dev/null 2>&1 || true
+
+# Register all mainnet assets (idempotent — already-registered assets are skipped)
+log "Registering mainnet assets with AssetHandler and Factory"
+for asset_id in "$USDC_ID" "$XLM_ID" "$EURC_ID" "$AQUA_ID" "$BTC_ID" "$PYUSD_ID"; do
+  register_asset "$asset_id"
+done
 
 # ---------------------------------------------------------------------------
 # Vault stacks

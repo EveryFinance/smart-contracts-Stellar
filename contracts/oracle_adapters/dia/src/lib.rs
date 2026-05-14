@@ -54,8 +54,8 @@ use soroban_sdk::{
 use storage::{
     clear_pending_admin, get_admin, get_asset_key, get_dia_contract, get_max_age_secs,
     get_pending_admin, is_initialized, remove_asset_key, set_admin, set_asset_key,
-    set_dia_contract, set_initialized, set_max_age_secs, set_pending_admin, INSTANCE_BUMP_AMOUNT,
-    INSTANCE_LIFETIME_THRESHOLD,
+    set_dia_contract, set_initialized, set_max_age_secs, set_pending_admin, DataKey,
+    INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
 };
 
 /// Protocol price precision: 7 decimal places (Stellar native).
@@ -94,14 +94,13 @@ impl DiaAdapter {
             panic_with_error!(&env, DiaAdapterError::AlreadyInitialized);
         }
         admin.require_auth();
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
-        set_admin(&env, &admin);
-        set_dia_contract(&env, &dia_contract);
-        set_max_age_secs(&env, DEFAULT_MAX_AGE_SECS);
-        set_initialized(&env);
+        // Write directly to avoid extend_ttl on brand-new persistent entries,
+        // which fails in a constructor (entry not yet in ledger footprint).
+        env.storage().persistent().set(&DataKey::Admin, &admin);
+        env.storage().persistent().set(&DataKey::DiaContract, &dia_contract);
+        env.storage().persistent().set(&DataKey::MaxAgeSecs, &DEFAULT_MAX_AGE_SECS);
+        env.storage().persistent().set(&DataKey::Initialized, &true);
     }
 
     // -----------------------------------------------------------------------
