@@ -94,18 +94,25 @@ STELLAR_RETRY_ATTEMPTS="${STELLAR_RETRY_ATTEMPTS:-6}"
 STELLAR_RETRY_SLEEP_SECS="${STELLAR_RETRY_SLEEP_SECS:-30}"
 
 # ---------------------------------------------------------------------------
-# Reflector on-chain oracle
+# Reflector on-chain oracles (primary + fallback)
 #
-# Using "External CEXs & DEXs" feed — aggregated off-chain + DEX prices.
 # Source: https://developers.stellar.org/docs/data/oracles/oracle-providers
 #
-# Alternative (on-chain Stellar DEX only):
-#   CALI2BYU2JE6WVRUFYTS6MSBNEHGJ35P4AVCZYF3B6QOE3QKOB2PLE6M
+# Two independent Reflector feeds are deployed as separate adapters:
+#   Primary  — External CEXs & DEXs: aggregated off-chain + on-chain prices.
+#              Most data sources, best accuracy. Updates every ~5 minutes.
+#   Fallback — Stellar DEX only: pure on-chain SDEX prices, fully trustless.
+#              Used automatically when primary returns 0 or reverts.
+#
+# AssetHandler resolution order:
+#   per-asset oracle → primary (CEX) → fallback (DEX) → PriceNotAvailable
 # ---------------------------------------------------------------------------
-REFLECTOR_CONTRACT_ID="${REFLECTOR_CONTRACT_ID:-CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN}"
+REFLECTOR_CEX_ID="${REFLECTOR_CEX_ID:-CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN}"
+REFLECTOR_DEX_ID="${REFLECTOR_DEX_ID:-CALI2BYU2JE6WVRUFYTS6MSBNEHGJ35P4AVCZYF3B6QOE3QKOB2PLE6M}"
 
 # Max age (seconds) for a Reflector price to be considered fresh.
-# Reflector External/CEX updates every ~5 minutes; 1 h gives ample slack.
+# CEX feed updates every ~5 minutes; DEX feed updates every ledger (~6 s).
+# 1 h gives ample slack for both.
 REFLECTOR_MAX_AGE_SECS="${REFLECTOR_MAX_AGE_SECS:-3600}"
 
 # ---------------------------------------------------------------------------
@@ -344,9 +351,9 @@ deploy_vault_stack() {
     die "Vault id mismatch: predicted=$predicted_vault_id actual=$vault_id"
 
   # Post-deploy vault configuration ──────────────────────────────────────────
-  # Oracle — admin only; points to our ReflectorAdapter
+  # Oracle — admin only; points to the primary ReflectorAdapter (CEX feed)
   invoke "$ADMIN_SIGNER" --id "$vault_id" \
-    -- set_oracle --caller "$ADMIN_ADDR" --oracle "$REFLECTOR_ADAPTER_ID" >/dev/null
+    -- set_oracle --caller "$ADMIN_ADDR" --oracle "$REFLECTOR_ADAPTER_CEX_ID" >/dev/null
 
   invoke "$MANAGER_SIGNER" --id "$vault_id" \
     -- set_exit_cooldown_secs --caller "$MANAGER_ADDR" --secs "$COOLDOWN_SECS" >/dev/null
@@ -445,9 +452,10 @@ write_env_file() {
     printf "TREASURY_ADDR=%s\n"    "$TREASURY_ADDR"
     printf "ADMIN_ADDR=%s\n"       "$ADMIN_ADDR"
     printf "\n# Protocol singletons\n"
-    printf "ASSET_HANDLER_ID=%s\n"      "$ASSET_HANDLER_ID"
-    printf "REFLECTOR_ADAPTER_ID=%s\n"  "$REFLECTOR_ADAPTER_ID"
-    printf "FACTORY_ID=%s\n"            "$FACTORY_ID"
+    printf "ASSET_HANDLER_ID=%s\n"          "$ASSET_HANDLER_ID"
+    printf "REFLECTOR_ADAPTER_CEX_ID=%s\n" "$REFLECTOR_ADAPTER_CEX_ID"
+    printf "REFLECTOR_ADAPTER_DEX_ID=%s\n" "$REFLECTOR_ADAPTER_DEX_ID"
+    printf "FACTORY_ID=%s\n"               "$FACTORY_ID"
     printf "\n# Mainnet asset SAC addresses\n"
     for label in USDC XLM EURC AQUA BTC; do
       printf "%s_ID=%s\n" "$label" "${!label_ID:-}" 2>/dev/null || true
@@ -458,7 +466,8 @@ write_env_file() {
     printf "AQUA_ID=%s\n"  "$AQUA_ID"
     printf "BTC_ID=%s\n"   "$BTC_ID"
     printf "\n# External protocol addresses (runtime reference)\n"
-    printf "REFLECTOR_CONTRACT_ID=%s\n" "$REFLECTOR_CONTRACT_ID"
+    printf "REFLECTOR_CEX_ID=%s\n" "$REFLECTOR_CEX_ID"
+    printf "REFLECTOR_DEX_ID=%s\n" "$REFLECTOR_DEX_ID"
     printf "SOROSWAP_ROUTER_ID=%s\n"    "$SOROSWAP_ROUTER_ID"
     printf "BLEND_V1_FIXED_POOL_ID=%s\n" "$BLEND_V1_FIXED_POOL_ID"
     printf "BLEND_V2_FIXED_POOL_ID=%s\n" "$BLEND_V2_FIXED_POOL_ID"
@@ -494,10 +503,10 @@ write_report() {
 
     printf "== Protocol Singletons\n\n"
     printf "[cols=\"1,1\"]\n|===\n| Contract | Address\n"
-    printf '| AssetHandler      | `%s`\n' "$ASSET_HANDLER_ID"
-    printf '| ReflectorAdapter  | `%s`\n' "$REFLECTOR_ADAPTER_ID"
-    printf '| Factory           | `%s`\n' "$FACTORY_ID"
-    printf '| Reflector (upstream) | `%s`\n' "$REFLECTOR_CONTRACT_ID"
+    printf '| AssetHandler                  | `%s`\n' "$ASSET_HANDLER_ID"
+    printf '| ReflectorAdapter (primary/CEX) | `%s`\n' "$REFLECTOR_ADAPTER_CEX_ID"
+    printf '| ReflectorAdapter (fallback/DEX) | `%s`\n' "$REFLECTOR_ADAPTER_DEX_ID"
+    printf '| Factory                        | `%s`\n' "$FACTORY_ID"
     printf "|===\n\n"
 
     printf "== Mainnet Asset Addresses\n\n"
@@ -510,12 +519,13 @@ write_report() {
     printf "|===\n\n"
 
     printf "== Oracle\n\n"
-    printf "Prices sourced from Reflector (External CEXs + DEXs feed, SEP-40).\n"
-    printf "No manual price updates required.\n\n"
+    printf "Dual Reflector oracle setup — fully on-chain, no manual price updates.\n\n"
     printf "[cols=\"1,1\"]\n|===\n| Item | Value\n"
-    printf '| Reflector upstream  | `%s`\n' "$REFLECTOR_CONTRACT_ID"
-    printf '| ReflectorAdapter    | `%s`\n' "$REFLECTOR_ADAPTER_ID"
-    printf '| Price freshness max | %s seconds\n' "$REFLECTOR_MAX_AGE_SECS"
+    printf '| Reflector CEX upstream (primary)    | `%s`\n' "$REFLECTOR_CEX_ID"
+    printf '| ReflectorAdapter CEX (primary)      | `%s`\n' "$REFLECTOR_ADAPTER_CEX_ID"
+    printf '| Reflector DEX upstream (fallback)   | `%s`\n' "$REFLECTOR_DEX_ID"
+    printf '| ReflectorAdapter DEX (fallback)     | `%s`\n' "$REFLECTOR_ADAPTER_DEX_ID"
+    printf '| Price freshness max                 | %s seconds\n' "$REFLECTOR_MAX_AGE_SECS"
     printf "|===\n\n"
 
     printf "== Vault Configuration\n\n"
@@ -631,13 +641,18 @@ else
   ASSET_HANDLER_ID="$(deploy_pkg "asset_handler" "mainnet-asset-handler-${TS}" \
     --admin "$ADMIN_ADDR")"
 
-  log "Deploying ReflectorAdapter (wraps Reflector $REFLECTOR_CONTRACT_ID)"
-  REFLECTOR_ADAPTER_ID="$(deploy_pkg "reflector" "mainnet-reflector-adapter-${TS}" \
+  log "Deploying ReflectorAdapter — primary (CEX feed: $REFLECTOR_CEX_ID)"
+  REFLECTOR_ADAPTER_CEX_ID="$(deploy_pkg "reflector" "mainnet-reflector-cex-${TS}" \
     --admin "$ADMIN_ADDR" \
-    --reflector "$REFLECTOR_CONTRACT_ID")"
+    --reflector "$REFLECTOR_CEX_ID")"
+  invoke "$ADMIN_SIGNER" --id "$REFLECTOR_ADAPTER_CEX_ID" \
+    -- set_max_age_secs --caller "$ADMIN_ADDR" --secs "$REFLECTOR_MAX_AGE_SECS" >/dev/null
 
-  # Set freshness window (default 3600 s)
-  invoke "$ADMIN_SIGNER" --id "$REFLECTOR_ADAPTER_ID" \
+  log "Deploying ReflectorAdapter — fallback (DEX feed: $REFLECTOR_DEX_ID)"
+  REFLECTOR_ADAPTER_DEX_ID="$(deploy_pkg "reflector" "mainnet-reflector-dex-${TS}" \
+    --admin "$ADMIN_ADDR" \
+    --reflector "$REFLECTOR_DEX_ID")"
+  invoke "$ADMIN_SIGNER" --id "$REFLECTOR_ADAPTER_DEX_ID" \
     -- set_max_age_secs --caller "$ADMIN_ADDR" --secs "$REFLECTOR_MAX_AGE_SECS" >/dev/null
 
   log "Deploying Factory"
@@ -645,9 +660,11 @@ else
     --admin "$ADMIN_ADDR" \
     --asset-handler "\"$ASSET_HANDLER_ID\"")"
 
-  # Wire ReflectorAdapter as the primary oracle for AssetHandler
+  # Wire dual Reflector oracles: CEX as primary, DEX as fallback
   invoke "$ADMIN_SIGNER" --id "$ASSET_HANDLER_ID" \
-    -- set_primary_oracle --caller "$ADMIN_ADDR" --oracle "$REFLECTOR_ADAPTER_ID" >/dev/null
+    -- set_primary_oracle --caller "$ADMIN_ADDR" --oracle "$REFLECTOR_ADAPTER_CEX_ID" >/dev/null
+  invoke "$ADMIN_SIGNER" --id "$ASSET_HANDLER_ID" \
+    -- set_fallback_oracle --caller "$ADMIN_ADDR" --oracle "$REFLECTOR_ADAPTER_DEX_ID" >/dev/null
 
   # Register all mainnet assets
   log "Registering mainnet assets with AssetHandler and Factory"
