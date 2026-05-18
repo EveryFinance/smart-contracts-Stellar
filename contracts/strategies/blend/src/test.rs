@@ -6,7 +6,12 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, testutils::Address as _, Address, Env, String, Vec,
 };
 
-use crate::{BlendRequest, BlendStrategy, BlendStrategyClient};
+use soroban_sdk::Map;
+
+use crate::{
+    BlendPositions, BlendRequest, BlendReserve, BlendReserveConfig, BlendReserveData,
+    BlendStrategy, BlendStrategyClient, BLEND_B_RATE_PRECISION,
+};
 
 // ---------------------------------------------------------------------------
 // MockToken
@@ -185,6 +190,54 @@ impl MockBlendPool {
             .persistent()
             .get(&BlendKey::Supply(account))
             .unwrap_or(0)
+    }
+
+    pub fn get_reserve(env: Env, asset: Address) -> BlendReserve {
+        BlendReserve {
+            asset: asset.clone(),
+            config: BlendReserveConfig {
+                index: 0,
+                decimals: 7,
+                c_factor: 0,
+                l_factor: 0,
+                util: 0,
+                max_util: 0,
+                r_base: 0,
+                r_one: 0,
+                r_two: 0,
+                r_three: 0,
+                reactivity: 0,
+                supply_cap: i128::MAX,
+                enabled: true,
+            },
+            data: BlendReserveData {
+                b_rate: BLEND_B_RATE_PRECISION,
+                d_rate: 0,
+                ir_mod: 0,
+                b_supply: 0,
+                d_supply: 0,
+                backstop_credit: 0,
+                last_time: 0,
+            },
+            scalar: 10_000_000,
+        }
+    }
+
+    pub fn get_positions(env: Env, account: Address) -> BlendPositions {
+        let b_tokens: i128 = env
+            .storage()
+            .persistent()
+            .get(&BlendKey::Supply(account))
+            .unwrap_or(0);
+        let mut collateral: Map<u32, i128> = Map::new(&env);
+        if b_tokens > 0 {
+            collateral.set(0u32, b_tokens);
+        }
+        BlendPositions {
+            collateral,
+            liabilities: Map::new(&env),
+            supply: Map::new(&env),
+        }
     }
 }
 

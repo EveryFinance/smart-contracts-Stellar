@@ -9,7 +9,7 @@
 
 #![allow(dead_code)]
 
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, String, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Map, String, Vec};
 
 // ---------------------------------------------------------------------------
 // MockToken  (minimal SEP-41)
@@ -206,7 +206,7 @@ impl MockBlendPool {
             if req.request_type == 2 {
                 // Supply — pull tokens from `from` into the pool, record position.
                 // This mirrors the real Blend pool using the strategy's pre-approved allowance.
-                MockTokenClient::new(&env, &token).transfer_from(&pool, &from, &pool, &req.amount);
+                MockTokenClient::new(&env, &token).transfer(&from, &pool, &req.amount);
                 let bal: i128 = env
                     .storage()
                     .persistent()
@@ -237,6 +237,54 @@ impl MockBlendPool {
             .persistent()
             .get(&BlendKey::Supply(account))
             .unwrap_or(0)
+    }
+
+    pub fn get_reserve(env: Env, asset: Address) -> blend_strategy::BlendReserve {
+        blend_strategy::BlendReserve {
+            asset: asset.clone(),
+            config: blend_strategy::BlendReserveConfig {
+                index: 0,
+                decimals: 7,
+                c_factor: 0,
+                l_factor: 0,
+                util: 0,
+                max_util: 0,
+                r_base: 0,
+                r_one: 0,
+                r_two: 0,
+                r_three: 0,
+                reactivity: 0,
+                supply_cap: i128::MAX,
+                enabled: true,
+            },
+            data: blend_strategy::BlendReserveData {
+                b_rate: blend_strategy::BLEND_B_RATE_PRECISION,
+                d_rate: 0,
+                ir_mod: 0,
+                b_supply: 0,
+                d_supply: 0,
+                backstop_credit: 0,
+                last_time: 0,
+            },
+            scalar: 10_000_000,
+        }
+    }
+
+    pub fn get_positions(env: Env, account: Address) -> blend_strategy::BlendPositions {
+        let b_tokens: i128 = env
+            .storage()
+            .persistent()
+            .get(&BlendKey::Supply(account))
+            .unwrap_or(0);
+        let mut collateral: Map<u32, i128> = Map::new(&env);
+        if b_tokens > 0 {
+            collateral.set(0u32, b_tokens);
+        }
+        blend_strategy::BlendPositions {
+            collateral,
+            liabilities: Map::new(&env),
+            supply: Map::new(&env),
+        }
     }
 }
 
@@ -526,6 +574,20 @@ impl MockPhoenixPool {
             .instance()
             .set(&PhoenixKey::ReserveB, &new_reserve_b);
         (amount_a, amount_b)
+    }
+
+    pub fn query_pool_assets(env: Env) -> (Address, Address) {
+        let token_a: Address = env
+            .storage()
+            .instance()
+            .get(&PhoenixKey::UnderlyingA)
+            .unwrap();
+        let token_b: Address = env
+            .storage()
+            .instance()
+            .get(&PhoenixKey::UnderlyingB)
+            .unwrap();
+        (token_a, token_b)
     }
 
     pub fn get_reserves(env: Env) -> (i128, i128) {

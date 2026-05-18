@@ -117,7 +117,7 @@ fn setup(reflector_price: i128, decimals: u32) -> (Env, ReflectorAdapterClient<'
 
     let reflector_id = env.register(MockReflector, (reflector_price, decimals));
 
-    let adapter_id = env.register(ReflectorAdapter, (admin.clone(), reflector_id));
+    let adapter_id = env.register(ReflectorAdapter, (admin.clone(), reflector_id, decimals));
     let client: ReflectorAdapterClient<'static> =
         unsafe { core::mem::transmute(ReflectorAdapterClient::new(&env, &adapter_id)) };
 
@@ -131,7 +131,7 @@ fn test_constructor_rejects_reinitialization() {
     let reflector_id = Address::generate(&env);
 
     env.as_contract(&client.address, || {
-        ReflectorAdapter::__constructor(env.clone(), admin, reflector_id);
+        ReflectorAdapter::__constructor(env.clone(), admin, reflector_id, 7u32);
     });
 }
 
@@ -236,7 +236,7 @@ fn test_get_price_returns_zero_when_reflector_returns_none() {
     env.mock_all_auths_allowing_non_root_auth();
     let admin = Address::generate(&env);
     let reflector_id = env.register(MockReflectorNone, ());
-    let adapter_id = env.register(ReflectorAdapter, (admin.clone(), reflector_id));
+    let adapter_id = env.register(ReflectorAdapter, (admin.clone(), reflector_id, 8u32));
     let client: ReflectorAdapterClient<'static> =
         unsafe { core::mem::transmute(ReflectorAdapterClient::new(&env, &adapter_id)) };
 

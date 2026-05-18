@@ -50,7 +50,7 @@ const PRICE_PRECISION: i128 = 10_000_000;
 
 // Blend V2 stores b_rate with 10^12 precision.
 // underlying_amount = b_tokens × b_rate / BLEND_B_RATE_PRECISION
-const BLEND_B_RATE_PRECISION: i128 = 1_000_000_000_000;
+pub const BLEND_B_RATE_PRECISION: i128 = 1_000_000_000_000;
 
 fn checked_mul_div(env: &Env, a: i128, b: i128, denominator: i128) -> i128 {
     if denominator <= 0 {
