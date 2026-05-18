@@ -69,6 +69,22 @@ The `--args` you pass are forwarded **after** the vault address, which the
 vault injects automatically. So you only need to supply the strategy-specific
 arguments.
 
+### Which functions can the manager call?
+
+Only functions registered in `AuthorizedOps(guard)` for that guard. For the
+Blend strategy, the manager-callable functions are:
+
+| Function | Purpose |
+|----------|---------|
+| `supply` | Lend tokens into the Blend pool |
+| `withdraw_from_lending` | Redeem tokens from the Blend pool back to the vault |
+
+**`withdraw_fraction` is NOT callable by the manager via `execute_op`.** It
+is called directly by the vault itself during user withdrawals — the vault
+invokes it on every active guard to proportionally unwind positions when a
+user burns shares. It bypasses `execute_op` entirely and is not in
+`AuthorizedOps`.
+
 ---
 
 ## `--args` format
@@ -172,30 +188,6 @@ python scripts/manager_execute_op.py \
                {"address":"CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"},
                {"i128":1000000}]'
 ```
-
----
-
-### Withdraw 50% of all Blend positions — Gamma vault
-
-`withdraw_fraction(vault, numerator, denominator, to)` — the vault sends
-underlying tokens directly to `to`.
-
-```bash
-python scripts/manager_execute_op.py \
-    --vault  CCHJFS4OEKTLJLLL6OQXFIS2ECTJRA6WMUNXVS7MD6DKIIB6RTXNBZRW \
-    --guard  CDMPATIFU2P7JRRAQZZ3655IZSNON62V3EUZK2UZH33C7ACQF6EQ2HYM \
-    --fn     withdraw_fraction \
-    --args   '[{"u32":1},{"u32":2},
-               {"address":"CCHJFS4OEKTLJLLL6OQXFIS2ECTJRA6WMUNXVS7MD6DKIIB6RTXNBZRW"}]'
-```
-
-**Arg breakdown** (`blend.withdraw_fraction(vault, numerator, denominator, to)`):
-
-| Position | Value | Meaning |
-|----------|-------|---------|
-| 0 | `1` (u32) | Numerator |
-| 1 | `2` (u32) | Denominator → 1/2 = 50% |
-| 2 | Gamma vault address | Recipient of withdrawn tokens |
 
 ---
 

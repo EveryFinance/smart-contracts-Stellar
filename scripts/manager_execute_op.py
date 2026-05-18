@@ -56,13 +56,8 @@ python scripts/manager_execute_op.py \\
                {"address":"CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"},
                {"i128":1000000}]'
 
-# Withdraw 50% of all active positions from Beta vault (withdraw_fraction)
-python scripts/manager_execute_op.py \\
-    --vault  CDYB5FK54OXV36AQ2TBK6V2K6KYN6RXNIID6HMCYUP7EJ4BEV7BAVIYB \\
-    --guard  CBO5XSLPO4DCJJSWWWCPHZ6JDFKPFBPMQDLJWUCJJ3PEWRYO7V6JOJ7V \\
-    --fn     withdraw_fraction \\
-    --args   '[{"u32":1},{"u32":2},
-               {"address":"CDYB5FK54OXV36AQ2TBK6V2K6KYN6RXNIID6HMCYUP7EJ4BEV7BAVIYB"}]'
+Note: withdraw_fraction is NOT callable via execute_op — it is invoked
+directly by the vault during user share redemptions, not by the manager.
 """
 
 import argparse
