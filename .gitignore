@@ -15,7 +15,7 @@ deployments/*.env
 !deployments/testnet-protocol-environment.latest.env
 !deployments/testnet-protocol-environment-*.env
 
-# AI/tooling traces
+# Local tooling config dirs (not for repo)
 .codex
 .codex/
 .claude/

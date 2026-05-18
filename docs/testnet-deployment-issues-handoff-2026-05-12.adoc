@@ -79,8 +79,8 @@ The latest run artifacts are:
 
 * Environment: `deployments/testnet-protocol-environment-20260512-174827.env`
 * Report: `docs/reports/testnet-protocol-environment-20260512-174827.adoc`
-* Tracked next-run env template for Claude Code: `scripts/claude-code-testnet-deploy.env.example`
-* Local sourceable next-run env file: `deployments/claude-code-testnet-deploy.env`
+* Tracked next-run env template: `scripts/testnet-deploy.env.example`
+* Local sourceable next-run env file: `deployments/testnet-deploy.env`
 
 == Environment Variables For The Next Deployment
 
@@ -90,7 +90,7 @@ For a committed/tracked template:
 
 [source,bash]
 ----
-source scripts/claude-code-testnet-deploy.env.example
+source scripts/testnet-deploy.env.example
 bash scripts/deploy_testnet_protocol_environment.sh
 ----
 
@@ -98,7 +98,7 @@ For the local workspace copy:
 
 [source,bash]
 ----
-source deployments/claude-code-testnet-deploy.env
+source deployments/testnet-deploy.env
 bash scripts/deploy_testnet_protocol_environment.sh
 ----
 
