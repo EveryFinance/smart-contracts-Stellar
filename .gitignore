@@ -1,6 +1,9 @@
 # Build artifacts
 target/
 
+# Windows Zone.Identifier metadata sidecars (created by WSL on downloaded files)
+*:Zone.Identifier
+
 # Environment and secrets
 .env
 .env.*
