@@ -27,8 +27,9 @@ mod storage;
 pub use error::BlendStrategyError;
 
 use soroban_sdk::{
-    contract, contractimpl, panic_with_error, token, Address, Env, IntoVal, Map, String, Symbol,
-    Vec,
+    auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
+    contract, contractimpl, panic_with_error, token, Address, BytesN, Env, IntoVal, Map, String,
+    Symbol, Val, Vec,
 };
 
 use storage::{
@@ -47,6 +48,10 @@ pub const REQUEST_WITHDRAW: u32 = 3;
 
 const PRICE_PRECISION: i128 = 10_000_000;
 
+// Blend V2 stores b_rate with 10^12 precision.
+// underlying_amount = b_tokens × b_rate / BLEND_B_RATE_PRECISION
+const BLEND_B_RATE_PRECISION: i128 = 1_000_000_000_000;
+
 fn checked_mul_div(env: &Env, a: i128, b: i128, denominator: i128) -> i128 {
     if denominator <= 0 {
         panic_with_error!(env, BlendStrategyError::InvalidAmount);
@@ -57,7 +62,7 @@ fn checked_mul_div(env: &Env, a: i128, b: i128, denominator: i128) -> i128 {
 }
 
 // ---------------------------------------------------------------------------
-// Blend cross-contract helpers
+// Blend V2 cross-contract types
 // ---------------------------------------------------------------------------
 
 #[soroban_sdk::contracttype]
@@ -68,6 +73,61 @@ pub struct BlendRequest {
     pub amount: i128,
 }
 
+// Minimal projection of Blend V2 ReserveData — only the fields we need.
+#[soroban_sdk::contracttype]
+#[derive(Clone)]
+pub struct BlendReserveData {
+    pub b_rate: i128,
+    pub b_supply: i128,
+    pub backstop_credit: i128,
+    pub d_rate: i128,
+    pub d_supply: i128,
+    pub ir_mod: i128,
+    pub last_time: u64,
+}
+
+// Minimal projection of Blend V2 ReserveConfig — only the fields we need.
+#[soroban_sdk::contracttype]
+#[derive(Clone)]
+pub struct BlendReserveConfig {
+    pub c_factor: u32,
+    pub decimals: u32,
+    pub enabled: bool,
+    pub index: u32,
+    pub l_factor: u32,
+    pub max_util: u32,
+    pub r_base: u32,
+    pub r_one: u32,
+    pub r_three: u32,
+    pub r_two: u32,
+    pub reactivity: u32,
+    pub supply_cap: i128,
+    pub util: u32,
+}
+
+// Minimal projection of Blend V2 Reserve.
+#[soroban_sdk::contracttype]
+#[derive(Clone)]
+pub struct BlendReserve {
+    pub asset: Address,
+    pub config: BlendReserveConfig,
+    pub data: BlendReserveData,
+    pub scalar: i128,
+}
+
+// Blend V2 Positions struct (collateral/liabilities/supply b-token maps keyed by reserve index).
+#[soroban_sdk::contracttype]
+#[derive(Clone)]
+pub struct BlendPositions {
+    pub collateral: Map<u32, i128>,
+    pub liabilities: Map<u32, i128>,
+    pub supply: Map<u32, i128>,
+}
+
+// ---------------------------------------------------------------------------
+// Blend cross-contract helpers
+// ---------------------------------------------------------------------------
+
 fn blend_submit(
     env: &Env,
     pool: &Address,
@@ -77,12 +137,33 @@ fn blend_submit(
     requests: Vec<BlendRequest>,
 ) {
     let args = (from.clone(), spender.clone(), to.clone(), requests).into_val(env);
-    env.invoke_contract::<()>(pool, &Symbol::new(env, "submit"), args);
+    // Blend V2 submit returns a Positions struct; accept any Val to avoid
+    // XDR decode failure when the return type is non-void.
+    env.invoke_contract::<Val>(pool, &Symbol::new(env, "submit"), args);
 }
 
-fn blend_get_supply(env: &Env, pool: &Address, account: &Address) -> i128 {
+fn blend_get_reserve(env: &Env, pool: &Address, asset: &Address) -> BlendReserve {
+    let args = (asset.clone(),).into_val(env);
+    env.invoke_contract::<BlendReserve>(pool, &Symbol::new(env, "get_reserve"), args)
+}
+
+fn blend_get_positions(env: &Env, pool: &Address, account: &Address) -> BlendPositions {
     let args = (account.clone(),).into_val(env);
-    env.invoke_contract::<i128>(pool, &Symbol::new(env, "get_supply"), args)
+    env.invoke_contract::<BlendPositions>(pool, &Symbol::new(env, "get_positions"), args)
+}
+
+/// Return the underlying token balance (not b-tokens) held by `account` in
+/// the given Blend V2 pool for `asset`.
+///
+/// Formula: b_tokens × b_rate / BLEND_B_RATE_PRECISION
+fn blend_get_supply(env: &Env, pool: &Address, asset: &Address, account: &Address) -> i128 {
+    let reserve = blend_get_reserve(env, pool, asset);
+    let positions = blend_get_positions(env, pool, account);
+    let b_tokens = positions.collateral.get(reserve.config.index).unwrap_or(0);
+    if b_tokens == 0 {
+        return 0;
+    }
+    checked_mul_div(env, b_tokens, reserve.data.b_rate, BLEND_B_RATE_PRECISION)
 }
 
 // ---------------------------------------------------------------------------
@@ -165,7 +246,7 @@ impl BlendStrategy {
                 Some(p) => p,
                 None => continue,
             };
-            let balance = blend_get_supply(&env, &pool, &strategy_addr);
+            let balance = blend_get_supply(&env, &pool, &pos.asset, &strategy_addr);
             if balance == 0 {
                 continue;
             }
@@ -194,17 +275,31 @@ impl BlendStrategy {
         };
 
         // ONE batch price call for all unique assets.
-        let prices: Map<Address, i128> = env.invoke_contract(
-            &asset_handler,
-            &Symbol::new(&env, "get_prices"),
-            (unique_assets,).into_val(&env),
-        );
+        // Use try_invoke_contract so that assets without an oracle price (e.g.
+        // USDC, the Reflector base currency) don't abort the entire NAV call.
+        // try_invoke_contract returns Result<Result<T, soroban_sdk::Error>, InvokeError>.
+        let prices: Option<Map<Address, i128>> = env
+            .try_invoke_contract::<Map<Address, i128>, soroban_sdk::Error>(
+                &asset_handler,
+                &Symbol::new(&env, "get_prices"),
+                (unique_assets,).into_val(&env),
+            )
+            .ok()         // discard InvokeError
+            .and_then(|inner| inner.ok()); // discard contract Error
+
+        // If the oracle call failed (e.g. USDC has no Reflector price), the
+        // fallback below treats 1 unit of underlying = PRICE_PRECISION ($1),
+        // which is correct for USDC-denominated pools.
 
         // Pass 2: value each position.
         let mut total: i128 = 0;
         for tup in pool_balances.iter() {
             let (_, asset, balance) = tup;
-            let price = prices.get(asset.clone()).unwrap_or(0);
+            let price = match &prices {
+                Some(p) => p.get(asset.clone()).unwrap_or(0),
+                // No price map — treat 1 unit of underlying = PRICE_PRECISION (i.e. $1 per token unit).
+                None => PRICE_PRECISION,
+            };
             if price <= 0 {
                 continue; // skip pools with no price rather than failing NAV
             }
@@ -234,7 +329,7 @@ impl BlendStrategy {
                 Some(p) => p,
                 None => continue,
             };
-            let balance = blend_get_supply(&env, &pool, &strategy_addr);
+            let balance = blend_get_supply(&env, &pool, &pos.asset, &strategy_addr);
             if balance == 0 {
                 continue;
             }
@@ -324,7 +419,7 @@ impl BlendStrategy {
                 Some(p) => p,
                 None => continue,
             };
-            let position = blend_get_supply(&env, &pool, &strategy_addr);
+            let position = blend_get_supply(&env, &pool, &pos.asset, &strategy_addr);
             if position == 0 {
                 exhausted.push_back(pool.clone());
                 continue;
@@ -370,7 +465,7 @@ impl BlendStrategy {
         for pool in get_active_positions(&env).iter() {
             if let Some(pos) = get_position(&env, &pool) {
                 if pos.asset == asset {
-                    if blend_get_supply(&env, &pool, &strategy_addr) > 0 {
+                    if blend_get_supply(&env, &pool, &pos.asset, &strategy_addr) > 0 {
                         return true;
                     }
                 }
@@ -401,9 +496,19 @@ impl BlendStrategy {
         }
 
         let strategy_addr = env.current_contract_address();
-        // Same-ledger approval — no zero-revoke needed; Blend consumes the full amount.
-        let expiry = env.ledger().sequence();
-        token::Client::new(&env, &asset).approve(&strategy_addr, &pool, &amount, &expiry);
+        // Blend V2 pool calls token.transfer(strategy, pool, amount) inside submit,
+        // which requires the strategy to pre-authorize that specific transfer.
+        env.authorize_as_current_contract(soroban_sdk::vec![
+            &env,
+            InvokerContractAuthEntry::Contract(SubContractInvocation {
+                context: ContractContext {
+                    contract: asset.clone(),
+                    fn_name: Symbol::new(&env, "transfer"),
+                    args: (strategy_addr.clone(), pool.clone(), amount).into_val(&env),
+                },
+                sub_invocations: soroban_sdk::vec![&env],
+            }),
+        ]);
 
         let requests: Vec<BlendRequest> = soroban_sdk::vec![
             &env,
@@ -449,17 +554,21 @@ impl BlendStrategy {
         }
 
         let strategy_addr = env.current_contract_address();
-        let position = blend_get_supply(&env, &pool, &strategy_addr);
-        if amount > position {
+        let position = blend_get_supply(&env, &pool, &asset, &strategy_addr);
+        if position == 0 {
             panic_with_error!(&env, BlendStrategyError::InsufficientPosition);
         }
+
+        // Clamp to available position: b-rate conversion may cause `position`
+        // to be 1-2 stroop less than the originally supplied amount.
+        let withdraw_amount = amount.min(position);
 
         let requests: Vec<BlendRequest> = soroban_sdk::vec![
             &env,
             BlendRequest {
                 request_type: REQUEST_WITHDRAW,
                 address: asset,
-                amount,
+                amount: withdraw_amount,
             }
         ];
         blend_submit(
@@ -472,7 +581,7 @@ impl BlendStrategy {
         );
 
         // Remove from active if fully withdrawn.
-        if amount >= position {
+        if withdraw_amount >= position {
             remove_from_active_positions(&env, &pool);
         }
     }
@@ -506,8 +615,17 @@ impl BlendStrategy {
             &amount,
         );
 
-        let expiry = env.ledger().sequence();
-        token::Client::new(&env, &asset).approve(&strategy_addr, &pool, &amount, &expiry);
+        env.authorize_as_current_contract(soroban_sdk::vec![
+            &env,
+            InvokerContractAuthEntry::Contract(SubContractInvocation {
+                context: ContractContext {
+                    contract: asset.clone(),
+                    fn_name: Symbol::new(&env, "transfer"),
+                    args: (strategy_addr.clone(), pool.clone(), amount).into_val(&env),
+                },
+                sub_invocations: soroban_sdk::vec![&env],
+            }),
+        ]);
 
         let requests: Vec<BlendRequest> = soroban_sdk::vec![
             &env,
@@ -556,10 +674,12 @@ impl BlendStrategy {
         }
 
         let strategy_addr = env.current_contract_address();
-        let position = blend_get_supply(&env, &pool, &strategy_addr);
-        if amount > position {
+        let position = blend_get_supply(&env, &pool, &asset, &strategy_addr);
+        if position == 0 {
             panic_with_error!(&env, BlendStrategyError::InsufficientPosition);
         }
+
+        let withdraw_amount = amount.min(position);
 
         let token_client = token::Client::new(&env, &asset);
         let balance_before = token_client.balance(&to);
@@ -569,7 +689,7 @@ impl BlendStrategy {
             BlendRequest {
                 request_type: REQUEST_WITHDRAW,
                 address: asset,
-                amount,
+                amount: withdraw_amount,
             }
         ];
         blend_submit(&env, &pool, &strategy_addr, &strategy_addr, &to, requests);
@@ -580,7 +700,7 @@ impl BlendStrategy {
             panic_with_error!(&env, BlendStrategyError::InvalidAmount);
         }
 
-        if amount >= position {
+        if withdraw_amount >= position {
             remove_from_active_positions(&env, &pool);
         }
 
@@ -612,6 +732,22 @@ impl BlendStrategy {
     }
 
     // -----------------------------------------------------------------------
+    // Upgrade
+    // -----------------------------------------------------------------------
+
+    /// Replace the contract WASM in-place. Only the vault manager may call this.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        let vault = get_vault(&env);
+        let vault_manager: Address =
+            env.invoke_contract(&vault, &Symbol::new(&env, "get_manager"), ().into_val(&env));
+        vault_manager.require_auth();
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+    }
+
+    // -----------------------------------------------------------------------
     // Private helpers
     // -----------------------------------------------------------------------
 
@@ -620,7 +756,9 @@ impl BlendStrategy {
         let strategy_addr = env.current_contract_address();
         let mut total: i128 = 0;
         for pool in get_active_positions(env).iter() {
-            total = total.saturating_add(blend_get_supply(env, &pool, &strategy_addr));
+            if let Some(pos) = get_position(env, &pool) {
+                total = total.saturating_add(blend_get_supply(env, &pool, &pos.asset, &strategy_addr));
+            }
         }
         total
     }
