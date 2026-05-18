@@ -148,10 +148,47 @@ Final WASM hash: `46cdf5a1ad8658da782bd7229f815455dd15fad5df345334596d5178bf0c5e
 
 ---
 
+## User Deposit & Withdrawal Transactions — 2026-05-18
+
+**User account (admin):** `GDZN5WVOUBRTZKADUULRXJOGVGNK4WWXJPSALTVOORLSU5NFOZ2P5NCB`  
+**Asset:** USDC — `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75`
+
+> **Oracle fix applied before deposits:** The USDC fixed-price oracle (`CCLT42BF...`) `max_age_ledgers` was set to `2147483647` (effectively unlimited) to prevent the 24-hour staleness rejection from blocking NAV snapshots. Tx: [cc0ee60f](https://stellar.expert/explorer/public/tx/cc0ee60fc501a2a96b46c2b5d67f920af6fb1754ec93856a519f7595a6a77996)
+
+### Alpha Vault — `CAHHS2EFYMKKBYP3LTUFPDS2JSY4EPQLUDEUOFI5I7P7MOIBSJH5AUKQ`
+
+Share token: `CCHY2XQNGAWYM755KIM7PKE6LEMQVIVVQJIKMCAA5EFNK5NQQVP2O7A6`
+
+| Operation | Amount | Shares | Tx hash | Explorer |
+|-----------|--------|--------|---------|----------|
+| `deposit` | 1.0000000 USDC (10,000,000 units) | 10,002,134 minted | `7c22f561...` | [view tx](https://stellar.expert/explorer/public/tx/7c22f561e58e37501b6c4c02ee8728dc1b20855752c7fd74c2e0e8f83c823c38) |
+| `withdraw` | 10,002,134 shares burned | 9,999,999 USDC returned | `3a5d8cec...` | [view tx](https://stellar.expert/explorer/public/tx/3a5d8cec433be77d4b9d901ab6e6c71c1aceefd236a8f36ba05be4fa70224b9c) |
+
+### Beta Vault — `CDYB5FK54OXV36AQ2TBK6V2K6KYN6RXNIID6HMCYUP7EJ4BEV7BAVIYB`
+
+Share token: `CDCM5W7XOPAZC3FOUKKWUEY7BGLMDXPYJHBFUNBXJXYJCZNMY4JNE55E`
+
+| Operation | Amount | Shares | Tx hash | Explorer |
+|-----------|--------|--------|---------|----------|
+| `deposit` | 1.0000000 USDC (10,000,000 units) | 10,002,133 minted | `effe6dd1...` | [view tx](https://stellar.expert/explorer/public/tx/effe6dd15e129641ca2f4cb7b3df6e033f341a1d0c84e9ec0b2c8dec837554e1) |
+| `withdraw` | 10,002,133 shares burned | 9,999,998 USDC returned | `c1a4f6de...` | [view tx](https://stellar.expert/explorer/public/tx/c1a4f6def29298abed96c3ae187acb898e4fa1ab597f69aaea07b326cf52f7a2) |
+
+### Gamma Vault — `CCHJFS4OEKTLJLLL6OQXFIS2ECTJRA6WMUNXVS7MD6DKIIB6RTXNBZRW`
+
+Share token: `CDY5C7DAWSXF536ORWAEXKHWSDEWOMWWQTXV32IGGJMRYDXTDLE33DSM`
+
+| Operation | Amount | Shares | Tx hash | Explorer |
+|-----------|--------|--------|---------|----------|
+| `deposit` | 0.4000000 USDC (4,000,000 units) | 4,000,852 minted | `475239f0...` | [view tx](https://stellar.expert/explorer/public/tx/475239f0e37f3e592f7f6069f256f3d8ee23e37718cf7c091e1328d51636505a) |
+| `withdraw` | 4,000,852 shares burned | 3,999,999 USDC returned | `122487fd...` | [view tx](https://stellar.expert/explorer/public/tx/122487fd72e61ff2afc2e51e98d434daee1375dba2c655bfa964027a2070ee8e) |
+
+---
+
 ## Notes
 
-- **Management fee behavior confirmed:** Each withdrawal triggers fee accrual. A tiny mgmt fee (5 share units) was minted to the treasury on each withdraw — consistent with 2% annual fee pro-rated over the ~4 minutes the USDC was held.
+- **Management fee behavior confirmed:** Each deposit and withdrawal triggers fee accrual. Small mgmt fee shares are minted to the treasury on each operation — consistent with 2% annual fee pro-rated over the time held.
 - **Cooldown enforced:** 60-second cooldown was respected between deposits and withdrawals.
-- **Remaining position:** 5,000,000 shares remain in each vault (worth ≈ 0.50 USDC each at current NAV).
-- **USDC oracle:** Reflector does not publish a USDC/USD feed. The per-asset fixed-price oracle (`CCLT42BF...`) handles the NAV snapshot for user deposits/withdrawals. The Blend strategy now additionally falls back to raw underlying balance when `get_prices` fails, so manager `execute_op` calls are not blocked by the oracle gap.
+- **Share price > 1.0:** More shares were minted per USDC deposited than on 2026-05-14 (e.g. Alpha: 10,002,134 shares for 10,000,000 USDC) reflecting accumulated yield from prior activity.
+- **Exit fee:** 1–2 stroop difference between USDC deposited and returned is the exit fee staying in the vault.
+- **USDC fixed-price oracle:** `max_age_ledgers` set to `2147483647` (unlimited) to prevent the 24-hour staleness check from blocking deposits. The oracle's `set_price` still needs periodic refresh to keep the storage TTL alive on Soroban mainnet (or use `extend_ttl` automation).
 - **Blend strategy b-rate clamping:** Blend V2 issues slightly fewer b-tokens than the deposited amount implies (due to utilization), so the redeemable underlying is 1–2 stroop less than deposited. Withdrawals are clamped to `min(requested, position)` to handle this gracefully.
