@@ -1,7 +1,7 @@
-# Mainnet Operations Log — 2026-05-14
+# Investor and Manager Transaction Examples on Mainnet
 
-Records all investor (user) and manager transactions executed on the three
-mainnet vaults since deployment.
+This document records examples of investor (deposit/withdraw) and manager
+(execute_op) transactions executed on the three mainnet vaults.
 
 ---
 
