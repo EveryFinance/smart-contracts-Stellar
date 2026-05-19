@@ -114,12 +114,14 @@ impl<'a> PhoenixPoolAdapter<'a> {
     }
 }
 
-/// Adapter for oracle contract calls.
+/// Adapter for oracle contract calls (used in tests).
+#[cfg(test)]
 pub struct OracleAdapter<'a> {
     env: &'a Env,
     oracle: &'a Address,
 }
 
+#[cfg(test)]
 impl<'a> OracleAdapter<'a> {
     pub fn new(env: &'a Env, oracle: &'a Address) -> Self {
         Self { env, oracle }

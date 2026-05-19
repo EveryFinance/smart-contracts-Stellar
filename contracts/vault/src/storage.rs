@@ -259,6 +259,7 @@ pub fn is_initialized(env: &Env) -> bool {
 macro_rules! addr_fns {
     ($set:ident, $get:ident, $key:ident) => {
         /// Persist the value in instance storage and extend the TTL.
+        #[allow(dead_code)]
         pub fn $set(env: &Env, v: &Address) {
             bump(env);
             env.storage().instance().set(&DataKey::$key, v);
@@ -814,6 +815,7 @@ pub fn get_factory(env: &Env) -> Option<Address> {
     env.storage().instance().get(&DataKey::Factory)
 }
 
+#[cfg(test)]
 pub fn set_factory(env: &Env, factory: &Address) {
     bump(env);
     env.storage().instance().set(&DataKey::Factory, factory);

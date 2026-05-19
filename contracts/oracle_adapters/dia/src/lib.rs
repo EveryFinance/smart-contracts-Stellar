@@ -54,7 +54,7 @@ use soroban_sdk::{
 use storage::{
     clear_pending_admin, get_admin, get_asset_key, get_dia_contract, get_max_age_secs,
     get_pending_admin, is_initialized, remove_asset_key, set_admin, set_asset_key,
-    set_dia_contract, set_initialized, set_max_age_secs, set_pending_admin, DataKey,
+    set_dia_contract, set_max_age_secs, set_pending_admin, DataKey,
     INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD,
 };
 
