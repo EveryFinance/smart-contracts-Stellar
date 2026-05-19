@@ -1,4 +1,4 @@
-# Mainnet Investor and Manager Transaction Examples
+# Mainnet Operations Log — 2026-05-14
 
 Records all investor (user) and manager transactions executed on the three
 mainnet vaults since deployment.
@@ -116,4 +116,4 @@ Share token: `CDY5C7DAWSXF536ORWAEXKHWSDEWOMWWQTXV32IGGJMRYDXTDLE33DSM`
 - **Management fee behavior:** Each deposit and withdrawal triggers fee accrual. Small mgmt fee shares are minted to the treasury on each operation — consistent with the 2% annual fee pro-rated over the time held.
 - **Cooldown enforced:** The 60-second cooldown was respected between deposits and withdrawals.
 - **Share price > 1.0 on 2026-05-18:** More shares were minted per USDC deposited than on 2026-05-14 (e.g. Alpha: 10,002,134 shares for 10,000,000 USDC) reflecting accumulated yield from prior activity.
-- **Exit fee:** The 1–2 stroop difference between USDC deposited and returned is the exit fee remaining in the vault as protocol revenue.
+- **Blend b-rate rounding:** The 1–2 stroop shortfall between USDC deposited and USDC returned on 2026-05-18 investor withdrawals is caused by Blend V2 b-token precision. When the vault held an active Blend position, Blend issued slightly fewer b-tokens than the deposited amount implies due to pool utilization rounding. On redemption, the redeemable underlying is 1–2 stroops less than the original deposit. Exit fee is 0% — no fee is deducted on withdrawal.
