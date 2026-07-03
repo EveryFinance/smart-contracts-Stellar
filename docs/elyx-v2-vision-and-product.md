@@ -33,31 +33,31 @@ independently-verifiable evidence support integrating this today, not just
 ### Figure 1 — v2 platform topology
 
 ```
-                          ┌─────────────────────────────┐
-                          │      Factory (Registry)       │
-                          │                                │
-                          │  create_vault(...)             │  ← permissionless in v2
-                          │  AuthorizedAssets               │     (admin-only today)
-                          │  AuthorizedGuards                │
-                          └───────────────┬───────────────┘
-                                          │ deploys, whitelist-bounded
-                    ┌─────────────────────┼─────────────────────┐
-                    ▼                     ▼                     ▼
-             ┌─────────────┐       ┌─────────────┐       ┌─────────────┐
-             │ Vault Alpha  │       │ Vault Beta   │  ...  │  Vault N     │
-             │ (Elyx-run)   │       │ (Elyx-run)   │       │ (community-  │
-             │              │       │              │       │  created)    │
-             └──────┬───────┘       └──────┬───────┘       └──────┬───────┘
-                    │   deposit / withdraw / execute_op            │
-                    └─────────────────────┬───────────────────────┘
-                                          ▼
-                     ┌─────────────────────────────────────────┐
-                     │              Guard Contracts               │
-                     │  Blend · Soroswap · Phoenix (existing)     │
-                     │  Aquarius · StellarBroker (selected, §4)   │
-                     └─────────────────────┬─────────────────────┘
-                                          ▼
-                         External Stellar / Soroban Protocols
+      ┌──────────────────────────────────────────┐
+      │ Factory (Registry)                       │
+      │                                          │
+      │ create_vault  (admin-only)               │
+      │ create_vault_permissionless  (new in v2) │
+      │ AuthorizedAssets  ·  AuthorizedGuards    │
+      └──────────────────────────────────────────┘
+                           │  registers + seeds every vault
+                           │  (permissionless path also deploys it —
+                           │  one fixed, audited WASM. detail: §2.1)
+                           ▼
+      ┌──────────────────────────────────────┐
+      │ Vault Alpha, Beta, Gamma  (Elyx-run) │
+      │ Vault N...  (community-created, v2)  │
+      └──────────────────────────────────────┘
+                           │  deposit / withdraw / execute_op
+                           ▼
+      ┌────────────────────────────────────────────┐
+      │ Guard Contracts                            │
+      │                                            │
+      │ Blend · Soroswap · Phoenix   (existing)    │
+      │ Aquarius · StellarBroker    (selected, §4) │
+      └────────────────────────────────────────────┘
+                           ▼
+      External Stellar / Soroban Protocols
 
   Off-chain / front-end layer (no vault contract changes):
   Anchor Platform (SEP-12 KYC)  ·  MoneyGram / Mercuryo / BlindPay (SEP-24)  ·  Circle CCTP relayer
@@ -95,27 +95,20 @@ What does need new work:
   nothing on-chain stops a low-quality creator from launching a thin vault.
 
 ```
- Vault Creator                    Factory                        Vault (new)
-     │                               │                                │
-     │  create_vault_permissionless( │                                │
-     │    manager=self, base_asset,  │                                │
-     │    fee params, seed)          │                                │
-     ├──────────────────────────────►│                                │
-     │                               │ deploys new instance of the      │
-     │                               │ one fixed, audited vault WASM     │
-     │                               │ (creator never supplies bytecode) │
-     │                               ├───────────────────────────────►│
-     │                               │ seed_deposit(seed)              │
-     │                               ├───────────────────────────────►│
-     │                               │                                │ total_supply > 0
-     │◄──────────────────────────────┤   vault address                │ (inflation-attack safe)
-     │                               │                                │
-  Asset/guard whitelist (AuthorizedAssets / AuthorizedGuards) is still
-  enforced — but later, when the new vault's manager calls
-  add_portfolio_asset / add_active_guard, exactly as it is for Alpha/Beta/
-  Gamma today. Moving that check earlier, into creation itself, is an open
-  design decision (Technical doc §5.1).
+Vault Creator -> Factory:  create_vault_permissionless(manager=self,
+                             base_asset, fee params, seed)
+Factory -> Vault (new):    deploys one new instance of the fixed,
+                             audited vault WASM (creator never
+                             supplies bytecode), then seed_deposit(seed)
+                             -> total_supply > 0 (inflation-attack safe)
+Factory -> Vault Creator:  returns the new vault address
 ```
+
+Asset/guard whitelist (`AuthorizedAssets` / `AuthorizedGuards`) is still
+enforced — but later, when the new vault's manager calls
+`add_portfolio_asset` / `add_active_guard`, exactly as it is for Alpha/Beta/
+Gamma today. Moving that check earlier, into creation itself, is an open
+design decision (Technical doc §5.1).
 
 ### 2.2 Institutional Onboarding
 

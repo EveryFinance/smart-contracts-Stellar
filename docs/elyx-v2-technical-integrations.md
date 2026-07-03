@@ -426,9 +426,17 @@ one.
 
 ### 5.2 New guard contracts
 
+For the selected six (§2.1–2.6):
 - `AquariusStrategy` (AMM LP, same shape as existing Soroswap/Phoenix guards)
 - `StellarBrokerRouter` (execution router guard)
-- `TemplarStrategy` (conditional on ABI confirmation, §2.7)
+
+CCTP, the on/off-ramp trio, and Allbridge need no new guard contract — all
+four are front-end/relayer integrations (§2.3–2.5), not vault strategies.
+
+Not required for the current selection, listed for future reference only:
+`TemplarStrategy` would follow the same guard shape if Templar (§2.7,
+**not selected** — not on the SCF Integration List) is picked up on its own
+timeline later.
 
 ### 5.3 Off-chain services
 
