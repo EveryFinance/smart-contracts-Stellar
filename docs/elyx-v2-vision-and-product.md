@@ -66,14 +66,22 @@ independently-verifiable evidence support integrating this today, not just
 
 ### 2.1 Permissionless Vault Factory
 
-The factory contract already has the right shape for this — `AuthorizedAssets`,
-`AuthorizedGuards`, and `create_vault(params, manager, seed_amount)` exist today.
-v2's change is narrow: **`create_vault` moves from admin-only to
-caller-permissionless**, while the containment stays exactly as strict —
-a self-serve vault can only select assets from `factory.AuthorizedAssets` and
-guards from `factory.AuthorizedGuards`. Nothing about NAV accounting, fee
-mechanics, or the TVL/concentration guards needs to change; they don't know or
-care who created the vault.
+The factory contract already has the right primitives to build this on —
+`AuthorizedAssets`, `AuthorizedGuards`, and a `create_vault` entry point all
+exist today — but this needed verifying against the actual contract, not just
+the design intent, and the real change is bigger than flipping one
+permission check. Today `create_vault` (and its siblings `register_vault` and
+`verify_and_register_vault`) are admin-only, and none of them deploy a vault
+— they register and seed a vault contract that was already deployed
+separately. Making creation genuinely self-serve means the factory has to
+take over vault deployment itself (deploying new instances of one fixed,
+audited vault WASM on the creator's behalf, rather than letting a creator
+supply their own bytecode), not just relax who's allowed to call an existing
+function. Existing vaults (Alpha, Beta, Gamma) aren't touched by any of this
+— it's a new, parallel path into the same registry.
+
+*Full contract-level breakdown of what has to change: see the Technical
+Integration Architecture document, §5.1.*
 
 What does need new work:
 - **Protocol fee on permissionless vaults** — a take-rate decision (Morpho Blue
@@ -86,16 +94,24 @@ What does need new work:
 ```
  Vault Creator                    Factory                        Vault (new)
      │                               │                                │
-     │  create_vault(manager=self,   │                                │
-     │    assets, guards, seed)      │                                │
+     │  create_vault_permissionless( │                                │
+     │    manager=self, base_asset,  │                                │
+     │    fee params, seed)          │                                │
      ├──────────────────────────────►│                                │
-     │                               │ check: assets ⊆ AuthorizedAssets
-     │                               │ check: guards ⊆ AuthorizedGuards
-     │                               │ deploy + seed_deposit           │
+     │                               │ deploys new instance of the      │
+     │                               │ one fixed, audited vault WASM     │
+     │                               │ (creator never supplies bytecode) │
+     │                               ├───────────────────────────────►│
+     │                               │ seed_deposit(seed)              │
      │                               ├───────────────────────────────►│
      │                               │                                │ total_supply > 0
      │◄──────────────────────────────┤   vault address                │ (inflation-attack safe)
      │                               │                                │
+  Asset/guard whitelist (AuthorizedAssets / AuthorizedGuards) is still
+  enforced — but later, when the new vault's manager calls
+  add_portfolio_asset / add_active_guard, exactly as it is for Alpha/Beta/
+  Gamma today. Moving that check earlier, into creation itself, is an open
+  design decision (Technical doc §5.1).
 ```
 
 ### 2.2 Institutional Onboarding
@@ -223,13 +239,19 @@ of concentrating all Soroban lending activity in a single place. Templar is
 also expanding into RWA-collateralized borrowing, a capability Blend
 deliberately doesn't offer.
 
+Worth being precise about: Templar isn't on the official SCF Integration
+Track partner list, so worthwhile as it is, it's a product roadmap item, not
+part of the grant deliverable in §6 of the technical document.
+
 ---
 
 ## 5. RWA Tokenized Funds — nice to have, not committed
 
 Two regulated fund tokens were evaluated as portfolio assets a vault could
 simply hold. Neither is part of the v2 commitment — they're a later-phase
-option, tracked here for completeness.
+option, tracked here for completeness, and neither is on the official SCF
+Integration Track partner list — this section is pursued for product reasons
+only, not as part of any grant application.
 
 **Ondo Finance / USDY** is, perhaps surprisingly, freely transferable on
 Stellar today with no allowlist and real secondary-market trading volume —

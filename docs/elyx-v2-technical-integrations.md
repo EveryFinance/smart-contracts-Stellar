@@ -54,9 +54,11 @@ literally the "combine existing building blocks" mandate the SCF Integration
 Track exists to fund.
 
 **Technical integration:** new `AquariusStrategy` guard contract implementing
-`get_total_value` / `withdraw_fraction` / `asset_in_use`, added to
-`factory.AuthorizedGuards`, wired into `vault.set_authorized_ops`. No vault
-core changes.
+`get_total_value` / `withdraw_fraction` / `asset_in_use`, two-step activation
+matching how Blend/Soroswap/Phoenix are already wired in: factory admin adds
+it to `factory.AuthorizedGuards` (global whitelist), then each vault's
+manager calls `vault.add_active_guard` and `vault.set_authorized_ops` to turn
+it on for that specific vault. No vault core changes.
 
 ### 2.2 Anchor Platform / SEP-12 — institutional KYC pathway
 
@@ -232,7 +234,8 @@ prefers funding integration of a shared router over N bespoke ones.
 
 **Technical integration:** one guard contract calling StellarBroker's
 on-chain settlement contract in place of calling Soroswap/Aquarius/Phoenix
-pair contracts directly.
+pair contracts directly — same two-step activation as Aquarius (§2.1):
+factory-whitelisted, then activated per-vault via `add_active_guard`.
 
 ### 2.7 Templar Protocol — secondary lending (conditional)
 
@@ -301,44 +304,147 @@ near-term work.
 
 ## 4. Feasibility Audit — Summary
 
-| Integration | Feasibility | Evidence | Blocking dependency |
-|---|---|---|---|
-| Aquarius | **High** | $46.1M TVL verified, audited, same guard shape live twice already | None |
-| Anchor Platform / SEP-12 | **High** | Zero contract surface, primitive already deployed | KYC provider selection |
-| Circle CCTP | **High** | Mainnet contracts confirmed, publicly callable | Front-end must set `mintRecipient`/`destinationCaller` correctly — one-shot failure mode |
-| MoneyGram Ramps | **High**, admin overhead | SEP-24, live, SDF-partnered | Partner approval process (unpublished timeline) |
-| Mercuryo | **High**, near-zero cost | Already live via SEP-24 elsewhere on Stellar | Requires SEP-24 support to exist first |
-| BlindPay | **High** | Self-serve API, public SDK, confirmed Stellar support | None significant |
-| Allbridge Core | **Medium** | Live, audited — risk fenced by scope choice, not by protocol maturity | Must never become a guard position |
-| StellarBroker | **Medium-High** | Audited settlement leg, live routing across 3 AMMs + SDEX | Confirm audit scope vs off-chain matcher component |
-| Templar Protocol | **Medium** | $6.2M verified TVL, Halborn-audited, Blend-forked codebase | Exact ABI confirmation needed |
-| Ondo / USDY | **Medium** (nice to have) | Freely transferable, $528M verified TVL, tradeable today | Reg S depositor-eligibility legal review |
-| Spiko | **Low / blocked** (nice to have) | Allowlist-gated contract, no DEX pool, $524M TVL but inaccessible | Direct allowlisting agreement with Spiko required |
-| alfredpay | **Unverified** | Self-serve claims, current Stellar routing unconfirmed | Re-verify chain/compliance status |
+The **SCF list** column matters as much as feasibility for grant purposes:
+the Build Award Integration Track only funds work touching a partner on its
+official list — a technically excellent integration that isn't listed
+doesn't count toward this specific grant, whatever its product merit.
+
+| Integration | Feasibility | Evidence | SCF list | Blocking dependency |
+|---|---|---|---|---|
+| Aquarius | **High** | $46.1M TVL verified, audited, same guard shape live twice already | ✅ | None |
+| Anchor Platform / SEP-12 | **High** | Zero contract surface, primitive already deployed | ✅ | KYC provider selection |
+| Circle CCTP | **High** | Mainnet contracts confirmed, publicly callable | ✅ | Front-end must set `mintRecipient`/`destinationCaller` correctly — one-shot failure mode |
+| MoneyGram Ramps | **High**, admin overhead | SEP-24, live, SDF-partnered | ✅ | Partner approval process (unpublished timeline) |
+| Mercuryo | **High**, near-zero cost | Already live via SEP-24 elsewhere on Stellar | ✅ | Requires SEP-24 support to exist first |
+| BlindPay | **High** | Self-serve API, public SDK, confirmed Stellar support | ✅ | None significant |
+| Allbridge Core | **Medium** | Live, audited — risk fenced by scope choice, not by protocol maturity | ✅ | Must never become a guard position |
+| StellarBroker | **Medium-High** | Audited settlement leg, live routing across 3 AMMs + SDEX | ✅ | Confirm audit scope vs off-chain matcher component |
+| Templar Protocol | **Medium** | $6.2M verified TVL, Halborn-audited, Blend-forked codebase | ❌ not on the list | Exact ABI confirmation needed *and* doesn't count toward this grant track regardless |
+| DeFindex | *(not pursued)* | Real, audited yield-router protocol | ✅ | Deliberately excluded — vault-of-vaults nesting creates recursive NAV computation risk against Elyx's own vault; listed here so the omission reads as a decision, not an oversight |
+| Ondo / USDY | **Medium** (nice to have) | Freely transferable, $528M verified TVL, tradeable today | ❌ not on the list | Reg S depositor-eligibility legal review *and* not SCF-fundable under this track |
+| Spiko | **Low / blocked** (nice to have) | Allowlist-gated contract, no DEX pool, $524M TVL but inaccessible | ❌ not on the list | Direct allowlisting agreement with Spiko required |
+| alfredpay | **Unverified** | Self-serve claims, current Stellar routing unconfirmed | ✅ | Re-verify chain/compliance status |
+
+Reading the table for the grant application specifically: **Phase 1 (Aquarius
++ Anchor Platform, §6) is 100% on-list.** Templar and the RWA "nice to have"
+tier are real product work but shouldn't be described as part of *this*
+grant's deliverable — they're roadmap items funded some other way, or by a
+future application once they mature.
 
 ---
 
 ## 5. Architecture Changes Required
 
-**Factory contract:**
-- Relax `create_vault` from admin-only to permissionless, retaining
-  `AuthorizedAssets`/`AuthorizedGuards` as the safety rail.
-- Decide and implement the protocol fee model for self-serve vaults.
+### 5.1 Factory contract — what permissionless creation actually requires
 
-**New guard contracts:**
+This needed verifying against the deployed contract rather than the redesign
+spec, and the real mechanics are more involved than "relax an auth check."
+Confirmed directly against `contracts/factory/src/lib.rs`:
+
+- **All three registration paths are admin-gated today**: `create_vault`,
+  `register_vault`, and `verify_and_register_vault` each call
+  `caller.require_auth()` and then hard-panic with `FactoryError::NotAdmin`
+  unless `caller == get_admin(&env)`. There is no partial or role-based
+  permissionless path today — it's a single flat admin check on every entry
+  point that touches the registry.
+- **None of them deploy a vault contract.** `create_vault(caller, vault,
+  manager, base_asset, seed_amount)` takes an *already-deployed* vault
+  address as an argument. It cross-checks `vault.get_manager()` against the
+  `manager` argument, pulls `seed_amount` of `base_asset` from `caller` via
+  `transfer_from`, calls `vault.seed_deposit(...)`, and registers the vault
+  in the index. The actual vault WASM upload and constructor call happen
+  entirely outside the factory, today via the operator-run deploy scripts
+  (`scripts/deploy_mainnet.sh`).
+- **Vault setup has a circular deployment dependency that a self-serve flow
+  has to solve.** The vault's `__constructor` requires
+  `params.share_token_admin == vault` — i.e. the share token must already
+  exist on-chain with the vault's own (not-yet-deployed) address set as its
+  admin, which means the vault's contract ID has to be deterministically
+  predicted *before* either contract is deployed. Deploy scripts do this with
+  Stellar CLI's deterministic contract-ID prediction; a self-serve UI would
+  need to do the same thing programmatically, not just skip a permission
+  check.
+- **`AuthorizedAssets`/`AuthorizedGuards` are not checked at creation time at
+  all today.** They're real (`get_authorized_assets`,
+  `is_authorized_asset`, `get_authorized_guards`, `is_authorized_guard` all
+  exist on the factory), but the vault only consults them later, when its
+  manager calls `add_portfolio_asset` / `add_active_guard`. `create_vault`
+  itself doesn't reference either list.
+
+**What actually has to change, concretely:**
+
+1. **New permissionless registration entry point** (either loosen the check
+   on `create_vault` for a defined class of caller, or add a parallel
+   `create_vault_permissionless` that skips the admin check but keeps every
+   other invariant — manager/vault consistency check, seed amount > 0, not
+   already registered).
+2. **Factory-driven vault deployment**, not creator-driven. Self-serve
+   deployment should not mean "anyone uploads their own vault WASM" — that
+   would let a creator substitute unaudited vault code behind an identical
+   UI. The safer pattern (the one dHedge and Morpho Blue both rely on:
+   permissionless *parameters*, immutable *logic*) is for the factory to hold
+   one audited vault WASM hash and deploy new instances of it itself,
+   deterministically, using Soroban's on-chain contract-deployment host
+   functions — this workspace pins `soroban-sdk = "22.0.1"`
+   (`Cargo.toml`), which supports constructor-argument deployment; **the
+   exact deployer API call (e.g. `deploy_v2` vs. a differently-named method
+   at this SDK version) needs to be confirmed against the installed
+   `soroban-sdk` docs at implementation time rather than assumed from this
+   document** — so a creator supplies parameters — manager, base asset, fee
+   bps, initial guards/assets from the whitelist — and never touches raw
+   bytecode. This also resolves the share-token circular-dependency problem
+   above, since the factory can predict its own deployment addresses
+   deterministically before either contract exists.
+3. **Decide whether asset/guard whitelist checks move earlier**, into the
+   new creation entry point, rather than staying purely reactive at
+   `add_portfolio_asset`/`add_active_guard` time — recommended, so a
+   newly-created vault can't reference an unauthorized asset or guard even
+   transiently between creation and its first config call.
+4. **Protocol fee model decision** for self-serve vaults (take-rate or none
+   — a business decision, not blocked on any of the above).
+
+**One safety property that already holds and doesn't need new work:** the
+vault's `factory` reference (`DataKey::Factory`) is set once, in the
+constructor, with no `set_factory` mutator anywhere in the contract —
+confirmed by its absence from the vault's public interface. A
+factory-deployed vault can't be pointed at a different, malicious factory
+after the fact, in either the current admin-gated flow or the proposed
+permissionless one.
+
+**Existing vaults (Alpha, Beta, Gamma) are unaffected and do not need
+migration** — they're already registered via `create_vault`/`register_vault`
+under the current admin-gated path, and nothing above changes how an already-
+registered vault operates. The new permissionless path is additive: a new,
+parallel way to reach the same registry, not a replacement for the existing
+one.
+
+### 5.2 New guard contracts
+
 - `AquariusStrategy` (AMM LP, same shape as existing Soroswap/Phoenix guards)
 - `StellarBrokerRouter` (execution router guard)
 - `TemplarStrategy` (conditional on ABI confirmation, §2.7)
 
-**Off-chain services:**
+### 5.3 Off-chain services
+
 - Anchor Platform deployment + SEP-12 KYC provider + `add_member` relayer
 - CCTP attestation relayer / front-end integration (`mint_and_forward` caller)
 - SEP-24 client supporting MoneyGram, Mercuryo, and (phase 3) BlindPay as
   anchors
 
-**No changes required** to vault NAV computation, fee accrual, TVL guard, or
-concentration-limit logic — every integration above is additive to the
-existing audited core.
+**No changes required** to vault NAV computation, fee accrual, or TVL-guard
+(`max_loss_bps`) logic — every integration above is additive to the existing
+audited core. One correction from an earlier pass of this document: it
+previously referenced a "concentration guard" as an active, paired control
+alongside the TVL guard. Verified against `contracts/vault/src/error.rs` and
+`contracts/vault/src/lib.rs`: `ConcentrationLimitExceeded` is a defined error
+code, but nothing in the current vault contract throws it — there is no
+`max_concentration_bps` storage, setter, or check wired into `execute_op`.
+It's a vestigial error variant from an earlier design iteration, not a live
+control. `max_loss_bps` (the TVL guard) is the only post-operation value
+check that actually runs today. If per-strategy concentration limits are
+wanted for the permissionless-vault story — arguably more important once
+vault creators, not just Elyx's own managers, are choosing strategy mixes —
+that's new work, not something already shipped.
 
 ---
 
@@ -373,14 +479,18 @@ Deferred, unscheduled:  Spiko · Noether / Rails perpetuals · alfredpay (re-ver
 **Phase 2 (3–6 months) — natural second-round application:**
 - Circle CCTP inbound bridging
 - MoneyGram Ramps + Mercuryo on/off-ramp (SEP-24 built once, both layered on)
-- Permissionless factory (`create_vault` opened up), first external
-  vault creators onboarded
+- Permissionless factory — new deployer-pattern registration path (§5.1),
+  first external vault creators onboarded
 
-**Phase 3 (6–12 months):**
-- Allbridge Core (scope-fenced, user-facing only)
-- Templar Protocol, pending ABI confirmation
-- BlindPay, if LatAm depositor traction justifies it
+**Phase 3 (6–12 months) — not SCF Integration Track deliverables; funded or
+justified separately from the grant application above:**
+- Allbridge Core (scope-fenced, user-facing only) — *is* on the SCF list,
+  could fold into a future grant round
+- Templar Protocol, pending ABI confirmation — **not on the SCF Integration
+  List**; product roadmap item, not a grant deliverable
+- BlindPay, if LatAm depositor traction justifies it — on the SCF list
 - Ondo/USDY reviewed for portfolio-asset addition, pending Reg S legal review
+  — **not on the SCF Integration List**; pursued for product reasons only
 
 **Deferred, not scheduled:** Spiko (blocked pending direct business
 relationship), Noether/Rails perpetuals (break the point-in-time
