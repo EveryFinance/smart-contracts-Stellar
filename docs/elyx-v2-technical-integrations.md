@@ -38,6 +38,12 @@ Stellar ecosystem — the two justifications an accelerator reviewer and a
 protocol engineer each need, answered separately because they're different
 questions.
 
+§2.1–2.6 are the **selected six** — the vision document's committed list and
+the intended SCF grant application. §2.7 (Templar) is audited here with the
+same rigor but is **not selected**: real and useful, but not on the official
+SCF Integration List, so it's covered for completeness and future reference,
+not as part of the current selection.
+
 ### 2.1 Aquarius (AQUA) — new AMM strategy
 
 **Feasibility: High.** CoinFabrik + Certora audited. $46.1M TVL, DefiLlama-verified

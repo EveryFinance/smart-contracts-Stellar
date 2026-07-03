@@ -3,6 +3,9 @@
 Status: proposal / pre-implementation
 Branch: `feature/elyx-v2-ecosystem-architecture`
 Date: 2026-07-03
+Grant target: Stellar Community Fund (SCF) Build Award, Integration Track —
+the six integrations selected in §4 are the intended application, submitted
+in phases (§6 of the technical document)
 
 Companion document: [Elyx v2 Technical Integration Architecture](elyx-v2-technical-integrations.md)
 holds the engineering-level detail behind every integration named here —
@@ -50,8 +53,8 @@ independently-verifiable evidence support integrating this today, not just
                                           ▼
                      ┌─────────────────────────────────────────┐
                      │              Guard Contracts               │
-                     │  Blend · Soroswap · Phoenix · Aquarius     │
-                     │  StellarBroker · Templar (conditional)     │
+                     │  Blend · Soroswap · Phoenix (existing)     │
+                     │  Aquarius · StellarBroker (selected, §4)   │
                      └─────────────────────┬─────────────────────┘
                                           ▼
                          External Stellar / Soroban Protocols
@@ -160,11 +163,26 @@ might otherwise (§4).
 
 ---
 
-## 4. Future Stellar Integrations
+## 4. Selected Stellar Integrations
 
-Each of the following was chosen against one bar: independently-verifiable
-evidence of real usage or a real, callable contract — not a roadmap
-announcement — and a clean fit inside the vault's existing risk containment.
+These six are the actual selection — not a menu of candidates, the decision.
+Each cleared one bar: independently-verifiable evidence of real usage or a
+real, callable contract (not a roadmap announcement), a clean fit inside the
+vault's existing risk containment, and — since this list doubles as the
+intended SCF Build Award Integration Track application — a place on the
+official SCF Integration List. (Other protocols were evaluated and are
+covered too, in §5, but explicitly *outside* this selection: either not yet
+proven enough, not on the SCF list, or both.)
+
+| # | Integration | Category | On SCF list | Grant phase |
+|---|---|---|---|---|
+| 1 | Aquarius | AMM strategy | ✅ | Phase 1 |
+| 2 | Anchor Platform / SEP-12 | Institutional KYC | ✅ | Phase 1 |
+| 3 | StellarBroker | Execution router | ✅ | Phase 1 (bundled) |
+| 4 | Circle CCTP | Cross-chain bridge | ✅ | Phase 2 |
+| 5 | MoneyGram + Mercuryo + BlindPay | On/off-ramp | ✅ | Phase 2 (MoneyGram/Mercuryo) / 3 (BlindPay) |
+| 6 | Allbridge Core | Secondary bridge | ✅ | Phase 3 |
+
 The engineering mechanics, contract addresses, and feasibility evidence for
 each live in the companion technical document; this is the "what it is and
 why it matters" version.
@@ -228,30 +246,33 @@ deliver — and it's one integration instead of three separate AMM guards to
 build and maintain. For Stellar, using a shared router is composability over
 reinvention, which is what the ecosystem's own funding programs prefer.
 
-### 4.7 Templar Protocol — a second lending market
+---
+
+## 5. Considered, Not Selected
+
+Real protocols, genuinely evaluated, deliberately kept out of §4's selection
+— either the evidence isn't there yet, or they don't count toward the SCF
+grant this roadmap is built around, or both. Listed here so each omission
+reads as a decision, not a gap in the research.
+
+### 5.1 Templar Protocol — a second lending market, not yet
 
 A real, Halborn-audited lending protocol with $6.2M in verified Stellar TVL,
 built on a fork of Blend's own codebase — meaning it should be close to
-"shape-compatible" with the guard Elyx already runs for Blend. For Elyx, it's
-a diversification move: today 100% of the vault's lending exposure sits in
-one protocol. For Stellar, it supports a second real lending market instead
-of concentrating all Soroban lending activity in a single place. Templar is
-also expanding into RWA-collateralized borrowing, a capability Blend
-deliberately doesn't offer.
+"shape-compatible" with the guard Elyx already runs for Blend, and unlike
+Blend (supply-only by Elyx's own design), Templar is expanding into
+RWA-collateralized borrowing. Genuinely useful as a future diversification
+move away from 100% Blend lending exposure. Kept out of §4 for one concrete
+reason: **it isn't on the official SCF Integration List**, so it wouldn't
+count toward this grant regardless of its technical merit — it's a product
+roadmap item to revisit on its own timeline, not a grant deliverable.
 
-Worth being precise about: Templar isn't on the official SCF Integration
-Track partner list, so worthwhile as it is, it's a product roadmap item, not
-part of the grant deliverable in §6 of the technical document.
-
----
-
-## 5. RWA Tokenized Funds — nice to have, not committed
+### 5.2 RWA Tokenized Funds — nice to have
 
 Two regulated fund tokens were evaluated as portfolio assets a vault could
-simply hold. Neither is part of the v2 commitment — they're a later-phase
-option, tracked here for completeness, and neither is on the official SCF
-Integration Track partner list — this section is pursued for product reasons
-only, not as part of any grant application.
+simply hold. Neither is on the official SCF Integration Track partner list
+either, so like Templar, this is pursued for product reasons only, on its
+own timeline — never bundled into the grant application in §4.
 
 **Ondo Finance / USDY** is, perhaps surprisingly, freely transferable on
 Stellar today with no allowlist and real secondary-market trading volume —
@@ -278,5 +299,10 @@ add it because it's verified, fits inside what's already been proven safe,
 and does something specific for the people using the platform. The
 permissionless factory is the biggest product bet in this document — and it
 works specifically because it reuses containment Elyx already built and had
-audited, rather than asking for new trust. The integrations in §4 hold to the
-same standard.
+audited, rather than asking for new trust. The six integrations in §4 hold to
+the same standard, and are, concretely, the Stellar Community Fund Build
+Award Integration Track application this roadmap exists to support — phased
+per the timeline in the technical document (§6), starting with Aquarius and
+Anchor Platform as the first submission. Everything in §5 is real work Elyx
+still wants to do; it's just funded and justified on its own terms, not as
+part of this grant.
