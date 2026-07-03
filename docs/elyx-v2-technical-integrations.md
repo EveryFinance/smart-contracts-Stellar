@@ -10,6 +10,13 @@ matters to Elyx and to Stellar. This document is the engineering reference:
 mechanism, contract addresses, feasibility evidence, protocol flow diagrams,
 and the full audit trail behind every integration named there.
 
+**Will be done vs. nice to have**, in one line: §2.1–2.6 and §4's ✅-marked
+rows are committed (Aquarius, Anchor Platform, StellarBroker, CCTP,
+MoneyGram/Mercuryo/BlindPay, and Allbridge as a product decision outside the
+4-month grant clock). §2.7 (Templar) and §3 (RWA — Ondo/USDY, Spiko) are
+audited here with the same rigor but are explicitly *not* committed — real,
+evaluated, nice to have. Full framing: vision document, top section.
+
 ---
 
 ## 1. Existing Stellar Integrations (Baseline)

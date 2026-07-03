@@ -18,6 +18,16 @@ contract addresses, feasibility evidence, protocol flow diagrams, and the
 full audit trail. This document is the product and ecosystem narrative: what
 Elyx v2 is, why each integration matters, and what it does for Stellar.
 
+## Will be done vs. nice to have
+
+Every Stellar integration in this document falls into exactly one of two
+buckets — read this before anything else if that's all you need:
+
+| | Bucket | What's in it |
+|---|---|---|
+| ✅ | **Will be done** — committed, §4 | Aquarius, Anchor Platform / SEP-12, StellarBroker, Circle CCTP, MoneyGram + Mercuryo + BlindPay — a real product decision and, for five of the six, a single 4-month SCF grant application. **Allbridge Core** is also committed as a product decision, just not bundled into this specific 4-month application (its SCF-listed duration is unscoped — see §4.5). |
+| 💡 | **Nice to have** — evaluated, not committed, §5 | **Templar Protocol** (second lending market) and the **RWA tokenized funds** (Ondo/USDY, Spiko) — real, genuinely useful, and explicitly *not* part of the roadmap's committed work. Pursued later, on their own timeline, if at all — not scheduled, not budgeted, not part of the grant. |
+
 ---
 
 ## 1. Vision
@@ -291,12 +301,14 @@ reinvention, which is what the ecosystem's own funding programs prefer.
 
 ---
 
-## 5. Considered, Not Selected
+## 5. Nice to Have — Considered, Not Selected
 
 Real protocols, genuinely evaluated, deliberately kept out of §4's selection
 — either the evidence isn't there yet, or they don't count toward the SCF
 grant this roadmap is built around, or both. Listed here so each omission
-reads as a decision, not a gap in the research.
+reads as a decision, not a gap in the research. Nothing in this section is
+scheduled, budgeted, or part of the grant — if it happens, it happens later,
+on its own timeline.
 
 ### 5.1 Templar Protocol — a second lending market, not yet
 
