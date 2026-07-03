@@ -462,11 +462,12 @@ doesn't count toward this specific grant, whatever its product merit.
 | Spiko | **Low / blocked** (nice to have) | Allowlist-gated contract, no DEX pool, $524M TVL but inaccessible | ❌ not on the list | Direct allowlisting agreement with Spiko required |
 | alfredpay | **Unverified** | Self-serve claims, current Stellar routing unconfirmed | ✅ | Re-verify chain/compliance status |
 
-Reading the table for the grant application specifically: **Phase 1 (Aquarius
-+ Anchor Platform, §6) is 100% on-list.** Templar and the RWA "nice to have"
-tier are real product work but shouldn't be described as part of *this*
-grant's deliverable — they're roadmap items funded some other way, or by a
-future application once they mature.
+Reading the table for the grant application specifically: **every integration
+inside the 4-month application (§6) — Aquarius, StellarBroker, CCTP,
+MoneyGram, Mercuryo, BlindPay — is 100% on-list.** Templar and the RWA "nice
+to have" tier are real product work but shouldn't be described as part of
+*this* grant's deliverable — they're roadmap items funded some other way, or
+by a future application once they mature.
 
 ---
 
@@ -562,7 +563,7 @@ For the selected six (§2.1–2.6):
 - `StellarBrokerRouter` (execution router guard)
 
 CCTP, the on/off-ramp trio, and Allbridge need no new guard contract — all
-four are front-end/relayer integrations (§2.3–2.5), not vault strategies.
+three are front-end/relayer integrations (§2.3–2.5), not vault strategies.
 
 Not required for the current selection, listed for future reference only:
 `TemplarStrategy` would follow the same guard shape if Templar (§2.7,
@@ -573,8 +574,8 @@ timeline later.
 
 - Anchor Platform deployment + SEP-12 KYC provider + `add_member` relayer
 - CCTP attestation relayer / front-end integration (`mint_and_forward` caller)
-- SEP-24 client supporting MoneyGram, Mercuryo, and (phase 3) BlindPay as
-  anchors
+- SEP-24 client supporting MoneyGram and Mercuryo from Month 1, with BlindPay
+  layered on in Tranche 3 (§6) — all three inside the same 4-month application
 
 **No changes required** to vault NAV computation, fee accrual, or TVL-guard
 (`max_loss_bps`) logic — every integration above is additive to the existing

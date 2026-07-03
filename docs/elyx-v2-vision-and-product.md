@@ -238,9 +238,10 @@ why it matters" version.
 
 Aquarius is Stellar's largest DEX by TVL ($46.1M, more than 25× Soroswap and
 Phoenix's combined on-chain liquidity), audited by CoinFabrik and Certora, and
-exposes the same deposit/withdraw shape the vault already wraps twice. It's
-the single highest-leverage strategy addition available — real depth, zero
-new engineering pattern. For Stellar, it means vault capital routes into the
+exposes the same guard shape the vault already wraps twice — checked directly
+against the existing Soroswap strategy contract, not assumed. It's the single
+highest-leverage strategy addition available — real depth, zero new
+engineering pattern. For Stellar, it means vault capital routes into the
 ecosystem's deepest AMM instead of fragmenting further across venues.
 
 ### 4.2 Institutional KYC — Anchor Platform / SEP-12
