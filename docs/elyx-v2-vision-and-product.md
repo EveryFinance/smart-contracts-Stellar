@@ -29,11 +29,16 @@ list, and set their own rebalancing policy** — the same relationship Morpho Bl
 has to individual lending markets. Elyx stops being three funds and becomes the
 protocol three (and eventually many more) funds are built on.
 
-Alongside that shift: **deeper Stellar ecosystem integration** — more
-strategies, a compliant institutional onboarding path, and real
-fiat/cross-chain rails, all selected against a single bar: does
-independently-verifiable evidence support integrating this today, not just
-"is it a good idea."
+Two things ride on top of that shift:
+
+1. **Optional AI agents for vault setup and rebalancing** — a creator can
+   configure a vault in conversation instead of raw contract calls, and
+   delegate day-to-day rebalancing to an agent operating strictly within the
+   vault's own configured limits, not a privileged backdoor (§2.2).
+2. **Deeper Stellar ecosystem integration** — more strategies, a compliant
+   institutional onboarding path, and real fiat/cross-chain rails, all
+   selected against a single bar: does independently-verifiable evidence
+   support integrating this today, not just "is it a good idea."
 
 ### Figure 1 — v2 platform topology
 
@@ -115,7 +120,35 @@ enforced — but later, when the new vault's manager calls
 Gamma today. Moving that check earlier, into creation itself, is an open
 design decision (Technical doc §5.1).
 
-### 2.2 Institutional Onboarding
+### 2.2 AI Agents for Vault Setup and Rebalancing
+
+Two distinct uses, both optional: an agent that helps a creator configure a
+new vault (asset mix, guard selection from the whitelist, fee parameters,
+in plain conversation rather than raw contract calls), and an agent that
+proposes day-to-day rebalancing once a vault is running.
+
+The rebalancing case is the one worth being precise about, because it's
+safe to build for a reason specific to this codebase, not just in general.
+The vault's existing role model already separates `manager` (config, fees,
+guards) from `trader` (can only call `execute_op` within
+`AuthorizedOps(guard)`). An agent gets a `trader` key, never a `manager`
+key, and every rebalancing decision it proposes still passes through the
+same checks a human trader would trip — currently just `max_loss_bps`, the
+TVL guard verified live in `execute_op` (Technical doc §5.3; the
+`ConcentrationLimitExceeded` error code exists but nothing wires it up
+today, so it isn't a control an agent — or anyone — is actually bound by
+yet). The honest framing: **the role separation was built for human
+operational discipline, and it's the right shape to constrain an autonomous
+agent too — but it's a thinner backstop than "TVL guard plus a
+concentration guard" would suggest, until the concentration check is
+actually built.**
+
+Scope for v2: agent proposes a transaction, a keeper submits it as
+`trader`, the vault's existing guards accept or revert it. No agent gets
+standing authority to change fees, guards, or asset lists — that stays
+`manager`-only, human-held (ideally multisig).
+
+### 2.3 Institutional Onboarding
 
 `set_private_pool` and `add_member`/`remove_member` already exist and already
 gate deposits to an allowlist. v2 wires a real SEP-12 KYC pipeline through
@@ -128,7 +161,7 @@ instead of a theoretical one.
 *Flow diagram and off-chain relayer detail: see the Technical Integration
 Architecture document, §2.2.*
 
-### 2.3 Retail On/Off-Ramp
+### 2.4 Retail On/Off-Ramp
 
 A front-end-only layer — no vault contract touches this — letting a
 non-crypto-native depositor fund or exit a vault via card or cash, without
@@ -307,9 +340,14 @@ The thread running through this whole roadmap is the same one that got Elyx
 through its first audit clean: don't add a capability because it's available,
 add it because it's verified, fits inside what's already been proven safe,
 and does something specific for the people using the platform. The
-permissionless factory is the biggest product bet in this document — and it
-works specifically because it reuses containment Elyx already built and had
-audited, rather than asking for new trust.
+permissionless factory and the AI-agent layer on top of it are the biggest
+product bets in this document — and both work specifically because they
+reuse containment Elyx already built and had audited (the `trader` role,
+the TVL guard), rather than asking for new trust. Note the one honest gap
+flagged in §2.2: the TVL guard alone is a thinner backstop than "TVL guard
+plus concentration guard" would suggest, since the concentration check
+isn't actually wired up yet — worth closing before agents are handling
+real capital, not just vault creation conversations.
 
 Five of the six integrations in §4 are, concretely, a single Stellar
 Community Fund Build Award Integration Track application capped at 4 months
