@@ -28,6 +28,39 @@ Two things ride on top of that shift:
 This document lays out the product, audits every integration under
 consideration against that bar, and sequences the work.
 
+### Figure 1 — v2 platform topology
+
+```
+                          ┌─────────────────────────────┐
+                          │      Factory (Registry)       │
+                          │                                │
+                          │  create_vault(...)             │  ← permissionless in v2
+                          │  AuthorizedAssets               │     (admin-only today)
+                          │  AuthorizedGuards                │
+                          └───────────────┬───────────────┘
+                                          │ deploys, whitelist-bounded
+                    ┌─────────────────────┼─────────────────────┐
+                    ▼                     ▼                     ▼
+             ┌─────────────┐       ┌─────────────┐       ┌─────────────┐
+             │ Vault Alpha  │       │ Vault Beta   │  ...  │  Vault N     │
+             │ (Elyx-run)   │       │ (Elyx-run)   │       │ (community-  │
+             │              │       │              │       │  created)    │
+             └──────┬───────┘       └──────┬───────┘       └──────┬───────┘
+                    │   deposit / withdraw / execute_op            │
+                    └─────────────────────┬───────────────────────┘
+                                          ▼
+                     ┌─────────────────────────────────────────┐
+                     │              Guard Contracts               │
+                     │  Blend · Soroswap · Phoenix · Aquarius     │
+                     │  StellarBroker · Templar (conditional)     │
+                     └─────────────────────┬─────────────────────┘
+                                          ▼
+                         External Stellar / Soroban Protocols
+
+  Off-chain / front-end layer (no vault contract changes):
+  Anchor Platform (SEP-12 KYC)  ·  MoneyGram / Mercuryo / BlindPay (SEP-24)  ·  Circle CCTP relayer
+```
+
 ---
 
 ## 2. Product & Services
@@ -51,6 +84,21 @@ What does need new work:
   seed-deposit inflation-attack protection still requires a real seed and
   nothing on-chain stops a low-quality creator from launching a thin vault.
 
+```
+ Vault Creator                    Factory                        Vault (new)
+     │                               │                                │
+     │  create_vault(manager=self,   │                                │
+     │    assets, guards, seed)      │                                │
+     ├──────────────────────────────►│                                │
+     │                               │ check: assets ⊆ AuthorizedAssets
+     │                               │ check: guards ⊆ AuthorizedGuards
+     │                               │ deploy + seed_deposit           │
+     │                               ├───────────────────────────────►│
+     │                               │                                │ total_supply > 0
+     │◄──────────────────────────────┤   vault address                │ (inflation-attack safe)
+     │                               │                                │
+```
+
 ### 2.2 AI Rebalancing Agents
 
 The vault's existing role model already separates `manager` (config, fees,
@@ -68,6 +116,23 @@ Scope for v2: agent proposes a rebalancing transaction, a keeper submits it as
 standing authority to change fees, guards, or asset lists — that stays
 `manager`-only, human-held (ideally multisig, see §4.2).
 
+```
+ Rebalancing Agent (off-chain)                        Vault (on-chain)
+        │                                                   │
+        │  observes NAV, positions, market data              │
+        │◄────────────────────────────────────────────────── │  get_nav / get_positions (view, read-only)
+        │                                                   │
+        │  proposes rebalance tx, signs as `trader`           │
+        │  (scoped key — cannot touch fees/guards/assets)     │
+        ├──────────────────────────────────────────────────► │  execute_op(caller=trader, guard, fn, args)
+        │                                                   │
+        │                                                   │  checks: fn ∈ AuthorizedOps(guard)
+        │                                                   │  checks: max_loss_bps      (TVL guard)
+        │                                                   │  checks: max_concentration_bps
+        │                                                   │
+        │◄── reverts if any check fails, no override path ── │  (agent = same blast radius as human trader)
+```
+
 ### 2.3 Institutional Onboarding
 
 `set_private_pool` and `add_member`/`remove_member` already exist and already
@@ -75,11 +140,43 @@ gate deposits to an allowlist. v2 wires a real SEP-12 KYC pipeline through
 Stellar's Anchor Platform in front of that allowlist (§4.2), and pairs it with
 institutional custody for the `manager` role itself.
 
+```
+ Institution               SEP-12 KYC Provider        Anchor Platform          Vault
+      │                          │                          │                    │
+      │  submit KYC/KYB docs      │                          │                    │
+      ├─────────────────────────►│                          │                    │
+      │                          │  verify + approve         │                    │
+      │                          ├─────────────────────────►│                    │
+      │                          │                          │  relayer calls      │
+      │                          │                          ├───────────────────►│  add_member(institution)
+      │                          │                          │                    │
+      │  deposit into private-pool vault ────────────────────────────────────────►│
+```
+
 ### 2.4 Retail On/Off-Ramp
 
 A front-end-only layer (§4.4) — no vault contract touches this — letting a
 non-crypto-native depositor fund or exit a vault via card or cash, without
 first acquiring USDC on another exchange.
+
+```
+                          ┌───────────────────────────┐
+   Depositor (fiat) ─────►│   SEP-24 Interactive UI     │
+                          └─────────────┬───────────────┘
+                                        │ routes to selected anchor
+                    ┌───────────────────┼───────────────────┐
+                    ▼                   ▼                   ▼
+             MoneyGram Ramps       Mercuryo             BlindPay
+             cash, 170+            card / Apple /       Pix / SPEI / PSE
+             countries              Google Pay           (LatAm rails)
+                    │                   │                   │
+                    └───────────────────┼───────────────────┘
+                                        ▼
+                          depositor's Stellar account
+                                        │
+                                        ▼
+                                vault.deposit(...)
+```
 
 ---
 
@@ -171,6 +268,27 @@ to the `CctpForwarder` contract address, **not** the end recipient. Per
 Circle's own docs, funds sent with the wrong recipient are permanently stuck
 and unrecoverable. This is a one-time integration detail, not an ongoing risk,
 but it is a hard failure mode if a front-end gets it wrong once.
+
+```
+ Source chain (e.g. Ethereum)        Circle Attestation Service        Stellar (destination)
+        │                                      │                              │
+        │ burn USDC                             │                              │
+        │ mintRecipient      = CctpForwarder     │                              │
+        │ destinationCaller  = CctpForwarder     │                              │
+        ├───────────────────────────────────────►│                              │
+        │                                       │  signs attestation           │
+        │                                       ├──────────────────────────────►│
+        │                                       │                              │
+        │            anyone calls mint_and_forward(message, attestation)        │
+        │                                       │                              ▼
+        │                                       │                     CctpForwarder contract
+        │                                       │                              │ mints via MessageTransmitter
+        │                                       │                              ▼
+        │                                       │                   depositor's Stellar account
+        │                                       │                              │
+        │                                       │                              ▼
+        │                                       │                       vault.deposit(...)
+```
 
 **Utility to Elyx:** widens the USDC deposit funnel — Elyx's base asset — from
 23+ external chains, with no new trust root, since Circle is already
@@ -367,6 +485,22 @@ existing audited core.
 Sequenced to match the SCF Build Award's three-tranche milestone structure
 and to avoid the track's explicit overscoping warning (most integrations
 should run under ~40 dev-hours per partner).
+
+```
+Phase 1  (0–3 mo)  ████████████████
+                    Aquarius · Anchor Platform / SEP-12 KYC · StellarBroker
+                    → submit now, Medium tier ($50K–$100K)
+
+Phase 2  (3–6 mo)                  ████████████████
+                                    Circle CCTP · MoneyGram + Mercuryo · Permissionless factory
+                                    → natural second-round application
+
+Phase 3  (6–12 mo)                                 ████████████████████████
+                                                    Allbridge · Templar · BlindPay ·
+                                                    AI agent pilot · Ondo/USDY legal review
+
+Deferred, unscheduled:  Spiko · Noether / Rails perpetuals · alfredpay (re-verify)
+```
 
 **Phase 1 (0–3 months) — submit as the grant application, Medium tier
 ($50K–$100K):**
