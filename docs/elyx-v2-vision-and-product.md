@@ -4,8 +4,13 @@ Status: proposal / pre-implementation
 Branch: `feature/elyx-v2-ecosystem-architecture`
 Date: 2026-07-03
 Grant target: Stellar Community Fund (SCF) Build Award, Integration Track —
-the six integrations selected in §4 are the intended application, submitted
-in phases (§6 of the technical document)
+five of the six integrations selected in §4 (everything except Allbridge)
+form a single application capped at **4 months total**, sequenced against
+the SCF Integration List's own published per-partner duration estimates
+(technical document §6). Allbridge's SCF-listed duration is "TBD" — it stays
+selected as a product decision but is held out of this specific application
+until it has a scoped duration, rather than let one unscoped item put the
+4-month cap at risk.
 
 Companion document: [Elyx v2 Technical Integration Architecture](elyx-v2-technical-integrations.md)
 holds the engineering-level detail behind every integration named here —
@@ -167,14 +172,20 @@ official SCF Integration List. (Other protocols were evaluated and are
 covered too, in §5, but explicitly *outside* this selection: either not yet
 proven enough, not on the SCF list, or both.)
 
-| # | Integration | Category | On SCF list | Grant phase |
-|---|---|---|---|---|
-| 1 | Aquarius | AMM strategy | ✅ | Phase 1 |
-| 2 | Anchor Platform / SEP-12 | Institutional KYC | ✅ | Phase 1 |
-| 3 | StellarBroker | Execution router | ✅ | Phase 1 (bundled) |
-| 4 | Circle CCTP | Cross-chain bridge | ✅ | Phase 2 |
-| 5 | MoneyGram + Mercuryo + BlindPay | On/off-ramp | ✅ | Phase 2 (MoneyGram/Mercuryo) / 3 (BlindPay) |
-| 6 | Allbridge Core | Secondary bridge | ✅ | Phase 3 |
+| # | Integration | Category | On SCF list | SCF duration estimate | In the 4-month application? |
+|---|---|---|---|---|---|
+| 1 | Aquarius | AMM strategy | ✅ | Under 1 day | Yes — Tranche 1 |
+| 2 | Anchor Platform / SEP-12 | Institutional KYC | ✅ | 1+ month | Yes — Tranches 1–3 (long pole) |
+| 3 | StellarBroker | Execution router | ✅ | 1–5 days | Yes — Tranche 1 |
+| 4 | Circle CCTP | Cross-chain bridge | ✅ | 1–5 days | Yes — Tranche 1 |
+| 5 | MoneyGram + Mercuryo + BlindPay | On/off-ramp | ✅ | MoneyGram 1+ month · Mercuryo/BlindPay 1–2wk | Yes — Tranches 1–3 |
+| 6 | Allbridge Core | Secondary bridge | ✅ | **TBD — unscoped by SCF** | **No** — held out until scoped (see below) |
+
+Five of the six fit comfortably inside 4 months once sequenced against the
+SCF's own duration estimates (technical document §6); Allbridge's duration
+was never actually published, which makes it the one item unsafe to promise
+inside a fixed-length application. It stays a selected product decision, it's
+just not bundled into this specific grant's clock.
 
 The engineering mechanics, contract addresses, and feasibility evidence for
 each live in the companion technical document; this is the "what it is and
@@ -228,6 +239,12 @@ only and never held as a vault position. For Elyx, it broadens which chains
 can fund a vault beyond CCTP's USDC-only path. For Stellar, it diversifies
 which bridges route liquidity into the network rather than concentrating all
 cross-chain trust in one provider.
+
+Selected as a product decision, but held out of the current 4-month grant
+application specifically: SCF lists its integration duration as "TBD" rather
+than an estimate, and an unscoped item doesn't belong in a fixed-length
+application. Revisit once it has a real duration, likely as its own
+follow-on submission.
 
 ### 4.6 StellarBroker — one router instead of three guards
 
@@ -292,10 +309,14 @@ add it because it's verified, fits inside what's already been proven safe,
 and does something specific for the people using the platform. The
 permissionless factory is the biggest product bet in this document — and it
 works specifically because it reuses containment Elyx already built and had
-audited, rather than asking for new trust. The six integrations in §4 hold to
-the same standard, and are, concretely, the Stellar Community Fund Build
-Award Integration Track application this roadmap exists to support — phased
-per the timeline in the technical document (§6), starting with Aquarius and
-Anchor Platform as the first submission. Everything in §5 is real work Elyx
-still wants to do; it's just funded and justified on its own terms, not as
-part of this grant.
+audited, rather than asking for new trust.
+
+Five of the six integrations in §4 are, concretely, a single Stellar
+Community Fund Build Award Integration Track application capped at 4 months
+— sequenced against the SCF's own published per-partner duration estimates,
+not an internal guess (technical document §6). The sixth, Allbridge, is a
+real product decision that stays out of this specific application because
+SCF never actually scoped a duration for it, and a 4-month hard cap is the
+wrong place to absorb an unknown. Everything in §5 is real work Elyx still
+wants to do; it's just funded and justified on its own terms, not as part of
+this grant.

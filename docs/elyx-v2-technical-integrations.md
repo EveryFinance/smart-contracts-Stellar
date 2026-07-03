@@ -464,52 +464,79 @@ that's new work, not something already shipped.
 
 ## 6. Timeline
 
-Sequenced to match the SCF Build Award's three-tranche milestone structure
-and to avoid the track's explicit overscoping warning (most integrations
-should run under ~40 dev-hours per partner).
+**Hard constraint: the grant application must complete within 4 months
+total.** Sequenced against the SCF Integration List's own published
+per-partner duration estimates (`stellar.gitbook.io/scf-handbook/.../
+integration-list`), not an internal guess:
+
+| Integration | Official SCF duration estimate |
+|---|---|
+| Aquarius | Under 1 day |
+| StellarBroker | 1–5 days |
+| Circle CCTP | 1–5 days |
+| Mercuryo | 1–2 weeks |
+| BlindPay | 1–2 weeks |
+| Anchor Platform | **1+ month** |
+| MoneyGram Ramps | **1+ month** |
+| Allbridge Core | **TBD — not estimated by SCF at all** |
+
+Anchor Platform and MoneyGram are the long poles, and both can run in
+parallel with everything else and with each other — they don't block or
+depend on one another. Everything else is short enough to sequence around
+them inside the same window. **Allbridge is the one item that doesn't fit a
+4-month hard cap responsibly**: SCF itself hasn't scoped a duration for it,
+and committing an unscoped item to a fixed-length application is exactly the
+overscoping risk the track warns against. It's moved out of this
+application (below), not dropped from the roadmap.
 
 ```
-Phase 1  (0–3 mo)  ████████████████
-                    Aquarius · Anchor Platform / SEP-12 KYC · StellarBroker
-                    → submit now, Medium tier ($50K–$100K)
+Month 1   ████████████████
+          Aquarius (<1d) · StellarBroker (1-5d) · CCTP (1-5d)  — shipped early
+          Anchor Platform KYC provider selection — started, parallel track
+          MoneyGram partner application — started, parallel track
 
-Phase 2  (3–6 mo)                  ████████████████
-                                    Circle CCTP · MoneyGram + Mercuryo · Permissionless factory
-                                    → natural second-round application
+Month 2   ████████████████
+          Anchor Platform relayer build-out — parallel track continues
+          MoneyGram partner approval — parallel track continues (unpublished
+            turnaround is the single biggest schedule risk in this plan)
+          Mercuryo — sequenced in once shared SEP-24 client work exists
 
-Phase 3  (6–12 mo)                                 ████████████████████████
-                                                    Allbridge · Templar · BlindPay ·
-                                                    Ondo/USDY legal review
+Month 3   ████████████████
+          Anchor Platform + MoneyGram — target completion
+          BlindPay (1-2wk) — low-risk, slotted in as buffer-filler
 
-Deferred, unscheduled:  Spiko · Noether / Rails perpetuals · alfredpay (re-verify)
+Month 4   ████████████████
+          Contingency buffer for MoneyGram's unpublished approval timeline
+          Integration testing across all five · milestone tranche closeout
+
+Moved out of this application: Allbridge Core (SCF duration: TBD — pursue
+once scoped in a direct SCF conversation, likely a second-round item)
 ```
 
-**Phase 1 (0–3 months) — submit as the grant application, Medium tier
-($50K–$100K):**
-- Aquarius strategy guard
-- Anchor Platform / SEP-12 institutional KYC pathway
-- StellarBroker router (bundled in as low-cost connective tissue)
+**Tranche 1 (Month 1)** — the fast wins, ships first: Aquarius, StellarBroker,
+CCTP. Anchor Platform and MoneyGram kicked off in parallel the same month
+since they're the long poles.
 
-**Phase 2 (3–6 months) — natural second-round application:**
-- Circle CCTP inbound bridging
-- MoneyGram Ramps + Mercuryo on/off-ramp (SEP-24 built once, both layered on)
-- Permissionless factory — new deployer-pattern registration path (§5.1),
-  first external vault creators onboarded
+**Tranche 2 (Months 2–3)** — Anchor Platform and MoneyGram land; Mercuryo
+layers on once the shared SEP-24 client exists (near-zero incremental cost,
+per §2.4).
 
-**Phase 3 (6–12 months) — not SCF Integration Track deliverables; funded or
-justified separately from the grant application above:**
-- Allbridge Core (scope-fenced, user-facing only) — *is* on the SCF list,
-  could fold into a future grant round
-- Templar Protocol, pending ABI confirmation — **not on the SCF Integration
-  List**; product roadmap item, not a grant deliverable
-- BlindPay, if LatAm depositor traction justifies it — on the SCF list
-- Ondo/USDY reviewed for portfolio-asset addition, pending Reg S legal review
-  — **not on the SCF Integration List**; pursued for product reasons only
+**Tranche 3 (Month 3–4)** — BlindPay, final integration testing across all
+five, and closeout. Built-in buffer against MoneyGram's partner-approval
+process, which has no published turnaround time and is the plan's real risk.
 
-**Deferred, not scheduled:** Spiko (blocked pending direct business
-relationship), Noether/Rails perpetuals (break the point-in-time
-`max_loss_bps` assumption — needs a continuous liquidation-risk guard that
-doesn't exist yet), alfredpay (pending chain/compliance re-verification).
+**Explicitly out of this 4-month application, not out of the roadmap:**
+- **Allbridge Core** — on the SCF list, real and audited, but its duration is
+  officially unscoped; get it scoped directly with SCF before committing it
+  to any application, this one or the next.
+- **Permissionless factory** (§5.1) — genuinely bigger than a 4-month,
+  single-partner-style integration; it's platform architecture work, not an
+  SCF Integration List item, and shouldn't be squeezed into this
+  application's scope or timeline.
+- **Templar Protocol, Ondo/USDY** — as established in §4, neither is on the
+  SCF Integration List regardless of timeline; pursued on their own schedule.
+- **Spiko, Noether/Rails perpetuals, alfredpay** — blocked on external
+  dependencies (§4) independent of any timeline question.
 
 ---
 
