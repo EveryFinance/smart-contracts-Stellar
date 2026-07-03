@@ -55,8 +55,11 @@ not as part of the current selection.
 
 **Feasibility: High.** CoinFabrik + Certora audited. $46.1M TVL, DefiLlama-verified
 2026-07-03 — more than 25× Soroswap and Phoenix's combined on-chain liquidity.
-Exposes the same guard shape (`deposit`/`withdraw`) the vault already wraps
-twice.
+Exposes the same guard shape the vault already wraps twice — verified by
+reading `contracts/strategies/soroswap_lp/src/lib.rs` directly, not assumed:
+`get_total_value(vault) -> i128`, `withdraw_fraction(vault, numerator,
+denominator, to)`, `asset_in_use(vault, asset) -> bool`, plus
+`add_liquidity`/`remove_liquidity`/`swap`.
 
 **Utility to Elyx:** the single highest-leverage strategy addition available —
 real liquidity depth, zero new engineering pattern, zero new risk category.
@@ -72,6 +75,36 @@ matching how Blend/Soroswap/Phoenix are already wired in: factory admin adds
 it to `factory.AuthorizedGuards` (global whitelist), then each vault's
 manager calls `vault.add_active_guard` and `vault.set_authorized_ops` to turn
 it on for that specific vault. No vault core changes.
+
+```
+      ┌───────────────────────────────────────────────────────────┐
+      │ Vault                                                     │
+      │ execute_op(caller, guard=AquariusStrategy, fn_name, args) │
+      └───────────────────────────────────────────────────────────┘
+                           │
+                           │  factory-whitelisted, then vault.add_active_guard
+                           │  (same two-step as Blend/Soroswap/Phoenix today)
+                           ▼
+      ┌───────────────────────────────────────────────────────────┐
+      │ AquariusStrategy  (new guard — verified same shape as     │
+      │ the existing SoroswapLpStrategy contract, checked against │
+      │ contracts/strategies/soroswap_lp/src/lib.rs)              │
+      │                                                           │
+      │ get_total_value(vault) -> i128                            │
+      │ withdraw_fraction(vault, numerator, denominator, to)      │
+      │ asset_in_use(vault, asset) -> bool                        │
+      │ add_liquidity / remove_liquidity / swap (vault, ...)      │
+      └───────────────────────────────────────────────────────────┘
+                           │
+                           │  calls Aquarius's own pool contract
+                           ▼
+      ┌────────────────────────────────────────────────────────┐
+      │ Aquarius AMM pool contract                             │
+      │ deposit / withdraw (per docs.aqua.network — Aquarius's │
+      │ own interface, not independently confirmed against     │
+      │ their source the way the guard shape above is)         │
+      └────────────────────────────────────────────────────────┘
+```
 
 ### 2.2 Anchor Platform / SEP-12 — institutional KYC pathway
 
@@ -185,22 +218,25 @@ if/when LatAm traction justifies it, and leave alfredpay pending verification
 of its current chain.**
 
 ```
-                          ┌───────────────────────────┐
-   Depositor (fiat) ─────►│   SEP-24 Interactive UI     │
-                          └─────────────┬───────────────┘
-                                        │ routes to selected anchor
-                    ┌───────────────────┼───────────────────┐
-                    ▼                   ▼                   ▼
-             MoneyGram Ramps       Mercuryo             BlindPay
-             cash, 170+            card / Apple /       Pix / SPEI / PSE
-             countries              Google Pay           (LatAm rails)
-                    │                   │                   │
-                    └───────────────────┼───────────────────┘
-                                        ▼
-                          depositor's Stellar account
-                                        │
-                                        ▼
-                                vault.deposit(...)
+      ┌──────────────────────────┐
+      │ Depositor (fiat)         │
+      │ SEP-24 Interactive UI    │
+      └────────────┬─────────────┘
+                    │  routes to whichever anchor the depositor picks:
+                    │
+                    │   MoneyGram Ramps — cash, 170+ countries
+                    │   Mercuryo        — card / Apple Pay / Google Pay
+                    │   BlindPay        — Pix / SPEI / PSE (LatAm rails)
+                    ▼
+      ┌──────────────────────────┐
+      │ Depositor's Stellar      │
+      │ account (funded)         │
+      └────────────┬─────────────┘
+                    │
+                    ▼
+      ┌──────────────────────────┐
+      │ vault.deposit(...)       │
+      └──────────────────────────┘
 ```
 
 **Impact on Stellar:** channels Elyx's on/off-ramp traffic through Stellar's
@@ -228,6 +264,32 @@ rather than concentrating all cross-chain trust in one provider.
 into their own Stellar account via Allbridge, then deposits normally. No
 guard contract, no vault change.
 
+```
+      ┌─────────────────────────────────────────────────┐
+      │ External chain  (e.g. Base, Arbitrum, Optimism) │
+      │ user bridges their own funds via Allbridge Core │
+      └─────────────────────────────────────────────────┘
+                           │
+                           │  liquidity-pool + cross-chain messaging
+                           │  (the mechanism itself, not an Elyx contract)
+                           ▼
+      ┌─────────────────────────────────┐
+      │ Depositor's own Stellar account │
+      │ receives bridged asset directly │
+      └─────────────────────────────────┘
+                           │
+                           │  depositor then deposits normally, like any other funding source
+                           ▼
+      ┌───────────────────────────────────────┐
+      │ vault.deposit(amount, from=depositor) │
+      └───────────────────────────────────────┘
+
+No guard contract exists for Allbridge, deliberately: bridged assets
+never sit inside the vault's own accounting boundary. Contrast with
+Aquarius/StellarBroker (this document), which do get a guard because the
+vault holds a position there — Allbridge never does.
+```
+
 ### 2.6 StellarBroker — execution router
 
 **Feasibility: Medium-High.** Runtime Verification-audited (on-chain
@@ -249,6 +311,37 @@ prefers funding integration of a shared router over N bespoke ones.
 on-chain settlement contract in place of calling Soroswap/Aquarius/Phoenix
 pair contracts directly — same two-step activation as Aquarius (§2.1):
 factory-whitelisted, then activated per-vault via `add_active_guard`.
+
+```
+      ┌──────────────────────────────────────────────────────────────┐
+      │ Vault                                                        │
+      │ execute_op(caller, guard=StellarBrokerRouter, fn_name, args) │
+      └──────────────────────────────────────────────────────────────┘
+                           │
+                           │  factory-whitelisted, then vault.add_active_guard
+                           ▼
+      ┌─────────────────────────────────────────────────────┐
+      │ StellarBrokerRouter  (new guard)                    │
+      │                                                     │
+      │ swap(vault, amount_in, min_out, path) -> amount_out │
+      └─────────────────────────────────────────────────────┘
+                           │
+                           │  on-chain settlement call, single transaction
+                           ▼
+      ┌─────────────────────────────────────────────────┐
+      │ StellarBroker on-chain settlement contract      │
+      │ (the piece Runtime Verification's audit covers) │
+      └─────────────────────────────────────────────────┘
+                           │
+                           │  route computed off-chain beforehand by StellarBroker's
+                           │  matcher engine — a server watching ledger state, not a
+                           │  Soroban contract; splits one order across venues below
+                           ▼
+      ┌──────────┐   ┌──────────┐   ┌─────────┐
+      │ Soroswap │   │ Aquarius │   │ Phoenix │
+      │ $1.24M   │   │ $46.1M   │   │ $547K   │
+      └──────────┘   └──────────┘   └─────────┘
+```
 
 ### 2.7 Templar Protocol — secondary lending (conditional)
 
@@ -277,6 +370,37 @@ deposit into; identify the curator for any Stellar market before integrating.
 **Next step before committing:** pull the actual contract ABI from
 `app.templarfi.org` or Templar's GitHub and confirm it against the guard
 interface Elyx's Blend strategy already implements.
+
+```
+      ┌──────────────────────────────────────────────────────────┐
+      │ Vault                                                    │
+      │ execute_op(caller, guard=TemplarStrategy, fn_name, args) │
+      └──────────────────────────────────────────────────────────┘
+                           │
+                           │  same shape as BlendStrategy — verified against
+                           │  contracts/strategies/blend/src/lib.rs — IF Templar's own
+                           │  ABI matches once confirmed (not yet done, see above)
+                           ▼
+      ┌─────────────────────────────────────────────────────────────────┐
+      │ TemplarStrategy  (hypothetical guard, not yet built —           │
+      │ Templar is 'nice to have', not selected, see vision doc)        │
+      │                                                                 │
+      │ get_total_value(vault) -> i128        [same names as Blend]     │
+      │ withdraw_fraction(vault, numerator, denominator, to)            │
+      │ asset_in_use(vault, asset) -> bool                              │
+      │ supply(vault, pool, asset, amount) / withdraw_from_lending(...) │
+      └─────────────────────────────────────────────────────────────────┘
+                           │
+                           │  calls Templar's own Soroban Vault contract
+                           ▼
+      ┌──────────────────────────────────────────────────────────┐
+      │ Templar 'Cypher Lending' Soroban Vault contract          │
+      │ curator-set risk params — collateral, liquidation terms  │
+      │ set per-market, not fixed protocol-wide like Blend       │
+      │ (app.templarfi.org — exact ABI not yet pulled and diffed │
+      │ against the guard interface assumed above)               │
+      └──────────────────────────────────────────────────────────┘
+```
 
 ---
 
