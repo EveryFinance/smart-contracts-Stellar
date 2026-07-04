@@ -13,7 +13,7 @@ and the full audit trail behind every integration named there.
 **Will be done vs. nice to have**, in one line: §2.1–2.6 and §4's ✅-marked
 rows are committed (Aquarius, Anchor Platform, StellarBroker, CCTP,
 MoneyGram/Mercuryo/BlindPay, and Allbridge as a product decision outside the
-4-month grant clock). §2.7 (Templar) and §3 (RWA — Ondo/USDY, Spiko) are
+4-month rollout clock). §2.7 (Templar) and §3 (RWA — Ondo/USDY, Spiko) are
 audited here with the same rigor but are explicitly *not* committed — real,
 evaluated, nice to have. Full framing: vision document, top section.
 
@@ -41,15 +41,15 @@ Aquarius (§2.1) matter more than they might otherwise.
 
 Each entry states the mechanism, the feasibility verdict with the evidence
 behind it, why it's useful to Elyx specifically, and the impact on the wider
-Stellar ecosystem — the two justifications an accelerator reviewer and a
+Stellar ecosystem — the two justifications a product stakeholder and a
 protocol engineer each need, answered separately because they're different
 questions.
 
-§2.1–2.6 are the **selected six** — the vision document's committed list and
-the intended SCF grant application. §2.7 (Templar) is audited here with the
-same rigor but is **not selected**: real and useful, but not on the official
-SCF Integration List, so it's covered for completeness and future reference,
-not as part of the current selection.
+§2.1–2.6 are the **selected six** — the vision document's committed list.
+§2.7 (Templar) is audited here with the same rigor but is **not selected**:
+real and useful, but with a thinner track record and an unconfirmed
+contract ABI, so it's covered for completeness and future reference, not as
+part of the current selection.
 
 ### 2.1 Aquarius (AQUA) — new AMM strategy
 
@@ -61,13 +61,23 @@ reading `contracts/strategies/soroswap_lp/src/lib.rs` directly, not assumed:
 denominator, to)`, `asset_in_use(vault, asset) -> bool`, plus
 `add_liquidity`/`remove_liquidity`/`swap`.
 
+**On timeline: a commonly-cited estimate for this class of Stellar
+integration ("under 1 day") is not the real engineering estimate for this
+one, and shouldn't be treated as such.** This is a *new smart contract*
+handling real deposits, not an API wrapper. The existing `SoroswapLpStrategy`
+guard it's modeled on is 650 lines of contract code backed by 1,345 lines of
+tests (43 test functions) — checked directly in this repo. Building
+`AquariusStrategy` to the same standard realistically needs **1–2 weeks**
+for design, implementation, and testing, not under a day. The thinner
+figure likely reflects a wallet/API-style integration effort — it doesn't
+apply cleanly to a new audited Soroban contract handling vault funds.
+
 **Utility to Elyx:** the single highest-leverage strategy addition available —
 real liquidity depth, zero new engineering pattern, zero new risk category.
 
 **Impact on Stellar:** routes vault capital into Stellar's largest DEX by TVL,
 deepening core AMM liquidity instead of fragmenting it across more venues —
-literally the "combine existing building blocks" mandate the SCF Integration
-Track exists to fund.
+composing with an existing building block rather than reinventing one.
 
 **Technical integration:** new `AquariusStrategy` guard contract implementing
 `get_total_value` / `withdraw_fraction` / `asset_in_use`, two-step activation
@@ -121,7 +131,7 @@ live Stellar support) operationally real rather than theoretical.
 
 **Impact on Stellar:** a reusable reference — a non-custodial Soroban vault
 wiring real KYC through Stellar's own Anchor Platform rather than a bespoke
-gate is exactly the composable pattern other SCF teams can copy.
+gate is exactly the composable pattern other Stellar builders can point to.
 
 ```
  Institution               SEP-12 KYC Provider        Anchor Platform          Vault
@@ -188,7 +198,7 @@ but it is a hard failure mode if a front-end gets it wrong once.
 implicitly trusted as USDC's issuer.
 
 **Impact on Stellar:** reinforces USDC as Stellar's primary settlement asset
-at the moment SDF is pushing CCTP as flagship 2026 infrastructure.
+at the moment CCTP is being pushed as flagship 2026 infrastructure.
 
 **Technical integration:** front-end/relayer calls `mint_and_forward` with a
 valid Circle attestation; USDC lands directly in the depositor's Stellar
@@ -198,7 +208,7 @@ changes; TypeScript client bindings exist in `github.com/circlefin/stellar-cctp`
 ### 2.4 On/off-ramp — multi-provider, not single-vendor
 
 **Feasibility: High, but the vendor mix matters more than any single pick.**
-Comparing every officially-recognized SCF on-ramp partner side by side:
+Comparing the major Stellar on-ramp partners side by side:
 
 | Provider | Mechanism | Access model | Sweet spot |
 |---|---|---|---|
@@ -298,14 +308,23 @@ normal and expected split for a DEX aggregator, same architecture 1inch and
 Jupiter use). Already routes across Soroswap, Aquarius, Phoenix, and the
 classic Stellar DEX/SDEX.
 
+**On timeline: same correction as Aquarius (§2.1) applies here.** A
+commonly-cited estimate of "1–5 days" is plausible for wiring a client
+against StellarBroker's existing API, but `StellarBrokerRouter` is still a
+new Soroban guard contract that has to be written, unit-tested, and
+integration-tested against the vault's own guard whitelist before it can
+touch real funds — realistically **1–2 weeks**, using the same
+`SoroswapLpStrategy` size/test-coverage baseline as the reference point.
+
 **Utility to Elyx:** given how thin Soroswap's and Phoenix's own liquidity
 turned out to be ($1.24M and $547K respectively), routing trades through a
 router that automatically splits a single order across multiple pools for
 best execution matters more than a naive single-venue guard would deliver.
 One integration instead of three separate AMM guards to build and maintain.
 
-**Impact on Stellar:** composability over reinvention — the SCF explicitly
-prefers funding integration of a shared router over N bespoke ones.
+**Impact on Stellar:** composability over reinvention — integrating a shared
+router benefits every protocol using it, instead of every team building its
+own bespoke version.
 
 **Technical integration:** one guard contract calling StellarBroker's
 on-chain settlement contract in place of calling Soroswap/Aquarius/Phoenix
@@ -441,13 +460,8 @@ near-term work.
 
 ## 4. Feasibility Audit — Summary
 
-The **SCF list** column matters as much as feasibility for grant purposes:
-the Build Award Integration Track only funds work touching a partner on its
-official list — a technically excellent integration that isn't listed
-doesn't count toward this specific grant, whatever its product merit.
-
 **Mainnet, not testnet, confirmed for every integration in this table.**
-Every ✅-marked item and the nice-to-have row are live with real economic
+Every committed item and the nice-to-have row are live with real economic
 activity today: Aquarius, Templar, Ondo, and Spiko all have real DefiLlama/
 Messari-tracked TVL (which by construction only measures mainnet activity —
 none of it is testnet or notional); Circle CCTP has explicit mainnet
@@ -457,7 +471,7 @@ explicitly distinguishes its mainnet operational wallet from its separate
 testnet issuer. Nothing here is a testnet-only announcement dressed up as a
 live integration.
 
-| Integration | Feasibility | Evidence | SCF list | Blocking dependency |
+| Integration | Feasibility | Evidence | Selected? | Blocking dependency |
 |---|---|---|---|---|
 | Aquarius | **High** | $46.1M TVL verified, audited, same guard shape live twice already | ✅ | None |
 | Anchor Platform / SEP-12 | **High** | Zero contract surface, primitive already deployed | ✅ | KYC provider selection |
@@ -465,20 +479,20 @@ live integration.
 | MoneyGram Ramps | **High**, admin overhead | SEP-24, live, SDF-partnered | ✅ | Partner approval process (unpublished timeline) |
 | Mercuryo | **High**, near-zero cost | Already live via SEP-24 elsewhere on Stellar | ✅ | Requires SEP-24 support to exist first |
 | BlindPay | **High** | Self-serve API, public SDK, confirmed Stellar support | ✅ | None significant |
-| Allbridge Core | **Medium** | Live, audited — risk fenced by scope choice, not by protocol maturity | ✅ | Must never become a guard position |
+| Allbridge Core | **Medium** | Live, audited — risk fenced by scope choice, not by protocol maturity | ✅ (product decision, held out of the 4-month rollout — §6) | Must never become a guard position |
 | StellarBroker | **Medium-High** | Audited settlement leg, live routing across 3 AMMs + SDEX | ✅ | Confirm audit scope vs off-chain matcher component |
-| Templar Protocol | **Medium** | $6.2M verified TVL, Halborn-audited, Blend-forked codebase | ❌ not on the list | Exact ABI confirmation needed *and* doesn't count toward this grant track regardless |
-| DeFindex | *(not pursued)* | Real, audited yield-router protocol | ✅ | Deliberately excluded — vault-of-vaults nesting creates recursive NAV computation risk against Elyx's own vault; listed here so the omission reads as a decision, not an oversight |
-| Ondo / USDY | **Medium** (nice to have) | Freely transferable, $528M verified TVL, tradeable today | ❌ not on the list | Reg S depositor-eligibility legal review *and* not SCF-fundable under this track |
-| Spiko | **Low / blocked** (nice to have) | Allowlist-gated contract, no DEX pool, $563.1M TVL (Messari Q1 2026 — Stellar is Spiko's *largest* chain, ahead of Arbitrum) but inaccessible | ❌ not on the list | Direct allowlisting agreement with Spiko required |
-| alfredpay | **Unverified** | Self-serve claims, current Stellar routing unconfirmed | ✅ | Re-verify chain/compliance status |
+| Templar Protocol | **Medium** | $6.2M verified TVL, Halborn-audited, Blend-forked codebase | ❌ not selected | Exact ABI confirmation needed; thinner track record than Aquarius |
+| DeFindex | *(not pursued)* | Real, audited yield-router protocol | ❌ deliberately excluded | Vault-of-vaults nesting creates recursive NAV computation risk against Elyx's own vault; listed here so the omission reads as a decision, not an oversight |
+| Ondo / USDY | **Medium** (nice to have) | Freely transferable, $528M verified TVL, tradeable today | ❌ not selected | Reg S depositor-eligibility legal review |
+| Spiko | **Low / blocked** (nice to have) | Allowlist-gated contract, no DEX pool, $563.1M TVL (Messari Q1 2026 — Stellar is Spiko's *largest* chain, ahead of Arbitrum) but inaccessible | ❌ not selected | Direct allowlisting agreement with Spiko required |
+| alfredpay | **Unverified** | Self-serve claims, current Stellar routing unconfirmed | — under evaluation | Re-verify chain/compliance status |
 
-Reading the table for the grant application specifically: **every integration
-inside the 4-month application (§6) — Aquarius, StellarBroker, CCTP,
-MoneyGram, Mercuryo, BlindPay — is 100% on-list.** Templar and the RWA "nice
-to have" tier are real product work but shouldn't be described as part of
-*this* grant's deliverable — they're roadmap items funded some other way, or
-by a future application once they mature.
+Reading the table for the rollout specifically: **every integration inside
+the 4-month rollout (§6) — Aquarius, StellarBroker, CCTP, MoneyGram,
+Mercuryo, BlindPay — is fully committed.** Templar and the RWA "nice to
+have" tier are real product work but shouldn't be described as part of
+*this* rollout's deliverable — they're roadmap items pursued some other way,
+or once they mature further.
 
 ---
 
@@ -578,15 +592,14 @@ three are front-end/relayer integrations (§2.3–2.5), not vault strategies.
 
 Not required for the current selection, listed for future reference only:
 `TemplarStrategy` would follow the same guard shape if Templar (§2.7,
-**not selected** — not on the SCF Integration List) is picked up on its own
-timeline later.
+**not selected**) is picked up on its own timeline later.
 
 ### 5.3 Off-chain services
 
 - Anchor Platform deployment + SEP-12 KYC provider + `add_member` relayer
 - CCTP attestation relayer / front-end integration (`mint_and_forward` caller)
 - SEP-24 client supporting MoneyGram and Mercuryo from Month 1, with BlindPay
-  layered on in Tranche 3 (§6) — all three inside the same 4-month application
+  layered on in Tranche 3 (§6) — all three inside the same 4-month rollout
 
 **No changes required** to vault NAV computation, fee accrual, or TVL-guard
 (`max_loss_bps`) logic — every integration above is additive to the existing
@@ -607,77 +620,96 @@ that's new work, not something already shipped.
 
 ## 6. Timeline
 
-**Hard constraint: the grant application must complete within 4 months
-total.** Sequenced against the SCF Integration List's own published
-per-partner duration estimates (`stellar.gitbook.io/scf-handbook/.../
-integration-list`), not an internal guess:
+**Hard constraint: this rollout must complete within 4 months total.**
+Sequenced against commonly-cited per-partner integration-effort estimates
+for these Stellar ecosystem partners, not an internal guess — with one
+important correction applied throughout (see below).
 
-| Integration | Official SCF duration estimate |
-|---|---|
-| Aquarius | Under 1 day |
-| StellarBroker | 1–5 days |
-| Circle CCTP | 1–5 days |
-| Mercuryo | 1–2 weeks |
-| BlindPay | 1–2 weeks |
-| Anchor Platform | **1+ month** |
-| MoneyGram Ramps | **1+ month** |
-| Allbridge Core | **TBD — not estimated by SCF at all** |
+| Integration | Commonly-cited estimate | Realistic engineering estimate |
+|---|---|---|
+| Aquarius | Under 1 day | **1–2 weeks** — new guard contract, design + implementation + testing (§2.1) |
+| StellarBroker | 1–5 days | **1–2 weeks** — new guard contract, same reasoning (§2.6) |
+| Circle CCTP | 1–5 days | 1–5 days — genuinely no new contract, calls an already-deployed, already-audited public contract |
+| Mercuryo | 1–2 weeks | 1–2 weeks — SEP-24 anchor config, no new contract |
+| BlindPay | 1–2 weeks | 1–2 weeks — REST API integration, no new contract |
+| Anchor Platform | **1+ month** | 1+ month — unchanged, off-chain KYC infra |
+| MoneyGram Ramps | **1+ month** | 1+ month — unchanged, partner-approval-gated |
+| Allbridge Core | **TBD — no estimate exists anywhere** | N/A — moved out of this rollout |
 
-Anchor Platform and MoneyGram are the long poles, and both can run in
-parallel with everything else and with each other — they don't block or
-depend on one another. Everything else is short enough to sequence around
-them inside the same window. **Allbridge is the one item that doesn't fit a
-4-month hard cap responsibly**: SCF itself hasn't scoped a duration for it,
-and committing an unscoped item to a fixed-length application is exactly the
-overscoping risk the track warns against. It's moved out of this
-application (below), not dropped from the roadmap.
+**The commonly-cited figures for Aquarius and StellarBroker are not the real
+engineering estimate, and this document no longer cites them as if they
+were.** Both require a genuinely new Soroban smart contract handling real
+vault funds, not an SDK/API wrapper — "under 1 day" and "1–5 days" almost
+certainly reflect a thinner integration effort than "write, unit-test, and
+integration-test a new guard contract before it can move money." The
+existing `SoroswapLpStrategy` guard those two are modeled on is 650 lines of
+contract code backed by 1,345 lines of tests (43 test functions), checked
+directly against this repo — that's the realistic baseline, and it puts each
+new guard at 1–2 weeks, not under a day.
+
+Anchor Platform and MoneyGram remain the true long poles — both can run in
+parallel with everything else and with each other, and neither depends on
+the other. The corrected Aquarius/StellarBroker estimates still fit
+comfortably inside the same 4-month window, they just consume real
+engineering weeks in Months 1–2 rather than being treated as free.
+**Allbridge still doesn't fit a 4-month hard cap responsibly**: no duration
+has ever been published for it anywhere, and committing an unscoped item to
+a fixed-length rollout is exactly the kind of overscoping risk worth
+avoiding. It's moved out of this rollout (below), not dropped from the
+roadmap.
 
 ```
 Month 1   ████████████████
-          Aquarius (<1d) · StellarBroker (1-5d) · CCTP (1-5d)  — shipped early
+          Circle CCTP (1-5d) — shipped early, no new contract
+          Aquarius guard: design + implementation + testing (1-2wk) — starts
           Anchor Platform KYC provider selection — started, parallel track
           MoneyGram partner application — started, parallel track
 
 Month 2   ████████████████
+          Aquarius guard — completed, deployed, activated on-vault
+          StellarBroker guard: design + implementation + testing (1-2wk)
+            — starts, reusing patterns from the Aquarius build
           Anchor Platform relayer build-out — parallel track continues
           MoneyGram partner approval — parallel track continues (unpublished
             turnaround is the single biggest schedule risk in this plan)
           Mercuryo — sequenced in once shared SEP-24 client work exists
 
 Month 3   ████████████████
+          StellarBroker guard — completed, deployed, activated on-vault
           Anchor Platform + MoneyGram — target completion
           BlindPay (1-2wk) — low-risk, slotted in as buffer-filler
 
 Month 4   ████████████████
           Contingency buffer for MoneyGram's unpublished approval timeline
-          Integration testing across all five · milestone tranche closeout
+          Integration testing across all five · milestone closeout
 
-Moved out of this application: Allbridge Core (SCF duration: TBD — pursue
-once scoped in a direct SCF conversation, likely a second-round item)
+Moved out of this rollout: Allbridge Core (duration: TBD — pursue once
+scoped directly, likely a second-phase item)
 ```
 
-**Tranche 1 (Month 1)** — the fast wins, ships first: Aquarius, StellarBroker,
-CCTP. Anchor Platform and MoneyGram kicked off in parallel the same month
-since they're the long poles.
+**Tranche 1 (Month 1)** — CCTP ships immediately (no new contract). The
+Aquarius guard contract's design/implementation/testing starts the same
+month, in parallel with Anchor Platform and MoneyGram's long-pole tracks.
 
-**Tranche 2 (Months 2–3)** — Anchor Platform and MoneyGram land; Mercuryo
-layers on once the shared SEP-24 client exists (near-zero incremental cost,
-per §2.4).
+**Tranche 2 (Months 2–3)** — Aquarius guard completes and goes live;
+StellarBroker guard build starts, informed by the Aquarius build. Anchor
+Platform and MoneyGram land; Mercuryo layers on once the shared SEP-24
+client exists (near-zero incremental cost, per §2.4).
 
-**Tranche 3 (Month 3–4)** — BlindPay, final integration testing across all
-five, and closeout. Built-in buffer against MoneyGram's partner-approval
-process, which has no published turnaround time and is the plan's real risk.
+**Tranche 3 (Month 3–4)** — StellarBroker guard completes and goes live.
+BlindPay, final integration testing across all five, and closeout. Built-in
+buffer against MoneyGram's partner-approval process, which has no published
+turnaround time and remains the plan's biggest single risk.
 
-**Explicitly out of this 4-month application, not out of the roadmap:**
-- **Allbridge Core** — on the SCF list, real and audited, but its duration is
-  officially unscoped; get it scoped directly with SCF before committing it
-  to any application, this one or the next.
+**Explicitly out of this 4-month rollout, not out of the roadmap:**
+- **Allbridge Core** — real and audited, but its duration is unscoped
+  anywhere; get it scoped directly before committing it to any rollout, this
+  one or the next.
 - **Permissionless factory** (§5.1) — genuinely bigger than a 4-month,
-  single-partner-style integration; it's platform architecture work, not an
-  SCF Integration List item, and shouldn't be squeezed into this
-  application's scope or timeline.
-- **Templar Protocol, Ondo/USDY** — as established in §4, neither is on the
-  SCF Integration List regardless of timeline; pursued on their own schedule.
+  single-partner-style integration; it's platform architecture work, and
+  shouldn't be squeezed into this rollout's scope or timeline.
+- **Templar Protocol, Ondo/USDY** — as established in §4, neither is
+  selected regardless of timeline; pursued on their own schedule.
 - **Spiko, Noether/Rails perpetuals, alfredpay** — blocked on external
   dependencies (§4) independent of any timeline question.
 

@@ -3,14 +3,13 @@
 Status: proposal / pre-implementation
 Branch: `feature/elyx-v2-ecosystem-architecture`
 Date: 2026-07-03
-Grant target: Stellar Community Fund (SCF) Build Award, Integration Track —
-five of the six integrations selected in §4 (everything except Allbridge)
-form a single application capped at **4 months total**, sequenced against
-the SCF Integration List's own published per-partner duration estimates
-(technical document §6). Allbridge's SCF-listed duration is "TBD" — it stays
-selected as a product decision but is held out of this specific application
-until it has a scoped duration, rather than let one unscoped item put the
-4-month cap at risk.
+Scope: five of the six integrations selected in §4 (everything except
+Allbridge) form a single initial rollout capped at **4 months total**,
+sequenced against published per-partner integration-effort estimates for
+these Stellar ecosystem partners (technical document §6). Allbridge's
+published duration is "TBD" — it stays selected as a product decision but is
+held out of this initial rollout until it has a scoped duration, rather than
+let one unscoped item put the 4-month cap at risk.
 
 Companion document: [Elyx v2 Technical Integration Architecture](elyx-v2-technical-integrations.md)
 holds the engineering-level detail behind every integration named here —
@@ -25,8 +24,8 @@ buckets — read this before anything else if that's all you need:
 
 | | Bucket | What's in it |
 |---|---|---|
-| ✅ | **Will be done** — committed, §4 | Aquarius, Anchor Platform / SEP-12, StellarBroker, Circle CCTP, MoneyGram + Mercuryo + BlindPay — a real product decision and, for five of the six, a single 4-month SCF grant application. **Allbridge Core** is also committed as a product decision, just not bundled into this specific 4-month application (its SCF-listed duration is unscoped — see §4.5). |
-| 💡 | **Nice to have** — evaluated, not committed, §5 | **Templar Protocol** (second lending market) and the **RWA tokenized funds** (Ondo/USDY, Spiko) — real, genuinely useful, and explicitly *not* part of the roadmap's committed work. Pursued later, on their own timeline, if at all — not scheduled, not budgeted, not part of the grant. |
+| ✅ | **Will be done** — committed, §4 | Aquarius, Anchor Platform / SEP-12, StellarBroker, Circle CCTP, MoneyGram + Mercuryo + BlindPay — a real product decision and, for five of the six, a single 4-month initial rollout. **Allbridge Core** is also committed as a product decision, just not bundled into this specific 4-month rollout (its published duration is unscoped — see §4.5). |
+| 💡 | **Nice to have** — evaluated, not committed, §5 | **Templar Protocol** (second lending market) and the **RWA tokenized funds** (Ondo/USDY, Spiko) — real, genuinely useful, and explicitly *not* part of the roadmap's committed work. Pursued later, on their own timeline, if at all — not scheduled, not budgeted. |
 
 ---
 
@@ -208,27 +207,31 @@ might otherwise (§4).
 
 These six are the actual selection — not a menu of candidates, the decision.
 Each cleared one bar: independently-verifiable evidence of real usage or a
-real, callable contract (not a roadmap announcement), a clean fit inside the
-vault's existing risk containment, and — since this list doubles as the
-intended SCF Build Award Integration Track application — a place on the
-official SCF Integration List. (Other protocols were evaluated and are
-covered too, in §5, but explicitly *outside* this selection: either not yet
-proven enough, not on the SCF list, or both.)
+real, callable contract (not a roadmap announcement), and a clean fit inside
+the vault's existing risk containment. (Other protocols were evaluated and
+are covered too, in §5, but explicitly *outside* this selection: either not
+yet proven enough in practice, or blocked by a legal/access barrier
+independent of engineering effort.)
 
-| # | Integration | Category | On SCF list | SCF duration estimate | In the 4-month application? |
-|---|---|---|---|---|---|
-| 1 | Aquarius | AMM strategy | ✅ | Under 1 day | Yes — Tranche 1 |
-| 2 | Anchor Platform / SEP-12 | Institutional KYC | ✅ | 1+ month | Yes — Tranches 1–3 (long pole) |
-| 3 | StellarBroker | Execution router | ✅ | 1–5 days | Yes — Tranche 1 |
-| 4 | Circle CCTP | Cross-chain bridge | ✅ | 1–5 days | Yes — Tranche 1 |
-| 5 | MoneyGram + Mercuryo + BlindPay | On/off-ramp | ✅ | MoneyGram 1+ month · Mercuryo/BlindPay 1–2wk | Yes — Tranches 1–3 |
-| 6 | Allbridge Core | Secondary bridge | ✅ | **TBD — unscoped by SCF** | **No** — held out until scoped (see below) |
+| # | Integration | Category | Realistic timeline estimate | In the 4-month rollout? |
+|---|---|---|---|---|
+| 1 | Aquarius | AMM strategy | 1–2 weeks — new guard contract, design + implementation + testing | Yes — Tranches 1–2 |
+| 2 | Anchor Platform / SEP-12 | Institutional KYC | 1+ month | Yes — Tranches 1–3 (long pole) |
+| 3 | StellarBroker | Execution router | 1–2 weeks — new guard contract, same reasoning | Yes — Tranches 2–3 |
+| 4 | Circle CCTP | Cross-chain bridge | 1–5 days — no new contract, calls an already-deployed public contract | Yes — Tranche 1 |
+| 5 | MoneyGram + Mercuryo + BlindPay | On/off-ramp | MoneyGram 1+ month · Mercuryo/BlindPay 1–2wk | Yes — Tranches 1–3 |
+| 6 | Allbridge Core | Secondary bridge | **TBD — no published estimate exists** | **No** — held out until scoped (see below) |
 
-Five of the six fit comfortably inside 4 months once sequenced against the
-SCF's own duration estimates (technical document §6); Allbridge's duration
-was never actually published, which makes it the one item unsafe to promise
-inside a fixed-length application. It stays a selected product decision, it's
-just not bundled into this specific grant's clock.
+Aquarius and StellarBroker both need a *new Soroban guard contract*, not an
+API wrapper. Building either to the standard already set by this codebase —
+grounded in the size and test coverage of the existing `SoroswapLpStrategy`
+guard those two are modeled on (650 lines of code, 1,345 lines of tests) —
+realistically takes 1–2 weeks each for design, implementation, and testing.
+Five of the six still fit comfortably inside 4 months once sequenced this
+way (technical document, §6); Allbridge's duration was never actually
+published anywhere, which makes it the one item unsafe to promise inside a
+fixed-length rollout. It stays a selected product decision, just not bundled
+into this specific 4-month window.
 
 The engineering mechanics, contract addresses, and feasibility evidence for
 each live in the companion technical document; this is the "what it is and
@@ -284,11 +287,10 @@ can fund a vault beyond CCTP's USDC-only path. For Stellar, it diversifies
 which bridges route liquidity into the network rather than concentrating all
 cross-chain trust in one provider.
 
-Selected as a product decision, but held out of the current 4-month grant
-application specifically: SCF lists its integration duration as "TBD" rather
-than an estimate, and an unscoped item doesn't belong in a fixed-length
-application. Revisit once it has a real duration, likely as its own
-follow-on submission.
+Selected as a product decision, but held out of the current 4-month rollout
+specifically: no published integration duration exists for it anywhere, and
+an unscoped item doesn't belong in a fixed-length rollout plan. Revisit once
+it has a real duration estimate, likely as its own follow-on phase.
 
 ### 4.6 StellarBroker — one router instead of three guards
 
@@ -298,18 +300,18 @@ how thin Soroswap's and Phoenix's own liquidity turned out to be, routing
 through an aggregator matters more than a naive single-venue guard would
 deliver — and it's one integration instead of three separate AMM guards to
 build and maintain. For Stellar, using a shared router is composability over
-reinvention, which is what the ecosystem's own funding programs prefer.
+reinvention.
 
 ---
 
 ## 5. Nice to Have — Considered, Not Selected
 
 Real protocols, genuinely evaluated, deliberately kept out of §4's selection
-— either the evidence isn't there yet, or they don't count toward the SCF
-grant this roadmap is built around, or both. Listed here so each omission
+— either the evidence isn't there yet, or there's a legal/access barrier
+independent of engineering effort, or both. Listed here so each omission
 reads as a decision, not a gap in the research. Nothing in this section is
-scheduled, budgeted, or part of the grant — if it happens, it happens later,
-on its own timeline.
+scheduled or budgeted — if it happens, it happens later, on its own
+timeline.
 
 ### 5.1 Templar Protocol — a second lending market, not yet
 
@@ -319,16 +321,17 @@ built on a fork of Blend's own codebase — meaning it should be close to
 Blend (supply-only by Elyx's own design), Templar is expanding into
 RWA-collateralized borrowing. Genuinely useful as a future diversification
 move away from 100% Blend lending exposure. Kept out of §4 for one concrete
-reason: **it isn't on the official SCF Integration List**, so it wouldn't
-count toward this grant regardless of its technical merit — it's a product
-roadmap item to revisit on its own timeline, not a grant deliverable.
+reason: its exact contract ABI hasn't been pulled and confirmed against the
+guard interface Elyx would need to build against, and its track record is
+thinner than Aquarius's — it's a product roadmap item to revisit once that
+diligence is done, not a near-term commitment.
 
 ### 5.2 RWA Tokenized Funds — nice to have
 
 Two regulated fund tokens were evaluated as portfolio assets a vault could
-simply hold. Neither is on the official SCF Integration Track partner list
-either, so like Templar, this is pursued for product reasons only, on its
-own timeline — never bundled into the grant application in §4.
+simply hold. Both are pursued for product reasons only, on their own
+timeline — never bundled into §4's committed work, because each has a real
+barrier that isn't about engineering effort.
 
 **Ondo Finance / USDY** is, perhaps surprisingly, freely transferable on
 Stellar today with no allowlist and real secondary-market trading volume —
@@ -362,12 +365,11 @@ plus concentration guard" would suggest, since the concentration check
 isn't actually wired up yet — worth closing before agents are handling
 real capital, not just vault creation conversations.
 
-Five of the six integrations in §4 are, concretely, a single Stellar
-Community Fund Build Award Integration Track application capped at 4 months
-— sequenced against the SCF's own published per-partner duration estimates,
-not an internal guess (technical document §6). The sixth, Allbridge, is a
-real product decision that stays out of this specific application because
-SCF never actually scoped a duration for it, and a 4-month hard cap is the
-wrong place to absorb an unknown. Everything in §5 is real work Elyx still
-wants to do; it's just funded and justified on its own terms, not as part of
-this grant.
+Five of the six integrations in §4 are, concretely, a single 4-month initial
+rollout, sequenced against published per-partner integration-effort
+estimates, not an internal guess (technical document §6). The sixth,
+Allbridge, is a real product decision that stays out of this specific
+rollout because no duration was ever published for it, and a 4-month hard
+cap is the wrong place to absorb an unknown. Everything in §5 is real work
+Elyx still wants to do; it's just justified and sequenced on its own terms,
+not bundled into this rollout's clock.
