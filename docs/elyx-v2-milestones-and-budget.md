@@ -16,21 +16,21 @@ done.
 
 Total duration across all three milestones: 17 weeks, approximately 4.25
 months.
-Total budget across all three milestones: 147,600 EUR.
+Total budget across all three milestones: 147,600 USD.
 
 ## A number worth being upfront about
 
 This plan covers the six Stellar ecosystem integrations plus the vault
 setup/rebalancing agent layer. Both are real, priced scope, not padding —
 adding the agent layer on top of the six integrations already pushes the
-total past 147,600 EUR once design/interface work is correctly excluded as
+total past 147,600 USD once design/interface work is correctly excluded as
 assumed pre-existing (per direction), which is closed by a modest,
 explicitly-labeled trim to the documentation and closeout deliverable
 rather than by cutting anything that affects what actually gets built or
 tested.
 
-The permissionless vault factory is not included in this 147,600 EUR total.
-It was scoped earlier at 3 weeks and 25,500 EUR, and it doesn't fit inside
+The permissionless vault factory is not included in this 147,600 USD total.
+It was scoped earlier at 3 weeks and 25,500 USD, and it doesn't fit inside
 this budget alongside the other two pieces without either degrading their
 scope or exceeding the cap — this document does the arithmetic openly
 rather than quietly stretching numbers to pretend it fits. It's held out as
@@ -43,17 +43,17 @@ their own section, so the number is ready whenever it's picked up.
 
 Two blended day rates are used throughout, applied consistently:
 
-Senior Soroban smart-contract engineering — roughly 1,600 to 1,800 EUR per
+Senior Soroban smart-contract engineering — roughly 1,600 to 1,800 USD per
 day. Applies to work that designs, writes, or tests a smart contract
 handling real depositor funds or the platform's own registry logic.
 
 Off-chain integration, coordination, agent/orchestration, and documentation
-work — roughly 600 to 1,000 EUR per day. Applies to relayer services,
+work — roughly 600 to 1,000 USD per day. Applies to relayer services,
 third-party vendor integrations, partner-approval coordination, the
 setup/rebalancing agent layer, and technical writing.
 
 One exception: cross-integration testing in Milestone 3 is priced at 2,600
-EUR per day, the highest rate in this document, because verifying six
+USD per day, the highest rate in this document, because verifying six
 integrations behave correctly together is treated as the single
 highest-value activity in the plan, not a formality at the end.
 
@@ -82,7 +82,7 @@ duration stated.
 ## Milestone 1 — New Strategy Contracts and First Bridge Integration
 
 Duration: 4 weeks
-Budget: 31,500 EUR
+Budget: 31,500 USD
 
 This milestone covers the two integrations that require writing new smart
 contracts, plus the one cross-chain integration that requires no new
@@ -99,7 +99,7 @@ the liquidity-management functions themselves — and underneath calls
 Aquarius's own pool contract.
 
 Sub-deliverable 1.1.a — Implementation.
-Duration: 1 week. Budget: 9,000 EUR.
+Duration: 1 week. Budget: 9,000 USD.
 What it is: write the contract against Aquarius's confirmed pool interface.
 The comparable contract already live in this codebase is 650 lines of
 code — the realistic size baseline.
@@ -107,13 +107,13 @@ Done when: the contract builds cleanly and passes the project's standard
 lint checks.
 
 Sub-deliverable 1.1.b — Testing and internal security review.
-Duration: 0.5 week. Budget: 4,500 EUR.
+Duration: 0.5 week. Budget: 4,500 USD.
 What it is: unit and integration tests, plus an internal review.
 Done when: test coverage is at least 85 percent, and a deposit,
 valuation read, and withdrawal are shown working against Aquarius in a
 test environment.
 
-Deliverable 1.1 total: 1.5 weeks, 13,500 EUR.
+Deliverable 1.1 total: 1.5 weeks, 13,500 USD.
 
 ### Deliverable 1.2 — StellarBroker execution router contract
 
@@ -123,17 +123,17 @@ settlement contract, reusing the implementation and testing patterns from
 Deliverable 1.1.
 
 Sub-deliverable 1.2.a — Implementation.
-Duration: 1 week. Budget: 8,000 EUR.
+Duration: 1 week. Budget: 8,000 USD.
 What it is: write the contract against StellarBroker's confirmed
 settlement-contract interface.
 Done when: the contract builds cleanly and passes standard lint checks.
 
 Sub-deliverable 1.2.b — Testing and internal security review.
-Duration: 0.5 week. Budget: 4,000 EUR.
+Duration: 0.5 week. Budget: 4,000 USD.
 Done when: test coverage is at least 85 percent, and a trade is shown
 executing across at least two liquidity venues in one transaction.
 
-Deliverable 1.2 total: 1.5 weeks, 12,000 EUR.
+Deliverable 1.2 total: 1.5 weeks, 12,000 USD.
 
 ### Deliverable 1.3 — Circle CCTP cross-chain deposit integration
 
@@ -143,7 +143,7 @@ already-audited Cross-Chain Transfer Protocol contracts. No new contract is
 needed on Elyx's side.
 
 Sub-deliverable 1.3.a — Relayer implementation.
-Duration: 0.5 week. Budget: 3,500 EUR.
+Duration: 0.5 week. Budget: 3,500 USD.
 What it is: build the relayer call, with particular care that the
 destination-address fields are set to the bridge's own forwarding contract
 rather than the end recipient — getting this wrong on the source chain
@@ -151,21 +151,21 @@ loses funds permanently, with no retry path.
 Done when: a code review confirms those fields are handled correctly.
 
 Sub-deliverable 1.3.b — Verification.
-Duration: 0.5 week. Budget: 2,500 EUR.
+Duration: 0.5 week. Budget: 2,500 USD.
 Done when: a real cross-chain transfer is shown moving funds from another
 chain into a Stellar account and into a vault deposit, on mainnet or
 testnet.
 
-Deliverable 1.3 total: 1 week, 6,000 EUR.
+Deliverable 1.3 total: 1 week, 6,000 USD.
 
-Milestone 1 total: 4 weeks, 31,500 EUR.
+Milestone 1 total: 4 weeks, 31,500 USD.
 
 ---
 
 ## Milestone 2 — Institutional Onboarding, Fiat On-Ramp Foundation, and the Agent Layer
 
 Duration: 8 weeks
-Budget: 70,200 EUR
+Budget: 70,200 USD
 
 Three tracks run for at least part of this milestone: institutional KYC
 onboarding, the MoneyGram integration, and the vault setup/rebalancing
@@ -180,22 +180,22 @@ already supports a private, membership-gated deposit mode — this builds
 the pipeline that feeds it.
 
 Sub-deliverable 2.1.a — Provider selection and integration.
-Duration: 2 weeks. Budget: 9,000 EUR.
+Duration: 2 weeks. Budget: 9,000 USD.
 Done when: a working sandbox connection to a selected verification
 provider's API is in place.
 
 Sub-deliverable 2.1.b — Anchor Platform deployment.
-Duration: 2 weeks. Budget: 9,500 EUR.
+Duration: 2 weeks. Budget: 9,500 USD.
 Done when: Anchor Platform is deployed and configured, running
 successfully in a test environment.
 
 Sub-deliverable 2.1.c — Relayer implementation and testing.
-Duration: 2 weeks. Budget: 9,500 EUR.
+Duration: 2 weeks. Budget: 9,500 USD.
 Done when: a test institution is added to a vault's allowlist through the
 relayer without manual steps, and a deposit from that account is shown
 working.
 
-Deliverable 2.1 total: 6 weeks, 28,000 EUR.
+Deliverable 2.1 total: 6 weeks, 28,000 USD.
 
 ### Deliverable 2.2 — MoneyGram Ramps fiat on and off-ramp integration
 
@@ -205,21 +205,21 @@ no bank account required.
 
 Sub-deliverable 2.2.a — Partner application.
 Duration: 3 weeks (includes buffer time, since this provider has no
-published approval turnaround). Budget: 10,000 EUR.
+published approval turnaround). Budget: 10,000 USD.
 Done when: the application is submitted with all required materials.
 
 Sub-deliverable 2.2.b — Client implementation.
-Duration: 2 weeks. Budget: 9,000 EUR.
+Duration: 2 weeks. Budget: 9,000 USD.
 Done when: the interactive deposit/withdrawal flow works in the
 provider's sandbox or staging environment.
 
 Sub-deliverable 2.2.c — Verification.
-Duration: 1 week. Budget: 5,000 EUR.
+Duration: 1 week. Budget: 5,000 USD.
 Done when: a deposit and a withdrawal are shown working through the
 integration, in production if partner approval has landed by this point,
 otherwise in the provider's staging environment.
 
-Deliverable 2.2 total: 6 weeks (parallel with Deliverable 2.1), 24,000 EUR.
+Deliverable 2.2 total: 6 weeks (parallel with Deliverable 2.1), 24,000 USD.
 
 ### Deliverable 2.3 — Mercuryo card-based on-ramp addition
 
@@ -229,14 +229,14 @@ integration.
 
 Sub-deliverable 2.3.a — Configuration.
 Duration: 1 week, starting once Deliverable 2.2's shared client exists.
-Budget: 3,600 EUR.
+Budget: 3,600 USD.
 Done when: the provider is selectable and returns a valid quote.
 
 Sub-deliverable 2.3.b — Testing.
-Duration: 1 week. Budget: 3,000 EUR.
+Duration: 1 week. Budget: 3,000 USD.
 Done when: a card-based deposit is shown working into a vault.
 
-Deliverable 2.3 total: 2 weeks, 6,600 EUR.
+Deliverable 2.3 total: 2 weeks, 6,600 USD.
 
 ### Deliverable 2.4 — Vault setup and rebalancing agent layer
 
@@ -251,7 +251,7 @@ is required; this is an off-chain orchestration layer sitting in front of
 functionality the vault already exposes.
 
 Sub-deliverable 2.4.a — Vault setup agent.
-Duration: 1 week. Budget: 4,500 EUR.
+Duration: 1 week. Budget: 4,500 USD.
 What it is: a conversational flow that helps a creator choose an asset mix,
 select strategies from the approved list, and set fee parameters, then
 submits the resulting configuration calls.
@@ -259,7 +259,7 @@ Done when: a new vault is configured end to end through the conversational
 flow instead of raw contract calls.
 
 Sub-deliverable 2.4.b — Rebalancing agent.
-Duration: 1 week. Budget: 4,500 EUR.
+Duration: 1 week. Budget: 4,500 USD.
 What it is: an agent that observes a vault's positions and proposes a
 rebalancing transaction, submitted through the trader role.
 Done when: the agent proposes a transaction and it is correctly accepted
@@ -267,15 +267,15 @@ or rejected by the vault's existing checks, the same way a human trader's
 transaction would be.
 
 Sub-deliverable 2.4.c — Testing.
-Duration: 0.5 week. Budget: 2,600 EUR.
+Duration: 0.5 week. Budget: 2,600 USD.
 Done when: at least one proposal that should be rejected by the vault's
 existing loss-guard is shown being correctly rejected, confirming the
 agent has no way around it.
 
-Deliverable 2.4 total: 2.5 weeks, 11,600 EUR, running in parallel with
+Deliverable 2.4 total: 2.5 weeks, 11,600 USD, running in parallel with
 Deliverables 2.1–2.3.
 
-Milestone 2 total: 8 weeks, 70,200 EUR. (Deliverables 2.1, 2.2, and 2.4 all
+Milestone 2 total: 8 weeks, 70,200 USD. (Deliverables 2.1, 2.2, and 2.4 all
 run across the first six to seven weeks; the milestone's eight-week total
 includes a buffer for Deliverable 2.2's partner-approval risk, and
 Deliverable 2.3 completes inside the same window.)
@@ -285,7 +285,7 @@ Deliverable 2.3 completes inside the same window.)
 ## Milestone 3 — Additional On-Ramp Coverage, Full Integration Testing, and Closeout
 
 Duration: 5 weeks
-Budget: 45,900 EUR
+Budget: 45,900 USD
 
 This milestone adds the final on-ramp provider, verifies every piece
 delivered across all three milestones works correctly together, and closes
@@ -298,15 +298,15 @@ Brazil, Mexico, and Colombia, integrated against its own self-serve API and
 software development kit.
 
 Sub-deliverable 3.1.a — API integration.
-Duration: 1 week. Budget: 5,000 EUR.
+Duration: 1 week. Budget: 5,000 USD.
 Done when: a successful sandbox transaction is confirmed.
 
 Sub-deliverable 3.1.b — Testing.
-Duration: 0.5 week. Budget: 3,000 EUR.
+Duration: 0.5 week. Budget: 3,000 USD.
 Done when: a deposit and a withdrawal are shown working through this
 provider into and out of a vault.
 
-Deliverable 3.1 total: 1.5 weeks, 8,000 EUR.
+Deliverable 3.1 total: 1.5 weeks, 8,000 USD.
 
 ### Deliverable 3.2 — Full cross-integration testing
 
@@ -315,18 +315,18 @@ operating together, rather than each piece checked only on its own. This is
 the highest-priced deliverable in the plan on purpose.
 
 Sub-deliverable 3.2.a — On-chain integration testing.
-Duration: 1 week. Budget: 13,000 EUR.
+Duration: 1 week. Budget: 13,000 USD.
 Done when: the vault's existing loss-guard is shown correctly governing
 the Aquarius and StellarBroker strategies, and a permissionlessly-created
 vault behaves the same way an administrator-created one does.
 
 Sub-deliverable 3.2.b — Off-chain integration testing.
-Duration: 1 week. Budget: 13,000 EUR.
+Duration: 1 week. Budget: 13,000 USD.
 Done when: deposits from every funding source — KYC-gated, MoneyGram,
 Mercuryo, BlindPay, and CCTP — are shown landing correctly in vault
 accounting, and any issues found are documented and tracked.
 
-Deliverable 3.2 total: 2 weeks, 26,000 EUR.
+Deliverable 3.2 total: 2 weeks, 26,000 USD.
 
 ### Deliverable 3.3 — Documentation and closeout
 
@@ -335,24 +335,24 @@ brief for the new contracts, meant to be handed to a third-party auditor in
 the recommended follow-on engagement.
 
 Sub-deliverable 3.3.a — Documentation.
-Duration: 1 week. Budget: 5,000 EUR.
+Duration: 1 week. Budget: 5,000 USD.
 Done when: documentation covering every deliverable's mechanism and
 operation is delivered.
 
 Sub-deliverable 3.3.b — Closeout and audit-readiness brief.
-Duration: 0.5 week. Budget: 6,900 EUR.
+Duration: 0.5 week. Budget: 6,900 USD.
 Done when: a closeout review is recorded and a standalone audit-readiness
 document for the new contracts is delivered.
 
-Deliverable 3.3 total: 1.5 weeks, 11,900 EUR.
+Deliverable 3.3 total: 1.5 weeks, 11,900 USD.
 
-Milestone 3 total: 5 weeks, 45,900 EUR.
+Milestone 3 total: 5 weeks, 45,900 USD.
 
 ---
 
 ## Held out of this budget — the permissionless vault factory
 
-Not included in the 147,600 EUR total above, and not one of the three
+Not included in the 147,600 USD total above, and not one of the three
 milestones. This is real, scoped work — shown here with its own numbers
 so it's ready to pick up as its own follow-on phase, not omitted or hidden
 inside another line item.
@@ -369,38 +369,38 @@ address already set as its administrator, which means the vault's address
 has to be predictable before either contract exists, which only a
 factory-driven deployment can do cleanly.
 
-Implementation: 2 weeks, 17,000 EUR. Build the new permissionless
+Implementation: 2 weeks, 17,000 USD. Build the new permissionless
 registration path and the factory-driven deployment logic, against an
 already-confirmed deployment approach, without changing how existing
 vaults are created or operate. Done when the new code builds cleanly,
 passes standard lint checks, and existing vault creation still works
 exactly as before.
 
-Testing: 1 week, 8,500 EUR. Done when a new vault is created
+Testing: 1 week, 8,500 USD. Done when a new vault is created
 permissionlessly, seeded, and shown accepting a deposit, without any
 administrator action.
 
-Total if picked up as its own phase: 3 weeks, 25,500 EUR.
+Total if picked up as its own phase: 3 weeks, 25,500 USD.
 
 ---
 
 ## Summary
 
 Milestone 1 — New Strategy Contracts and First Bridge Integration: 4 weeks,
-31,500 EUR, 3 deliverables, 6 sub-deliverables.
+31,500 USD, 3 deliverables, 6 sub-deliverables.
 
 Milestone 2 — Institutional Onboarding, Fiat On-Ramp Foundation, and the
-Agent Layer: 8 weeks, 70,200 EUR, 4 deliverables, 11 sub-deliverables.
+Agent Layer: 8 weeks, 70,200 USD, 4 deliverables, 11 sub-deliverables.
 
 Milestone 3 — Additional On-Ramp Coverage, Full Integration Testing, and
-Closeout: 5 weeks, 45,900 EUR, 3 deliverables, 6 sub-deliverables.
+Closeout: 5 weeks, 45,900 USD, 3 deliverables, 6 sub-deliverables.
 
 Total duration — 17 weeks, approximately 4.25 months.
-Total budget — 147,600 EUR.
+Total budget — 147,600 USD.
 Total sub-deliverables — 23.
 
 Held out, priced separately, not counted in the total above: the
-permissionless vault factory, 3 weeks, 25,500 EUR.
+permissionless vault factory, 3 weeks, 25,500 USD.
 
 The one item this plan deliberately does not fund, in either the milestone
 total or the held-out factory work, is a full third-party security audit
