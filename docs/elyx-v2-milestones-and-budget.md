@@ -6,14 +6,17 @@ Date: 2026-07-03
 
 This document lays out the delivery plan for the Elyx v2 work as three
 milestones. Each milestone is split into several distinct deliverables, and
-each deliverable is split into its component sub-deliverables — design,
-implementation, and testing are priced and scheduled separately wherever
-that split is meaningful. Every sub-deliverable states its duration, its
-budget, and a straightforward way to tell it's done.
+each deliverable is split into its component sub-deliverables — this plan
+prices implementation and testing separately wherever that split is
+meaningful. Design and interface work is deliberately not a priced
+sub-deliverable anywhere in this plan: it's assumed to already be settled
+before this plan starts, not scoped or budgeted here. Every sub-deliverable
+states its duration, its budget, and a straightforward way to tell it's
+done.
 
-Total duration across all three milestones: 18 weeks, approximately 4.5
+Total duration across all three milestones: 17 weeks, approximately 4.25
 months.
-Total budget across all three milestones: 193,200 EUR.
+Total budget across all three milestones: 176,200 EUR.
 
 ## A number worth being upfront about
 
@@ -21,11 +24,11 @@ An earlier version of this plan totaled 147,600 EUR, covering six Stellar
 ecosystem integrations only. This version adds the permissionless vault
 factory and the vault setup/rebalancing agent layer, both genuinely part of
 the Elyx v2 product, and both real engineering scope that wasn't priced
-before. Adding them honestly costs 45,600 EUR more, not less — that
-increase is shown here rather than absorbed by quietly thinning other
-deliverables. Duration stays at 18 weeks because both additions run as
-parallel tracks alongside existing milestone work rather than extending the
-calendar, which does mean more people working at once, not fewer.
+before. Adding them, net of removing all design/interface sub-deliverables
+as assumed pre-existing, moves the total to 176,200 EUR — shown here
+rather than absorbed by quietly thinning other deliverables. Duration moves
+to 17 weeks: it drops slightly from removing design time in Milestone 1,
+even after adding the permissionless factory as a parallel track.
 
 ## Rate assumptions and an audit note, stated up front
 
@@ -66,8 +69,8 @@ that staffing level, not a single person moving between tasks.
 
 ## Milestone 1 — New Strategy Contracts, First Bridge Integration, and the Permissionless Factory
 
-Duration: 5 weeks
-Budget: 74,000 EUR
+Duration: 4 weeks
+Budget: 57,000 EUR
 
 Two engineering tracks run in parallel this milestone: one builds the
 Aquarius and StellarBroker strategy contracts plus the CCTP bridge
@@ -85,50 +88,42 @@ function, a proportional-withdrawal function, an asset-in-use check, and
 the liquidity-management functions themselves — and underneath calls
 Aquarius's own pool contract.
 
-Sub-deliverable 1.1.a — Interface research and contract design.
-Duration: 0.5 week. Budget: 4,500 EUR.
-What it is: confirm Aquarius's actual pool contract interface directly,
-and finalize this contract's design against it.
-Done when: the design approach is written down and agreed before
-implementation starts.
-
-Sub-deliverable 1.1.b — Implementation.
+Sub-deliverable 1.1.a — Implementation.
 Duration: 1 week. Budget: 9,000 EUR.
-What it is: write the contract. The comparable contract already live in
-this codebase is 650 lines of code — the realistic size baseline.
+What it is: write the contract against Aquarius's confirmed pool interface.
+The comparable contract already live in this codebase is 650 lines of
+code — the realistic size baseline.
 Done when: the contract builds cleanly and passes the project's standard
 lint checks.
 
-Sub-deliverable 1.1.c — Testing and internal security review.
+Sub-deliverable 1.1.b — Testing and internal security review.
 Duration: 0.5 week. Budget: 4,500 EUR.
 What it is: unit and integration tests, plus an internal review.
 Done when: test coverage is at least 85 percent, and a deposit,
 valuation read, and withdrawal are shown working against Aquarius in a
 test environment.
 
-Deliverable 1.1 total: 2 weeks, 18,000 EUR.
+Deliverable 1.1 total: 1.5 weeks, 13,500 EUR.
 
 ### Deliverable 1.2 — StellarBroker execution router contract
 
 A new guard contract letting the vault route a single trade across
 multiple Stellar liquidity venues at once through StellarBroker's on-chain
-settlement contract, reusing the design and testing patterns from
+settlement contract, reusing the implementation and testing patterns from
 Deliverable 1.1.
 
-Sub-deliverable 1.2.a — Design and interface mapping.
-Duration: 0.5 week. Budget: 4,000 EUR.
-Done when: the design approach is written down and agreed.
-
-Sub-deliverable 1.2.b — Implementation.
+Sub-deliverable 1.2.a — Implementation.
 Duration: 1 week. Budget: 8,000 EUR.
+What it is: write the contract against StellarBroker's confirmed
+settlement-contract interface.
 Done when: the contract builds cleanly and passes standard lint checks.
 
-Sub-deliverable 1.2.c — Testing and internal security review.
+Sub-deliverable 1.2.b — Testing and internal security review.
 Duration: 0.5 week. Budget: 4,000 EUR.
 Done when: test coverage is at least 85 percent, and a trade is shown
 executing across at least two liquidity venues in one transaction.
 
-Deliverable 1.2 total: 2 weeks, 16,000 EUR.
+Deliverable 1.2 total: 1.5 weeks, 12,000 EUR.
 
 ### Deliverable 1.3 — Circle CCTP cross-chain deposit integration
 
@@ -167,32 +162,25 @@ vault's own address already set as its administrator, which means the
 vault's address has to be predictable before either contract exists, which
 only a factory-driven deployment can do cleanly.
 
-Sub-deliverable 1.4.a — Design and deployment-approach confirmation.
-Duration: 1 week. Budget: 8,500 EUR.
-What it is: confirm the exact contract-deployment approach against the
-Soroban SDK version this project uses, and finalize the new registration
-entry point's design.
-Done when: the design approach is written down and agreed, including how
-the existing asset/guard whitelist checks apply to self-serve vaults.
-
-Sub-deliverable 1.4.b — Implementation.
+Sub-deliverable 1.4.a — Implementation.
 Duration: 2 weeks. Budget: 17,000 EUR.
 What it is: build the new permissionless registration path and the
-factory-driven deployment logic, without changing how existing vaults are
-created or how they operate.
+factory-driven deployment logic, against the confirmed deployment
+approach, without changing how existing vaults are created or how they
+operate.
 Done when: the new code builds cleanly and passes standard lint checks,
 and existing vault creation still works exactly as before.
 
-Sub-deliverable 1.4.c — Testing.
+Sub-deliverable 1.4.b — Testing.
 Duration: 1 week. Budget: 8,500 EUR.
 What it is: verify the new path end to end.
 Done when: a new vault is created permissionlessly, seeded, and shown
 accepting a deposit, without any administrator action.
 
-Deliverable 1.4 total: 4 weeks, 34,000 EUR, running in parallel with
+Deliverable 1.4 total: 3 weeks, 25,500 EUR, running in parallel with
 Deliverables 1.1–1.3 on a second engineering track.
 
-Milestone 1 total: 5 weeks, 74,000 EUR.
+Milestone 1 total: 4 weeks, 57,000 EUR.
 
 ---
 
@@ -387,7 +375,7 @@ Milestone 3 total: 5 weeks, 49,000 EUR.
 ## Summary
 
 Milestone 1 — New Strategy Contracts, First Bridge Integration, and the
-Permissionless Factory: 5 weeks, 74,000 EUR, 4 deliverables, 10
+Permissionless Factory: 4 weeks, 57,000 EUR, 4 deliverables, 8
 sub-deliverables.
 
 Milestone 2 — Institutional Onboarding, Fiat On-Ramp Foundation, and the
@@ -396,9 +384,9 @@ Agent Layer: 8 weeks, 70,200 EUR, 4 deliverables, 11 sub-deliverables.
 Milestone 3 — Additional On-Ramp Coverage, Full Integration Testing, and
 Closeout: 5 weeks, 49,000 EUR, 3 deliverables, 6 sub-deliverables.
 
-Total duration — 18 weeks, approximately 4.5 months.
-Total budget — 193,200 EUR.
-Total sub-deliverables — 27.
+Total duration — 17 weeks, approximately 4.25 months.
+Total budget — 176,200 EUR.
+Total sub-deliverables — 25.
 
 The one item this plan deliberately does not fund is a full third-party
 security audit of the new contracts — flagged above as a residual risk and
