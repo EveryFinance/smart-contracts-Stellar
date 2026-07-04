@@ -16,19 +16,28 @@ done.
 
 Total duration across all three milestones: 17 weeks, approximately 4.25
 months.
-Total budget across all three milestones: 176,200 EUR.
+Total budget across all three milestones: 147,600 EUR.
 
 ## A number worth being upfront about
 
-An earlier version of this plan totaled 147,600 EUR, covering six Stellar
-ecosystem integrations only. This version adds the permissionless vault
-factory and the vault setup/rebalancing agent layer, both genuinely part of
-the Elyx v2 product, and both real engineering scope that wasn't priced
-before. Adding them, net of removing all design/interface sub-deliverables
-as assumed pre-existing, moves the total to 176,200 EUR — shown here
-rather than absorbed by quietly thinning other deliverables. Duration moves
-to 17 weeks: it drops slightly from removing design time in Milestone 1,
-even after adding the permissionless factory as a parallel track.
+This plan covers the six Stellar ecosystem integrations plus the vault
+setup/rebalancing agent layer. Both are real, priced scope, not padding —
+adding the agent layer on top of the six integrations already pushes the
+total past 147,600 EUR once design/interface work is correctly excluded as
+assumed pre-existing (per direction), which is closed by a modest,
+explicitly-labeled trim to the documentation and closeout deliverable
+rather than by cutting anything that affects what actually gets built or
+tested.
+
+The permissionless vault factory is not included in this 147,600 EUR total.
+It was scoped earlier at 3 weeks and 25,500 EUR, and it doesn't fit inside
+this budget alongside the other two pieces without either degrading their
+scope or exceeding the cap — this document does the arithmetic openly
+rather than quietly stretching numbers to pretend it fits. It's held out as
+an explicitly-priced follow-on phase, consistent with the standing note in
+the technical integration document that it's genuinely bigger than a
+single fixed-length rollout window. Its cost and scope are kept below, in
+their own section, so the number is ready whenever it's picked up.
 
 ## Rate assumptions and an audit note, stated up front
 
@@ -49,34 +58,35 @@ integrations behave correctly together is treated as the single
 highest-value activity in the plan, not a formality at the end.
 
 An audit finding worth stating plainly: this budget funds an internal
-security review and a written audit-readiness handoff for the new smart
-contracts (the Aquarius and StellarBroker strategy guards, and the factory
-changes enabling permissionless vault creation), not a full third-party
-security audit of the kind already performed on the rest of this codebase.
-That is a real residual risk, not a theoretical one. The recommendation is
-either to commission an external audit as a follow-on cost before any of
-these contracts are exposed to significant value, or to keep exposure
+security review and a written audit-readiness handoff for the two new
+smart contracts within it — the Aquarius and StellarBroker strategy guards
+— not a full third-party security audit of the kind already performed on
+the rest of this codebase. The same applies to the permissionless vault
+factory work held out below, whenever it's picked up. That is a real
+residual risk, not a theoretical one. The recommendation is either to
+commission an external audit as a follow-on cost before any of these
+contracts are exposed to significant value, or to keep exposure
 capped low using the vault's existing deposit-cap and value-guard
 mechanisms until that audit is done.
 
-A staffing note: several deliverables below run in parallel rather than one
-after another. Milestone 1 needs two people working concurrently for four
-of its five weeks; Milestone 2 needs two to three people working
-concurrently for six of its eight weeks. The budget and schedule assume
-that staffing level, not a single person moving between tasks.
+A staffing note: Milestone 2's deliverables run partly in parallel rather
+than one after another — it needs two to three people working concurrently
+for six of its eight weeks, specifically for the KYC pathway, MoneyGram,
+and the agent layer. The budget and schedule assume that staffing level for
+Milestone 2, not a single person moving between tasks. Milestone 1's three
+deliverables can run sequentially with one engineer, matching the four-week
+duration stated.
 
 ---
 
-## Milestone 1 — New Strategy Contracts, First Bridge Integration, and the Permissionless Factory
+## Milestone 1 — New Strategy Contracts and First Bridge Integration
 
 Duration: 4 weeks
-Budget: 57,000 EUR
+Budget: 31,500 EUR
 
-Two engineering tracks run in parallel this milestone: one builds the
-Aquarius and StellarBroker strategy contracts plus the CCTP bridge
-integration, the other builds the permissionless vault factory changes.
-Neither depends on the other, so they don't add to each other's calendar
-time, only to the milestone's total budget and staffing.
+This milestone covers the two integrations that require writing new smart
+contracts, plus the one cross-chain integration that requires no new
+contract at all.
 
 ### Deliverable 1.1 — Aquarius strategy contract
 
@@ -148,39 +158,7 @@ testnet.
 
 Deliverable 1.3 total: 1 week, 6,000 EUR.
 
-### Deliverable 1.4 — Permissionless vault factory
-
-The factory contract today only lets an administrator register and seed a
-vault that someone already deployed separately; it doesn't deploy vaults
-itself. This deliverable makes vault creation genuinely self-serve: the
-factory deploys new vault instances itself, from one fixed, already-audited
-vault contract template, so a creator supplies parameters — manager, base
-asset, fee settings, initial strategy selection from the approved list —
-and never touches raw contract bytecode. This also resolves a real
-technical wrinkle: the vault's share token has to be deployed with the
-vault's own address already set as its administrator, which means the
-vault's address has to be predictable before either contract exists, which
-only a factory-driven deployment can do cleanly.
-
-Sub-deliverable 1.4.a — Implementation.
-Duration: 2 weeks. Budget: 17,000 EUR.
-What it is: build the new permissionless registration path and the
-factory-driven deployment logic, against the confirmed deployment
-approach, without changing how existing vaults are created or how they
-operate.
-Done when: the new code builds cleanly and passes standard lint checks,
-and existing vault creation still works exactly as before.
-
-Sub-deliverable 1.4.b — Testing.
-Duration: 1 week. Budget: 8,500 EUR.
-What it is: verify the new path end to end.
-Done when: a new vault is created permissionlessly, seeded, and shown
-accepting a deposit, without any administrator action.
-
-Deliverable 1.4 total: 3 weeks, 25,500 EUR, running in parallel with
-Deliverables 1.1–1.3 on a second engineering track.
-
-Milestone 1 total: 4 weeks, 57,000 EUR.
+Milestone 1 total: 4 weeks, 31,500 EUR.
 
 ---
 
@@ -307,7 +285,7 @@ Deliverable 2.3 completes inside the same window.)
 ## Milestone 3 — Additional On-Ramp Coverage, Full Integration Testing, and Closeout
 
 Duration: 5 weeks
-Budget: 49,000 EUR
+Budget: 45,900 EUR
 
 This milestone adds the final on-ramp provider, verifies every piece
 delivered across all three milestones works correctly together, and closes
@@ -357,37 +335,74 @@ brief for the new contracts, meant to be handed to a third-party auditor in
 the recommended follow-on engagement.
 
 Sub-deliverable 3.3.a — Documentation.
-Duration: 1 week. Budget: 7,000 EUR.
+Duration: 1 week. Budget: 5,000 EUR.
 Done when: documentation covering every deliverable's mechanism and
 operation is delivered.
 
 Sub-deliverable 3.3.b — Closeout and audit-readiness brief.
-Duration: 0.5 week. Budget: 8,000 EUR.
+Duration: 0.5 week. Budget: 6,900 EUR.
 Done when: a closeout review is recorded and a standalone audit-readiness
 document for the new contracts is delivered.
 
-Deliverable 3.3 total: 1.5 weeks, 15,000 EUR.
+Deliverable 3.3 total: 1.5 weeks, 11,900 EUR.
 
-Milestone 3 total: 5 weeks, 49,000 EUR.
+Milestone 3 total: 5 weeks, 45,900 EUR.
+
+---
+
+## Held out of this budget — the permissionless vault factory
+
+Not included in the 147,600 EUR total above, and not one of the three
+milestones. This is real, scoped work — shown here with its own numbers
+so it's ready to pick up as its own follow-on phase, not omitted or hidden
+inside another line item.
+
+The factory contract today only lets an administrator register and seed a
+vault that someone already deployed separately; it doesn't deploy vaults
+itself. This work makes vault creation genuinely self-serve: the factory
+deploys new vault instances itself, from one fixed, already-audited vault
+contract template, so a creator supplies parameters — manager, base asset,
+fee settings, initial strategy selection from the approved list — and
+never touches raw contract bytecode. It also resolves a real technical
+wrinkle: the vault's share token has to be deployed with the vault's own
+address already set as its administrator, which means the vault's address
+has to be predictable before either contract exists, which only a
+factory-driven deployment can do cleanly.
+
+Implementation: 2 weeks, 17,000 EUR. Build the new permissionless
+registration path and the factory-driven deployment logic, against an
+already-confirmed deployment approach, without changing how existing
+vaults are created or operate. Done when the new code builds cleanly,
+passes standard lint checks, and existing vault creation still works
+exactly as before.
+
+Testing: 1 week, 8,500 EUR. Done when a new vault is created
+permissionlessly, seeded, and shown accepting a deposit, without any
+administrator action.
+
+Total if picked up as its own phase: 3 weeks, 25,500 EUR.
 
 ---
 
 ## Summary
 
-Milestone 1 — New Strategy Contracts, First Bridge Integration, and the
-Permissionless Factory: 4 weeks, 57,000 EUR, 4 deliverables, 8
-sub-deliverables.
+Milestone 1 — New Strategy Contracts and First Bridge Integration: 4 weeks,
+31,500 EUR, 3 deliverables, 6 sub-deliverables.
 
 Milestone 2 — Institutional Onboarding, Fiat On-Ramp Foundation, and the
 Agent Layer: 8 weeks, 70,200 EUR, 4 deliverables, 11 sub-deliverables.
 
 Milestone 3 — Additional On-Ramp Coverage, Full Integration Testing, and
-Closeout: 5 weeks, 49,000 EUR, 3 deliverables, 6 sub-deliverables.
+Closeout: 5 weeks, 45,900 EUR, 3 deliverables, 6 sub-deliverables.
 
 Total duration — 17 weeks, approximately 4.25 months.
-Total budget — 176,200 EUR.
-Total sub-deliverables — 25.
+Total budget — 147,600 EUR.
+Total sub-deliverables — 23.
 
-The one item this plan deliberately does not fund is a full third-party
-security audit of the new contracts — flagged above as a residual risk and
-a recommended follow-on, not silently omitted.
+Held out, priced separately, not counted in the total above: the
+permissionless vault factory, 3 weeks, 25,500 EUR.
+
+The one item this plan deliberately does not fund, in either the milestone
+total or the held-out factory work, is a full third-party security audit
+of the new contracts — flagged above as a residual risk and a recommended
+follow-on, not silently omitted.
