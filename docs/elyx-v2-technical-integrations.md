@@ -446,6 +446,17 @@ the Build Award Integration Track only funds work touching a partner on its
 official list — a technically excellent integration that isn't listed
 doesn't count toward this specific grant, whatever its product merit.
 
+**Mainnet, not testnet, confirmed for every integration in this table.**
+Every ✅-marked item and the nice-to-have row are live with real economic
+activity today: Aquarius, Templar, Ondo, and Spiko all have real DefiLlama/
+Messari-tracked TVL (which by construction only measures mainnet activity —
+none of it is testnet or notional); Circle CCTP has explicit mainnet
+contract addresses; MoneyGram, Mercuryo, and StellarBroker have real dollar
+volume moving through them in production; BlindPay's own changelog
+explicitly distinguishes its mainnet operational wallet from its separate
+testnet issuer. Nothing here is a testnet-only announcement dressed up as a
+live integration.
+
 | Integration | Feasibility | Evidence | SCF list | Blocking dependency |
 |---|---|---|---|---|
 | Aquarius | **High** | $46.1M TVL verified, audited, same guard shape live twice already | ✅ | None |
@@ -459,7 +470,7 @@ doesn't count toward this specific grant, whatever its product merit.
 | Templar Protocol | **Medium** | $6.2M verified TVL, Halborn-audited, Blend-forked codebase | ❌ not on the list | Exact ABI confirmation needed *and* doesn't count toward this grant track regardless |
 | DeFindex | *(not pursued)* | Real, audited yield-router protocol | ✅ | Deliberately excluded — vault-of-vaults nesting creates recursive NAV computation risk against Elyx's own vault; listed here so the omission reads as a decision, not an oversight |
 | Ondo / USDY | **Medium** (nice to have) | Freely transferable, $528M verified TVL, tradeable today | ❌ not on the list | Reg S depositor-eligibility legal review *and* not SCF-fundable under this track |
-| Spiko | **Low / blocked** (nice to have) | Allowlist-gated contract, no DEX pool, $524M TVL but inaccessible | ❌ not on the list | Direct allowlisting agreement with Spiko required |
+| Spiko | **Low / blocked** (nice to have) | Allowlist-gated contract, no DEX pool, $563.1M TVL (Messari Q1 2026 — Stellar is Spiko's *largest* chain, ahead of Arbitrum) but inaccessible | ❌ not on the list | Direct allowlisting agreement with Spiko required |
 | alfredpay | **Unverified** | Self-serve claims, current Stellar routing unconfirmed | ✅ | Re-verify chain/compliance status |
 
 Reading the table for the grant application specifically: **every integration
